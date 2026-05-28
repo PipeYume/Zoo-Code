@@ -32,13 +32,13 @@ Roo Code에서 Zoo Code로 옮겨오는 빠른 가이드는 [Roo→Zoo 마이그
 
 ## v3.55.0의 새로운 기능
 
-**Zoo Code의 첫 릴리스** — `ZooCodeOrganization.zoo-code`라는 이름으로 VS Code Marketplace에 독립적인 확장 프로그램으로 자리 잡았고, `main`에 merge 될 때마다 pre-release 빌드가 자동으로 게시됩니다.
+**Zoo Code의 첫 기능 릴리스**는 Marketplace handoff를 바탕으로 새 provider, Roo Code의 upstream sunset merge, 그리고 채팅, provider 설정, rendering 전반의 사용자 체감 수정 사항을 담고 있어요.
 
-- OpenAI Codex 제공업체를 통해 GPT-5.5 지원을 추가했어요.
-- Vertex AI에서 Claude Opus 4.7 지원을 추가했어요.
-- 채팅에서 이전 checkpoint 로 이동하는 탐색 컨트롤을 추가했어요.
-- 동적 모델 가져오기를 포함한 DeepSeek V4 지원.
-- MCP OAuth 클라이언트 지원.
+- Xiaomi MiMo를 first-class API provider로 추가했어요.
+- Roo Code의 upstream sunset merge와 관련 platform 업데이트를 반영했어요.
+- MCP sign-in 문구, Gemini의 full-tool 요청, 지원하지 않는 모델에 대한 OpenAI temperature 처리 문제를 수정했어요.
+- Markdown single-tilde 렌더링과 diagnostics temp-file 이름을 수정했어요.
+- Z.AI, GLM, Vertex AI의 provider 기본값과 region 지원 범위를 개선했어요.
 
 <details>
   <summary>🌐 사용 가능한 언어</summary>

@@ -32,13 +32,13 @@ Tu peux trouver un guide rapide pour passer de Roo Code à Zoo Code dans le [gui
 
 ## Nouveautés de la v3.55.0
 
-**Première version de Zoo Code** — établit Zoo Code comme une extension indépendante sur le VS Code Marketplace sous `ZooCodeOrganization.zoo-code`, avec des builds pre-release publiés automatiquement après chaque merge sur `main`.
+**La première release de fonctionnalités de Zoo Code** s'appuie sur le passage au Marketplace avec un nouveau fournisseur, la fusion upstream du sunset de Roo Code et une série de correctifs visibles pour l'utilisateur dans le chat, les réglages des fournisseurs et le rendu.
 
-- Ajout du support de GPT-5.5 via le fournisseur OpenAI Codex.
-- Ajout du support de Claude Opus 4.7 sur Vertex AI.
-- Ajout de contrôles de navigation vers les checkpoints précédents dans le chat.
-- Support de DeepSeek V4 avec récupération dynamique des modèles.
-- Support du client OAuth MCP.
+- Ajout de Xiaomi MiMo comme fournisseur d'API de premier plan.
+- Intégration de la fusion upstream du sunset de Roo Code et des mises à jour de plateforme associées.
+- Correction du texte de connexion MCP, des requêtes Gemini avec tout l'ensemble d'outils et de la gestion de la température OpenAI pour les modèles qui ne la prennent pas en charge.
+- Correction du rendu Markdown avec un tilde unique et du nommage des fichiers temporaires de diagnostic.
+- Amélioration des valeurs par défaut des fournisseurs et de la couverture régionale pour Z.AI, GLM et Vertex AI.
 
 <details>
   <summary>🌐 Langues disponibles</summary>

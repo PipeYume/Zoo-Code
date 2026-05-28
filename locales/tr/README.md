@@ -32,13 +32,13 @@ Roo Code'dan Zoo Code'a geçmek için hızlı bir rehberi [Roo→Zoo geçiş reh
 
 ## v3.55.0'daki Yenilikler
 
-**Zoo Code'un ilk sürümü** — Zoo Code'u `ZooCodeOrganization.zoo-code` adıyla VS Code Marketplace'te bağımsız bir uzantı olarak konumlandırır ve `main` dalına yapılan her merge sonrasında pre-release sürümleri otomatik olarak yayımlar.
+**Zoo Code'un ilk özellik sürümü** Marketplace handoff'unu yeni bir sağlayıcı, Roo Code'dan gelen upstream sunset merge'i ve sohbet, sağlayıcı ayarları ile render tarafındaki kullanıcıya görünen düzeltmelerle ileri taşıyor.
 
-- OpenAI Codex sağlayıcısı üzerinden GPT-5.5 desteği eklendi.
-- Vertex AI'da Claude Opus 4.7 desteği eklendi.
-- Sohbette önceki checkpoint'lere gitmek için gezinme denetimleri eklendi.
-- Dinamik model getirme ile DeepSeek V4 desteği.
-- MCP OAuth istemcisi desteği.
+- Xiaomi MiMo, birinci sınıf bir API sağlayıcısı olarak eklendi.
+- Roo Code upstream sunset merge'i ve ilgili platform güncellemeleri içeri alındı.
+- MCP oturum açma metni, Gemini'nin tam araç seti istekleri ve desteklenmeyen modeller için OpenAI temperature işleme düzeltildi.
+- Markdown single-tilde renderingi ve diagnostics temp-file adlandırması düzeltildi.
+- Z.AI, GLM ve Vertex AI için sağlayıcı varsayılanları ile bölge kapsamı iyileştirildi.
 
 <details>
   <summary>🌐 Mevcut diller</summary>

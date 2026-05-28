@@ -20,6 +20,7 @@ import {
 	xaiModels,
 	internationalZAiModels,
 	minimaxModels,
+	mimoModels,
 } from "./providers/index.js"
 
 /**
@@ -39,10 +40,10 @@ export const dynamicProviders = [
 	"vercel-ai-gateway",
 	"litellm",
 	"requesty",
-	"roo",
 	"unbound",
 	"poe",
 	"deepseek",
+	"opencode-go",
 ] as const
 
 export type DynamicProvider = (typeof dynamicProviders)[number]
@@ -121,10 +122,10 @@ export const providerNames = [
 	"mistral",
 	"moonshot",
 	"minimax",
+	"mimo",
 	"openai-codex",
 	"openai-native",
 	"qwen-code",
-	"roo",
 	"sambanova",
 	"vertex",
 	"xai",
@@ -151,6 +152,7 @@ export const retiredProviderNames = [
 	"groq",
 	"huggingface",
 	"io-intelligence",
+	"roo",
 ] as const
 
 export const retiredProviderNamesSchema = z.enum(retiredProviderNames)
@@ -334,6 +336,18 @@ const minimaxSchema = apiModelIdProviderModelSchema.extend({
 	minimaxApiKey: z.string().optional(),
 })
 
+const mimoSchema = apiModelIdProviderModelSchema.extend({
+	mimoBaseUrl: z
+		.union([
+			z.literal("https://api.xiaomimimo.com/v1"),
+			z.literal("https://token-plan-cn.xiaomimimo.com/v1"),
+			z.literal("https://token-plan-sgp.xiaomimimo.com/v1"),
+			z.literal("https://token-plan-ams.xiaomimimo.com/v1"),
+		])
+		.optional(),
+	mimoApiKey: z.string().optional(),
+})
+
 const requestySchema = baseProviderSettingsSchema.extend({
 	requestyBaseUrl: z.string().optional(),
 	requestyApiKey: z.string().optional(),
@@ -381,14 +395,14 @@ const qwenCodeSchema = apiModelIdProviderModelSchema.extend({
 	qwenCodeOauthPath: z.string().optional(),
 })
 
-const rooSchema = apiModelIdProviderModelSchema.extend({
-	// Can use cloud authentication or provide an API key (cli).
-	rooApiKey: z.string().optional(),
-})
-
 const vercelAiGatewaySchema = baseProviderSettingsSchema.extend({
 	vercelAiGatewayApiKey: z.string().optional(),
 	vercelAiGatewayModelId: z.string().optional(),
+})
+
+const opencodeGoSchema = baseProviderSettingsSchema.extend({
+	opencodeGoApiKey: z.string().optional(),
+	opencodeGoModelId: z.string().optional(),
 })
 
 const basetenSchema = apiModelIdProviderModelSchema.extend({
@@ -417,6 +431,7 @@ export const providerSettingsSchemaDiscriminated = z.discriminatedUnion("apiProv
 	poeSchema.merge(z.object({ apiProvider: z.literal("poe") })),
 	moonshotSchema.merge(z.object({ apiProvider: z.literal("moonshot") })),
 	minimaxSchema.merge(z.object({ apiProvider: z.literal("minimax") })),
+	mimoSchema.merge(z.object({ apiProvider: z.literal("mimo") })),
 	requestySchema.merge(z.object({ apiProvider: z.literal("requesty") })),
 	unboundSchema.merge(z.object({ apiProvider: z.literal("unbound") })),
 	fakeAiSchema.merge(z.object({ apiProvider: z.literal("fake-ai") })),
@@ -427,8 +442,8 @@ export const providerSettingsSchemaDiscriminated = z.discriminatedUnion("apiProv
 	zaiSchema.merge(z.object({ apiProvider: z.literal("zai") })),
 	fireworksSchema.merge(z.object({ apiProvider: z.literal("fireworks") })),
 	qwenCodeSchema.merge(z.object({ apiProvider: z.literal("qwen-code") })),
-	rooSchema.merge(z.object({ apiProvider: z.literal("roo") })),
 	vercelAiGatewaySchema.merge(z.object({ apiProvider: z.literal("vercel-ai-gateway") })),
+	opencodeGoSchema.merge(z.object({ apiProvider: z.literal("opencode-go") })),
 	defaultSchema,
 ])
 
@@ -451,6 +466,7 @@ export const providerSettingsSchema = z.object({
 	...poeSchema.shape,
 	...moonshotSchema.shape,
 	...minimaxSchema.shape,
+	...mimoSchema.shape,
 	...requestySchema.shape,
 	...unboundSchema.shape,
 	...fakeAiSchema.shape,
@@ -461,8 +477,8 @@ export const providerSettingsSchema = z.object({
 	...zaiSchema.shape,
 	...fireworksSchema.shape,
 	...qwenCodeSchema.shape,
-	...rooSchema.shape,
 	...vercelAiGatewaySchema.shape,
+	...opencodeGoSchema.shape,
 	...codebaseIndexProviderSchema.shape,
 })
 
@@ -493,6 +509,7 @@ export const modelIdKeys = [
 	"unboundModelId",
 	"litellmModelId",
 	"vercelAiGatewayModelId",
+	"opencodeGoModelId",
 ] as const satisfies readonly (keyof ProviderSettings)[]
 
 export type ModelIdKey = (typeof modelIdKeys)[number]
@@ -525,6 +542,7 @@ export const modelIdKeysByProvider: Record<TypicalProvider, ModelIdKey> = {
 	mistral: "apiModelId",
 	moonshot: "apiModelId",
 	minimax: "apiModelId",
+	mimo: "apiModelId",
 	deepseek: "apiModelId",
 	poe: "apiModelId",
 	"qwen-code": "apiModelId",
@@ -536,8 +554,8 @@ export const modelIdKeysByProvider: Record<TypicalProvider, ModelIdKey> = {
 	sambanova: "apiModelId",
 	zai: "apiModelId",
 	fireworks: "apiModelId",
-	roo: "apiModelId",
 	"vercel-ai-gateway": "vercelAiGatewayModelId",
+	"opencode-go": "opencodeGoModelId",
 }
 
 /**
@@ -557,12 +575,7 @@ export const getApiProtocol = (provider: ProviderName | undefined, modelId?: str
 	}
 
 	// Vercel AI Gateway uses anthropic protocol for anthropic models.
-	if (
-		provider &&
-		["vercel-ai-gateway", "roo"].includes(provider) &&
-		modelId &&
-		modelId.toLowerCase().startsWith("anthropic/")
-	) {
+	if (provider && provider === "vercel-ai-gateway" && modelId && modelId.toLowerCase().startsWith("anthropic/")) {
 		return "anthropic"
 	}
 
@@ -617,6 +630,11 @@ export const MODELS_BY_PROVIDER: Record<
 		label: "MiniMax",
 		models: Object.keys(minimaxModels),
 	},
+	mimo: {
+		id: "mimo",
+		label: "Xiaomi MiMo",
+		models: Object.keys(mimoModels),
+	},
 	"openai-codex": {
 		id: "openai-codex",
 		label: "OpenAI - ChatGPT Plus/Pro",
@@ -628,7 +646,6 @@ export const MODELS_BY_PROVIDER: Record<
 		models: Object.keys(openAiNativeModels),
 	},
 	"qwen-code": { id: "qwen-code", label: "Qwen Code", models: Object.keys(qwenCodeModels) },
-	roo: { id: "roo", label: "Roo Code Router", models: [] },
 	sambanova: {
 		id: "sambanova",
 		label: "SambaNova",
@@ -655,6 +672,7 @@ export const MODELS_BY_PROVIDER: Record<
 	requesty: { id: "requesty", label: "Requesty", models: [] },
 	unbound: { id: "unbound", label: "Unbound", models: [] },
 	"vercel-ai-gateway": { id: "vercel-ai-gateway", label: "Vercel AI Gateway", models: [] },
+	"opencode-go": { id: "opencode-go", label: "Opencode Go", models: [] },
 
 	// Local providers; models discovered from localhost endpoints.
 	lmstudio: { id: "lmstudio", label: "LM Studio", models: [] },

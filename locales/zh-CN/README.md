@@ -32,13 +32,13 @@
 
 ## v3.55.0 新增内容
 
-**Zoo Code 首次发布** —— Zoo Code 现已作为独立扩展在 VS Code Marketplace 上线，标识为 `ZooCodeOrganization.zoo-code`，并会在每次 merge 到 `main` 后自动发布 pre-release 构建。
+**Zoo Code 首个功能版本** 在 Marketplace 交接的基础上，带来了一个新提供商、Roo Code 的上游 sunset merge，以及一轮覆盖聊天、提供商设置和渲染的用户可见修复。
 
-- 通过 OpenAI Codex 提供商新增对 GPT-5.5 的支持。
-- 在 Vertex AI 上新增对 Claude Opus 4.7 的支持。
-- 在聊天中新增上一 checkpoint 导航控件。
-- 支持动态拉取模型的 DeepSeek V4。
-- 支持 MCP OAuth 客户端。
+- 新增 Xiaomi MiMo 一等 API 提供商支持。
+- 合入 Roo Code 的上游 sunset merge 及相关平台更新。
+- 修复 MCP 登录文案、Gemini 全工具集请求，以及 OpenAI 在不支持 temperature 的模型上的处理。
+- 修复 Markdown 单波浪线渲染和诊断临时文件命名。
+- 改进 Z.AI、GLM 和 Vertex AI 的提供商默认值与区域覆盖。
 
 <details>
   <summary>🌐 可用语言</summary>

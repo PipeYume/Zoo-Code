@@ -30,7 +30,9 @@ import {
 	mainlandZAiDefaultModelId,
 	fireworksDefaultModelId,
 	vercelAiGatewayDefaultModelId,
+	opencodeGoDefaultModelId,
 	minimaxDefaultModelId,
+	mimoDefaultModelId,
 	unboundDefaultModelId,
 } from "@roo-code/types"
 
@@ -92,7 +94,9 @@ import {
 	ZAi,
 	Fireworks,
 	VercelAiGateway,
+	OpenCodeGo,
 	MiniMax,
+	Mimo,
 } from "./providers"
 
 import { MODELS_BY_PROVIDER, PROVIDERS } from "./constants"
@@ -182,13 +186,11 @@ const ApiOptions = ({
 		id: selectedModelId,
 		info: selectedModelInfo,
 	} = useSelectedModel(apiConfiguration)
-	const isLegacyRooSelected = apiConfiguration.apiProvider === "roo"
 	const activeSelectedProvider: ProviderName | undefined = isRetiredProvider(selectedProvider)
 		? undefined
 		: selectedProvider
 	const isRetiredSelectedProvider =
-		isLegacyRooSelected ||
-		(typeof apiConfiguration.apiProvider === "string" && isRetiredProvider(apiConfiguration.apiProvider))
+		typeof apiConfiguration.apiProvider === "string" && isRetiredProvider(apiConfiguration.apiProvider)
 
 	const { data: routerModels, refetch: refetchRouterModels } = useRouterModels()
 
@@ -346,6 +348,7 @@ const ApiOptions = ({
 				deepseek: { field: "apiModelId", default: deepSeekDefaultModelId },
 				moonshot: { field: "apiModelId", default: moonshotDefaultModelId },
 				minimax: { field: "apiModelId", default: minimaxDefaultModelId },
+				mimo: { field: "apiModelId", default: mimoDefaultModelId },
 				mistral: { field: "apiModelId", default: mistralDefaultModelId },
 				xai: { field: "apiModelId", default: xaiDefaultModelId },
 				baseten: { field: "apiModelId", default: basetenDefaultModelId },
@@ -362,6 +365,7 @@ const ApiOptions = ({
 				fireworks: { field: "apiModelId", default: fireworksDefaultModelId },
 				poe: { field: "apiModelId", default: poeDefaultModelId },
 				"vercel-ai-gateway": { field: "vercelAiGatewayModelId", default: vercelAiGatewayDefaultModelId },
+				"opencode-go": { field: "opencodeGoModelId", default: opencodeGoDefaultModelId },
 				openai: { field: "openAiModelId" },
 				ollama: { field: "ollamaModelId" },
 				lmstudio: { field: "lmStudioModelId" },
@@ -446,15 +450,8 @@ const ApiOptions = ({
 			}
 		}
 
-		if (isLegacyRooSelected) {
-			options.unshift({
-				value: "roo",
-				label: "Roo Code Router",
-			})
-		}
-
 		return options
-	}, [organizationAllowList, apiConfiguration.apiProvider, fromWelcomeView, isLegacyRooSelected])
+	}, [organizationAllowList, apiConfiguration.apiProvider, fromWelcomeView])
 
 	return (
 		<div className="flex flex-col gap-3">
@@ -640,6 +637,10 @@ const ApiOptions = ({
 						/>
 					)}
 
+					{selectedProvider === "mimo" && (
+						<Mimo apiConfiguration={apiConfiguration} setApiConfigurationField={setApiConfigurationField} />
+					)}
+
 					{selectedProvider === "vscode-lm" && (
 						<VSCodeLM
 							apiConfiguration={apiConfiguration}
@@ -681,6 +682,17 @@ const ApiOptions = ({
 
 					{selectedProvider === "vercel-ai-gateway" && (
 						<VercelAiGateway
+							apiConfiguration={apiConfiguration}
+							setApiConfigurationField={setApiConfigurationField}
+							routerModels={routerModels}
+							organizationAllowList={organizationAllowList}
+							modelValidationError={modelValidationError}
+							simplifySettings={fromWelcomeView}
+						/>
+					)}
+
+					{selectedProvider === "opencode-go" && (
+						<OpenCodeGo
 							apiConfiguration={apiConfiguration}
 							setApiConfigurationField={setApiConfigurationField}
 							routerModels={routerModels}

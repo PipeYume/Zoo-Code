@@ -32,7 +32,9 @@ import {
 	ZAiHandler,
 	FireworksHandler,
 	VercelAiGatewayHandler,
+	OpencodeGoHandler,
 	MiniMaxHandler,
+	MimoHandler,
 	BasetenHandler,
 } from "./providers"
 import { NativeOllamaHandler } from "./providers/native-ollama"
@@ -167,12 +169,16 @@ export function buildApiHandler(configuration: ProviderSettings): ApiHandler {
 			return new LiteLLMHandler(options)
 		case "sambanova":
 			return new SambaNovaHandler(options)
+		case "mimo":
+			return new MimoHandler(options)
 		case "zai":
 			return new ZAiHandler(options)
 		case "fireworks":
 			return new FireworksHandler(options)
 		case "vercel-ai-gateway":
 			return new VercelAiGatewayHandler(options)
+		case "opencode-go":
+			return new OpencodeGoHandler(options)
 		case "minimax":
 			return new MiniMaxHandler(options)
 		case "baseten":
