@@ -234,8 +234,9 @@ export async function presentAssistantMessage(cline: Task) {
 			}
 
 			if (!mcpBlock.partial) {
-				cline.recordToolUsage("use_mcp_tool") // Record as use_mcp_tool for analytics
-				TelemetryService.instance.captureToolUsage(cline.taskId, "use_mcp_tool")
+				// Recorded on the task and summarized once on Task Completed
+				// instead of emitting a separate telemetry event per tool call.
+				cline.recordToolUsage("use_mcp_tool")
 			}
 
 			// Resolve sanitized server name back to original server name
@@ -553,23 +554,6 @@ export async function presentAssistantMessage(cline: Task) {
 				pushToolResult(formatResponse.toolError(errorString))
 			}
 
-			if (!block.partial) {
-				// Check if this is a custom tool - if so, record as "custom_tool" (like MCP tools)
-				const isCustomTool = stateExperiments?.customTools && customToolRegistry.has(block.name)
-				const recordName = isCustomTool ? "custom_tool" : block.name
-				cline.recordToolUsage(recordName)
-				TelemetryService.instance.captureToolUsage(cline.taskId, recordName)
-
-				// Track legacy format usage for read_file tool (for migration monitoring)
-				if (block.name === "read_file" && block.usedLegacyFormat) {
-					const modelInfo = cline.api.getModel()
-					TelemetryService.instance.captureEvent(TelemetryEventName.READ_FILE_LEGACY_FORMAT_USED, {
-						taskId: cline.taskId,
-						model: modelInfo?.id,
-					})
-				}
-			}
-
 			// Validate tool use before execution - ONLY for complete (non-partial) blocks.
 			// Validating partial blocks would cause validation errors to be thrown repeatedly
 			// during streaming, pushing multiple tool_results for the same tool_use_id and
@@ -620,6 +604,23 @@ export async function presentAssistantMessage(cline: Task) {
 					})
 
 					break
+				}
+
+				// Record tool usage only for known tool names -- block.name is model-controlled
+				// and must never reach analytics (recordToolUsage/toolsUsed) unvalidated, since it
+				// becomes a nested property key on the Task Completed event.
+				const isCustomTool = stateExperiments?.customTools && customToolRegistry.has(block.name)
+				if (isCustomTool || isValidToolName(block.name, stateExperiments)) {
+					const recordName = isCustomTool ? "custom_tool" : block.name
+					cline.recordToolUsage(recordName)
+				}
+
+				// Track legacy format usage for read_file tool (for migration monitoring)
+				if (block.name === "read_file" && block.usedLegacyFormat) {
+					TelemetryService.instance.captureEvent(TelemetryEventName.READ_FILE_LEGACY_FORMAT_USED, {
+						taskId: cline.taskId,
+						model: modelInfo?.id,
+					})
 				}
 			}
 

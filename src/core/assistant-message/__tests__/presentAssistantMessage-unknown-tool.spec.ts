@@ -214,6 +214,26 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 		expect(mockTask.userMessageContentReady).toBe(true)
 	})
 
+	it("does not record raw model-supplied tool names in tool usage analytics", async () => {
+		// block.name comes straight from the model's tool-call output and is only checked
+		// against isValidToolName() *after* recordToolUsage() would otherwise be called.
+		// An arbitrary/malicious model-supplied name must never become a toolsUsed key.
+		const toolCallId = "tool_call_analytics_test"
+		mockTask.assistantMessageContent = [
+			{
+				type: "tool_use",
+				id: toolCallId,
+				name: "'; DROP TABLE users; --",
+				params: {},
+				partial: false,
+			},
+		]
+
+		await presentAssistantMessage(mockTask)
+
+		expect(mockTask.recordToolUsage).not.toHaveBeenCalledWith("'; DROP TABLE users; --")
+	})
+
 	it("should still work with didRejectTool flag for unknown tool", async () => {
 		const toolCallId = "tool_call_rejected_test"
 		mockTask.assistantMessageContent = [

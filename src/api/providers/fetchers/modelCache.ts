@@ -43,6 +43,25 @@ const modelRecordSchema = z.record(z.string(), modelInfoSchema)
 // deduplicate each other's in-flight refreshes.
 const inFlightRefresh = new Map<string, Promise<ModelRecord>>()
 
+// Cache keys (see getCacheKey) for which we've already reported an empty model response this
+// session. A persistently-empty endpoint (e.g. misconfigured server) would otherwise re-fire this
+// event on every cache refresh; gate it to at most once per distinct provider+server+key identity
+// until a non-empty response is seen -- the same identity dimensions the model cache itself uses,
+// so two different endpoints for the same provider can never suppress each other's signal.
+const reportedEmptyModelResponse = new Set<string>()
+
+function captureModelCacheEmptyResponseOnce(
+	provider: RouterName,
+	cacheKey: string,
+	properties: Record<string, unknown>,
+): void {
+	if (reportedEmptyModelResponse.has(cacheKey)) {
+		return
+	}
+
+	reportedEmptyModelResponse.add(cacheKey)
+	TelemetryService.instance.captureEvent(TelemetryEventName.MODEL_CACHE_EMPTY_RESPONSE, { provider, ...properties })
+}
 // Providers whose model list is determined by the server URL, not just by the provider name.
 // Each unique baseUrl must be cached independently so that switching endpoints never serves
 // stale results from a previously-cached server.
@@ -282,12 +301,10 @@ export const getModels = async (options: GetModelsOptions): Promise<ModelRecord>
 			await writeModels(cacheKey, models).catch((err) =>
 				console.error(`[MODEL_CACHE] Error writing ${cacheKey} models to file cache:`, err),
 			)
+
+			reportedEmptyModelResponse.delete(cacheKey)
 		} else if (modelCount === 0) {
-			TelemetryService.instance.captureEvent(TelemetryEventName.MODEL_CACHE_EMPTY_RESPONSE, {
-				provider,
-				context: "getModels",
-				hasExistingCache: false,
-			})
+			captureModelCacheEmptyResponseOnce(provider, cacheKey, { context: "getModels", hasExistingCache: false })
 		}
 
 		return models
@@ -345,8 +362,7 @@ export const refreshModels = async (options: GetModelsOptions): Promise<ModelRec
 			const existingCount = existingCache ? Object.keys(existingCache).length : 0
 
 			if (modelCount === 0) {
-				TelemetryService.instance.captureEvent(TelemetryEventName.MODEL_CACHE_EMPTY_RESPONSE, {
-					provider,
+				captureModelCacheEmptyResponseOnce(provider, cacheKey, {
 					context: "refreshModels",
 					hasExistingCache: existingCount > 0,
 					existingCacheSize: existingCount,
@@ -357,6 +373,8 @@ export const refreshModels = async (options: GetModelsOptions): Promise<ModelRec
 					return {}
 				}
 			}
+
+			reportedEmptyModelResponse.delete(cacheKey)
 
 			if (!shouldSkipCache) {
 				memoryCache.set(cacheKey, models)

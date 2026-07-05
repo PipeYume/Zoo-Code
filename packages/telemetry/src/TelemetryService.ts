@@ -5,7 +5,26 @@ import {
 	type TelemetryPropertiesProvider,
 	TelemetryEventName,
 	type TelemetrySetting,
+	type ToolUsage,
 } from "@roo-code/types"
+
+/**
+ * Events prone to retry-storm-style repetition (e.g. a broken embedder config
+ * re-triggering on every file-system event). Guarded by a circuit breaker in
+ * `captureEvent` so a single broken install can't flood the Product Analytics
+ * quota. Tracked per-event via a sliding time window, independent of any
+ * other telemetry the same install may also be sending.
+ */
+const CIRCUIT_BREAKER_GUARDED_EVENTS = new Set<TelemetryEventName>([TelemetryEventName.CODE_INDEX_ERROR])
+
+/** Captures of a guarded event within the counting window allowed before the breaker trips. */
+const CIRCUIT_BREAKER_MAX_IN_WINDOW = 50
+
+/** Rolling window over which guarded-event occurrences are counted. */
+const CIRCUIT_BREAKER_WINDOW_MS = 10 * 60 * 1000
+
+/** How long a tripped breaker stays tripped before allowing captures again. */
+const CIRCUIT_BREAKER_COOLDOWN_MS = 10 * 60 * 1000
 
 /**
  * TelemetryService wrapper class that defers initialization.
@@ -13,7 +32,25 @@ import {
  * variables are loaded.
  */
 export class TelemetryService {
+	// Timestamps of recent guarded-event occurrences, per event name, oldest first.
+	private guardedEventOccurrences = new Map<TelemetryEventName, number[]>()
+	private trippedUntil = new Map<TelemetryEventName, number>()
+
+	// In-flight client.capture()/captureException() promises. captureEvent/captureException are
+	// synchronous (void-returning) for callers, but the underlying client calls are async (e.g.
+	// PostHogTelemetryClient awaits property enrichment before enqueueing). Tracked here so
+	// shutdown() can drain them before flushing/closing the clients -- otherwise a capture that's
+	// still mid-flight when shutdown() runs could be lost entirely.
+	private pendingClientCalls = new Set<Promise<unknown>>()
+
 	constructor(private clients: TelemetryClient[]) {}
+
+	private trackPendingClientCall(promise: Promise<unknown>): void {
+		// Never let a rejected client call surface as an unhandled rejection or block shutdown.
+		const tracked = promise.catch(() => undefined)
+		this.pendingClientCalls.add(tracked)
+		void tracked.finally(() => this.pendingClientCalls.delete(tracked))
+	}
 
 	public register(client: TelemetryClient): void {
 		this.clients.push(client)
@@ -52,6 +89,44 @@ export class TelemetryService {
 	}
 
 	/**
+	 * Checks whether a guarded event should be dropped by the circuit breaker,
+	 * updating the breaker's internal state as a side effect. Tracked entirely
+	 * independently of other event names -- unrelated telemetry from the same
+	 * install must never mask (or count towards) a guarded-event burst.
+	 */
+	private shouldDropForCircuitBreaker(eventName: TelemetryEventName): boolean {
+		if (!CIRCUIT_BREAKER_GUARDED_EVENTS.has(eventName)) {
+			return false
+		}
+
+		const now = Date.now()
+
+		const trippedUntil = this.trippedUntil.get(eventName)
+		if (trippedUntil !== undefined) {
+			if (now < trippedUntil) {
+				return true
+			}
+
+			// Cooldown elapsed - reset and allow this capture through.
+			this.trippedUntil.delete(eventName)
+			this.guardedEventOccurrences.delete(eventName)
+		}
+
+		const windowStart = now - CIRCUIT_BREAKER_WINDOW_MS
+		const occurrences = (this.guardedEventOccurrences.get(eventName) ?? []).filter((ts) => ts > windowStart)
+		occurrences.push(now)
+		this.guardedEventOccurrences.set(eventName, occurrences)
+
+		if (occurrences.length > CIRCUIT_BREAKER_MAX_IN_WINDOW) {
+			this.trippedUntil.set(eventName, now + CIRCUIT_BREAKER_COOLDOWN_MS)
+			this.guardedEventOccurrences.delete(eventName)
+			return true
+		}
+
+		return false
+	}
+
+	/**
 	 * Generic method to capture any type of event with specified properties
 	 * @param eventName The event name to capture
 	 * @param properties The event properties
@@ -62,7 +137,11 @@ export class TelemetryService {
 			return
 		}
 
-		this.clients.forEach((client) => client.capture({ event: eventName, properties }))
+		if (this.shouldDropForCircuitBreaker(eventName)) {
+			return
+		}
+
+		this.clients.forEach((client) => this.trackPendingClientCall(client.capture({ event: eventName, properties })))
 	}
 
 	/**
@@ -75,7 +154,9 @@ export class TelemetryService {
 			return
 		}
 
-		this.clients.forEach((client) => client.captureException(error, additionalProperties))
+		this.clients.forEach((client) =>
+			this.trackPendingClientCall(client.captureException(error, additionalProperties)),
+		)
 	}
 
 	public captureTaskCreated(taskId: string): void {
@@ -86,8 +167,21 @@ export class TelemetryService {
 		this.captureEvent(TelemetryEventName.TASK_RESTARTED, { taskId })
 	}
 
-	public captureTaskCompleted(taskId: string): void {
-		this.captureEvent(TelemetryEventName.TASK_COMPLETED, { taskId })
+	/**
+	 * Captures task completion, optionally summarizing the per-task tool and
+	 * message counts that were previously reported as separate per-turn events
+	 * (`Tool Used`, `Conversation Message`) to reduce Product Analytics volume.
+	 */
+	public captureTaskCompleted(
+		taskId: string,
+		toolsUsed?: ToolUsage,
+		messageCount?: { user: number; assistant: number },
+	): void {
+		this.captureEvent(TelemetryEventName.TASK_COMPLETED, {
+			taskId,
+			...(toolsUsed !== undefined && { toolsUsed }),
+			...(messageCount !== undefined && { messageCount }),
+		})
 	}
 
 	public captureConversationMessage(taskId: string, source: "user" | "assistant"): void {
@@ -263,7 +357,11 @@ export class TelemetryService {
 			return
 		}
 
-		this.clients.forEach((client) => client.shutdown())
+		// Drain any in-flight capture/captureException calls first, so a client's shutdown()
+		// (which flushes its queue) can't run ahead of a capture that hasn't been enqueued yet.
+		await Promise.all(this.pendingClientCalls)
+
+		await Promise.all(this.clients.map((client) => client.shutdown()))
 	}
 
 	private static _instance: TelemetryService | null = null

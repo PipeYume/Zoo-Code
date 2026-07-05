@@ -14,6 +14,18 @@ export const telemetrySettingsSchema = z.enum(telemetrySettings)
 export type TelemetrySetting = z.infer<typeof telemetrySettingsSchema>
 
 /**
+ * Whether the user has explicitly opted into telemetry.
+ *
+ * Only an explicit "enabled" counts as consent. "unset" (no choice made yet) and
+ * "disabled" both mean telemetry must not be captured -- this is what makes a
+ * neutral dismiss of the consent banner (which leaves the setting "unset")
+ * actually neutral, rather than silently opting the user in.
+ */
+export function isTelemetryOptedIn(telemetrySetting: TelemetrySetting | undefined): boolean {
+	return telemetrySetting === "enabled"
+}
+
+/**
  * TelemetryEventName
  */
 
@@ -126,6 +138,15 @@ export const taskPropertiesSchema = z.object({
 			completed: z.number(),
 			inProgress: z.number(),
 			pending: z.number(),
+		})
+		.optional(),
+	// Per-task tool/message summaries, captured once on Task Completed instead
+	// of as separate per-turn events (reduces Product Analytics volume).
+	toolsUsed: z.record(z.string(), z.object({ attempts: z.number(), failures: z.number() })).optional(),
+	messageCount: z
+		.object({
+			user: z.number(),
+			assistant: z.number(),
 		})
 		.optional(),
 })

@@ -31,7 +31,15 @@ export class PostHogTelemetryClient extends BaseTelemetryClient {
 		super(
 			{
 				type: "exclude",
-				events: [TelemetryEventName.TASK_MESSAGE, TelemetryEventName.LLM_COMPLETION],
+				events: [
+					TelemetryEventName.TASK_MESSAGE,
+					TelemetryEventName.LLM_COMPLETION,
+					// Per-turn events superseded by the toolsUsed/messageCount summary on
+					// Task Completed (see TelemetryService.captureTaskCompleted). Excluded
+					// here as a backstop in case any call site still fires them directly.
+					TelemetryEventName.TASK_CONVERSATION_MESSAGE,
+					TelemetryEventName.TOOL_USED,
+				],
 			},
 			debug,
 		)

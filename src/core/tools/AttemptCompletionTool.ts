@@ -222,7 +222,7 @@ export class AttemptCompletionTool extends BaseTool<"attempt_completion"> {
 		// This ensures the latest stats are captured regardless of throttle timer.
 		task.emitFinalTokenUsageUpdate()
 
-		TelemetryService.instance.captureTaskCompleted(task.taskId)
+		TelemetryService.instance.captureTaskCompleted(task.taskId, task.toolUsage, task.messageCounts)
 		task.emit(RooCodeEventName.TaskCompleted, task.taskId, task.getTokenUsage(), task.toolUsage)
 	}
 }

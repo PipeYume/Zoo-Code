@@ -16,6 +16,7 @@ if (fs.existsSync(envPath)) {
 }
 
 import type { CloudUserInfo, AuthState } from "@roo-code/types"
+import { isTelemetryOptedIn } from "@roo-code/types"
 import { CloudService } from "@roo-code/cloud"
 import { TelemetryService, PostHogTelemetryClient } from "@roo-code/telemetry"
 import { customToolRegistry } from "@roo-code/core"
@@ -173,6 +174,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	const contextProxy = await ContextProxy.getInstance(context)
+
+	// React live to VS Code's global telemetry toggle (recommended over only reading
+	// telemetry.telemetryLevel, which PostHogTelemetryClient still checks as a secondary gate).
+	context.subscriptions.push(
+		vscode.env.onDidChangeTelemetryEnabled(() => {
+			const telemetrySetting = contextProxy.getGlobalState("telemetrySetting") ?? "unset"
+			TelemetryService.instance.updateTelemetryState(isTelemetryOptedIn(telemetrySetting))
+		}),
+	)
 
 	// Initialize code index managers for all workspace folders.
 	const codeIndexManagers: CodeIndexManager[] = []
@@ -388,7 +398,15 @@ export async function deactivate() {
 	}
 
 	await McpServerManager.cleanup(extensionContext)
-	TelemetryService.instance.shutdown()
+
+	try {
+		await TelemetryService.instance.shutdown()
+	} catch (error) {
+		outputChannel.appendLine(
+			`Failed to shut down telemetry service: ${error instanceof Error ? error.message : String(error)}`,
+		)
+	}
+
 	Terminal.setTerminalProfile(undefined)
 	TerminalRegistry.cleanup()
 }

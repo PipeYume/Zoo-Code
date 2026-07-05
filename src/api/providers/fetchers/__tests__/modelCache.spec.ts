@@ -62,6 +62,7 @@ import type { Mock, Mocked } from "vitest"
 import { providerIdentifiers } from "@roo-code/types"
 import * as fsSync from "fs"
 import NodeCache from "node-cache"
+import { TelemetryService } from "@roo-code/telemetry"
 import { getModels, getModelsFromCache } from "../modelCache"
 import { getLiteLLMModels } from "../litellm"
 import { getOpenRouterModels } from "../openrouter"
@@ -578,6 +579,122 @@ describe("empty cache protection", () => {
 			expect(s1).toEqual(mockModels)
 			expect(s2).toEqual(mockModels)
 		})
+	})
+})
+
+describe("MODEL_CACHE_EMPTY_RESPONSE throttling", () => {
+	type ModelCacheModule = typeof import("../modelCache")
+
+	let freshGetModels: ModelCacheModule["getModels"]
+	let freshRefreshModels: ModelCacheModule["refreshModels"]
+	let freshMockGetOpenRouterModels: Mock<typeof getOpenRouterModels>
+	let freshMockGetLiteLLMModels: Mock<typeof getLiteLLMModels>
+
+	beforeEach(async () => {
+		// The empty-response throttle is deliberately module-level, persistent state (once per
+		// provider per session). Reset modules per test so each test starts with a clean gate.
+		vi.resetModules()
+		vi.clearAllMocks()
+
+		const modelCacheModule: ModelCacheModule = await import("../modelCache")
+		const openRouterModule = await import("../openrouter")
+		const liteLLMModule = await import("../litellm")
+
+		freshGetModels = modelCacheModule.getModels
+		freshRefreshModels = modelCacheModule.refreshModels
+		freshMockGetOpenRouterModels = openRouterModule.getOpenRouterModels as Mock<typeof getOpenRouterModels>
+		freshMockGetLiteLLMModels = liteLLMModule.getLiteLLMModels as Mock<typeof getLiteLLMModels>
+
+		const NodeCacheModule = await import("node-cache")
+		const MockedNodeCache = vi.mocked(NodeCacheModule.default)
+		const mockCache: any = new MockedNodeCache()
+		mockCache.get.mockReturnValue(undefined)
+	})
+
+	it("fires MODEL_CACHE_EMPTY_RESPONSE only once for repeated empty getModels responses from the same provider", async () => {
+		freshMockGetOpenRouterModels.mockResolvedValue({})
+
+		await freshGetModels({ provider: "openrouter" })
+		await freshGetModels({ provider: "openrouter" })
+		await freshGetModels({ provider: "openrouter" })
+
+		const { TelemetryService: FreshTelemetryService } = await import("@roo-code/telemetry")
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(1)
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+			"Model Cache Empty Response",
+			expect.objectContaining({ provider: "openrouter", context: "getModels" }),
+		)
+	})
+
+	it("fires again after a non-empty response resets the throttle for that provider", async () => {
+		const { TelemetryService: FreshTelemetryService } = await import("@roo-code/telemetry")
+
+		freshMockGetOpenRouterModels.mockResolvedValue({})
+		await freshGetModels({ provider: "openrouter" })
+		await freshGetModels({ provider: "openrouter" })
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(1)
+
+		freshMockGetOpenRouterModels.mockResolvedValue({
+			"openrouter/model": {
+				maxTokens: 8192,
+				contextWindow: 128000,
+				supportsPromptCache: false,
+				description: "OpenRouter model",
+			},
+		})
+		await freshGetModels({ provider: "openrouter" })
+
+		freshMockGetOpenRouterModels.mockResolvedValue({})
+		await freshGetModels({ provider: "openrouter" })
+
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(2)
+	})
+
+	it("throttles independently per provider", async () => {
+		const { TelemetryService: FreshTelemetryService } = await import("@roo-code/telemetry")
+
+		freshMockGetOpenRouterModels.mockResolvedValue({})
+		freshMockGetLiteLLMModels.mockResolvedValue({})
+
+		await freshGetModels({ provider: "openrouter" })
+		await freshGetModels({ provider: "litellm", apiKey: "key", baseUrl: "http://localhost:4000" })
+
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(2)
+	})
+
+	it("throttles empty responses from refreshModels using the same per-provider gate", async () => {
+		const { TelemetryService: FreshTelemetryService } = await import("@roo-code/telemetry")
+
+		freshMockGetOpenRouterModels.mockResolvedValue({})
+
+		await freshRefreshModels({ provider: "openrouter" })
+		await freshRefreshModels({ provider: "openrouter" })
+
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(1)
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledWith(
+			"Model Cache Empty Response",
+			expect.objectContaining({
+				provider: "openrouter",
+				context: "refreshModels",
+				hasExistingCache: false,
+				existingCacheSize: 0,
+			}),
+		)
+	})
+
+	it("throttles independently per distinct endpoint, not just per provider name", async () => {
+		// Two different LiteLLM servers share the "litellm" provider name but are a different
+		// cache identity (see getCacheKey) -- an empty response from one must not suppress the
+		// signal for the other.
+		const { TelemetryService: FreshTelemetryService } = await import("@roo-code/telemetry")
+
+		freshMockGetLiteLLMModels.mockResolvedValue({})
+
+		await freshGetModels({ provider: "litellm", apiKey: "key-a", baseUrl: "http://server-a:4000" })
+		await freshGetModels({ provider: "litellm", apiKey: "key-a", baseUrl: "http://server-a:4000" })
+		await freshGetModels({ provider: "litellm", apiKey: "key-b", baseUrl: "http://server-b:4000" })
+
+		expect(FreshTelemetryService.instance.captureEvent).toHaveBeenCalledTimes(2)
 	})
 })
 

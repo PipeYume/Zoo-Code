@@ -81,6 +81,7 @@ describe("attemptCompletionTool", () => {
 			emit: vi.fn(),
 			getTokenUsage: vi.fn().mockReturnValue({}),
 			toolUsage: {},
+			messageCounts: { user: 0, assistant: 0 },
 			taskId: "task_1",
 			apiConfiguration: { apiProvider: "test" } as any,
 			api: { getModel: vi.fn().mockReturnValue({ id: "test-model", info: {} }) } as any,
@@ -633,7 +634,7 @@ describe("attemptCompletionTool", () => {
 				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
 				expect(mockProvider.log).toHaveBeenCalledWith(expect.stringContaining("Skipping delegation"))
 				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1")
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1", {}, { user: 0, assistant: 0 })
 			})
 
 			it("delegates an interrupted subtask completion when the parent is still delegated and awaiting that child", async () => {
@@ -732,7 +733,7 @@ describe("attemptCompletionTool", () => {
 				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
 				expect(mockProvider.log).toHaveBeenCalledWith(expect.stringContaining("Skipping delegation"))
 				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1")
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1", {}, { user: 0, assistant: 0 })
 			})
 
 			it("emits TaskCompleted only when completion is accepted", async () => {
@@ -757,12 +758,45 @@ describe("attemptCompletionTool", () => {
 				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
 
 				expect(mockHandleError).not.toHaveBeenCalled()
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("task_1")
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("task_1", {}, { user: 0, assistant: 0 })
 				expect(mockTask.emit).toHaveBeenCalledWith(
 					RooCodeEventName.TaskCompleted,
 					"task_1",
 					expect.anything(),
 					expect.anything(),
+				)
+			})
+
+			it("summarizes accumulated tool usage and message counts on completion", async () => {
+				const block: AttemptCompletionToolUse = {
+					type: "tool_use",
+					name: "attempt_completion",
+					params: { result: "2" },
+					nativeArgs: { result: "2" },
+					partial: false,
+				}
+
+				mockTask.ask = vi.fn().mockResolvedValue({ response: "yesButtonClicked", text: "", images: [] })
+				mockTask.toolUsage = {
+					read_file: { attempts: 3, failures: 0 },
+					apply_diff: { attempts: 1, failures: 1 },
+				}
+				mockTask.messageCounts = { user: 4, assistant: 5 }
+
+				const callbacks: AttemptCompletionCallbacks = {
+					askApproval: mockAskApproval,
+					handleError: mockHandleError,
+					pushToolResult: mockPushToolResult,
+					askFinishSubTaskApproval: mockAskFinishSubTaskApproval,
+					toolDescription: mockToolDescription,
+				}
+
+				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
+
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith(
+					"task_1",
+					{ read_file: { attempts: 3, failures: 0 }, apply_diff: { attempts: 1, failures: 1 } },
+					{ user: 4, assistant: 5 },
 				)
 			})
 

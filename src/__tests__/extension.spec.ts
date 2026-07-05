@@ -36,6 +36,8 @@ vi.mock("vscode", () => ({
 	},
 	env: {
 		language: "en",
+		isTelemetryEnabled: true,
+		onDidChangeTelemetryEnabled: vi.fn(),
 	},
 	ExtensionMode: {
 		Production: 1,
@@ -72,19 +74,18 @@ vi.mock("@roo-code/cloud", () => ({
 	getRooCodeApiUrl: vi.fn().mockReturnValue("https://app.roocode.com"),
 }))
 
+const mockTelemetryServiceInstance = {
+	register: vi.fn(),
+	setProvider: vi.fn(),
+	shutdown: vi.fn(),
+	updateTelemetryState: vi.fn(),
+}
+
 vi.mock("@roo-code/telemetry", () => ({
 	TelemetryService: {
-		createInstance: vi.fn().mockReturnValue({
-			register: vi.fn(),
-			setProvider: vi.fn(),
-			shutdown: vi.fn(),
-		}),
+		createInstance: vi.fn().mockReturnValue(mockTelemetryServiceInstance),
 		get instance() {
-			return {
-				register: vi.fn(),
-				setProvider: vi.fn(),
-				shutdown: vi.fn(),
-			}
+			return mockTelemetryServiceInstance
 		},
 	},
 	PostHogTelemetryClient: vi.fn(),
@@ -114,6 +115,7 @@ vi.mock("../core/config/ContextProxy", () => ({
 			setValue: vi.fn(),
 			getValues: vi.fn().mockReturnValue({}),
 			getProviderSettings: vi.fn().mockReturnValue({}),
+			getGlobalState: vi.fn().mockReturnValue("enabled"),
 		}),
 	},
 }))
@@ -315,6 +317,87 @@ describe("extension.ts", () => {
 			const { activate } = await import("../extension")
 
 			await expect(activate(mockContext)).resolves.toBeDefined()
+		})
+	})
+
+	describe("telemetry level reactivity", () => {
+		beforeEach(() => {
+			vi.resetModules()
+		})
+
+		test("registers a listener for vscode.env.onDidChangeTelemetryEnabled", async () => {
+			const vscode = await import("vscode")
+
+			const { activate } = await import("../extension")
+			await activate(mockContext)
+
+			expect(vscode.env.onDidChangeTelemetryEnabled).toHaveBeenCalledTimes(1)
+			expect(vscode.env.onDidChangeTelemetryEnabled).toHaveBeenCalledWith(expect.any(Function))
+		})
+
+		test("re-evaluates telemetry state from stored settings when VS Code's global toggle changes", async () => {
+			const vscode = await import("vscode")
+			const { TelemetryService } = await import("@roo-code/telemetry")
+			const { ContextProxy } = await import("../core/config/ContextProxy")
+
+			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("enabled")
+
+			const { activate } = await import("../extension")
+			await activate(mockContext)
+
+			const updateTelemetryStateMock = vi.mocked(TelemetryService.instance.updateTelemetryState)
+			updateTelemetryStateMock.mockClear()
+
+			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
+			onDidChangeHandler(false)
+
+			expect(updateTelemetryStateMock).toHaveBeenCalledWith(true)
+		})
+
+		test("treats a disabled stored setting as opted out even when VS Code telemetry is re-enabled", async () => {
+			const vscode = await import("vscode")
+			const { TelemetryService } = await import("@roo-code/telemetry")
+			const { ContextProxy } = await import("../core/config/ContextProxy")
+
+			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("disabled")
+
+			const { activate } = await import("../extension")
+			await activate(mockContext)
+
+			const updateTelemetryStateMock = vi.mocked(TelemetryService.instance.updateTelemetryState)
+			updateTelemetryStateMock.mockClear()
+
+			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
+			onDidChangeHandler(true)
+
+			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
+		})
+	})
+
+	describe("deactivate", () => {
+		beforeEach(() => {
+			vi.resetModules()
+		})
+
+		test("still runs terminal cleanup when telemetry shutdown rejects", async () => {
+			const { TelemetryService } = await import("@roo-code/telemetry")
+			const { Terminal } = await import("../integrations/terminal/Terminal")
+			const { TerminalRegistry } = await import("../integrations/terminal/TerminalRegistry")
+
+			vi.mocked(TelemetryService.instance.shutdown).mockRejectedValue(new Error("shutdown failed"))
+			const setTerminalProfileSpy = vi.spyOn(Terminal, "setTerminalProfile")
+
+			const { activate, deactivate } = await import("../extension")
+			await activate(mockContext)
+
+			await expect(deactivate()).resolves.toBeUndefined()
+
+			expect(setTerminalProfileSpy).toHaveBeenCalledWith(undefined)
+			expect(TerminalRegistry.cleanup).toHaveBeenCalledTimes(1)
+
+			setTerminalProfileSpy.mockRestore()
 		})
 	})
 })

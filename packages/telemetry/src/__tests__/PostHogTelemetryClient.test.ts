@@ -71,6 +71,18 @@ describe("PostHogTelemetryClient", () => {
 
 			expect(isEventCapturable(TelemetryEventName.LLM_COMPLETION)).toBe(false)
 		})
+
+		it("should exclude per-turn Conversation Message and Tool Used events (superseded by Task Completed summaries)", () => {
+			const client = new PostHogTelemetryClient()
+
+			const isEventCapturable = getPrivateProperty<(eventName: TelemetryEventName) => boolean>(
+				client,
+				"isEventCapturable",
+			).bind(client)
+
+			expect(isEventCapturable(TelemetryEventName.TASK_CONVERSATION_MESSAGE)).toBe(false)
+			expect(isEventCapturable(TelemetryEventName.TOOL_USED)).toBe(false)
+		})
 	})
 
 	describe("isPropertyCapturable", () => {

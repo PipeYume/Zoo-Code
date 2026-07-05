@@ -1,6 +1,6 @@
 import posthog from "posthog-js"
 
-import type { TelemetrySetting } from "@roo-code/types"
+import { type TelemetrySetting, isTelemetryOptedIn } from "@roo-code/types"
 
 class TelemetryClient {
 	private static instance: TelemetryClient
@@ -9,7 +9,7 @@ class TelemetryClient {
 	public updateTelemetryState(telemetrySetting: TelemetrySetting, apiKey?: string, distinctId?: string) {
 		posthog.reset()
 
-		if (telemetrySetting !== "disabled" && apiKey && distinctId) {
+		if (isTelemetryOptedIn(telemetrySetting) && apiKey && distinctId) {
 			TelemetryClient.telemetryEnabled = true
 
 			posthog.init(apiKey, {

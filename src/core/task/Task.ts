@@ -135,6 +135,7 @@ import { MessageManager } from "../message-manager"
 import { validateAndFixToolResultIds } from "./validateToolResultIds"
 import { mergeConsecutiveApiMessages } from "./mergeConsecutiveApiMessages"
 import { prepareApiConversationMessage } from "./apiConversationHistory"
+import { shouldAddUserMessageToHistory } from "./messageCounting"
 
 const MAX_EXPONENTIAL_BACKOFF_SECONDS = 600 // 10 minutes
 const DEFAULT_USAGE_COLLECTION_TIMEOUT_MS = 5000 // 5 seconds
@@ -321,6 +322,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	consecutiveNoToolUseCount: number = 0
 	consecutiveNoAssistantMessagesCount: number = 0
 	toolUsage: ToolUsage = {}
+
+	// Conversation message counts, summarized once on Task Completed instead
+	// of emitting a separate telemetry event per turn.
+	messageCounts: { user: number; assistant: number } = { user: 0, assistant: 0 }
 
 	// Checkpoints
 	enableCheckpoints: boolean
@@ -2629,18 +2634,16 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			// Add environment details as its own text block, separate from tool
 			// results.
 			const finalUserContent = [...contentWithoutEnvDetails, { type: "text" as const, text: environmentDetails }]
-			// Only add user message to conversation history if:
-			// 1. This is the first attempt (retryAttempt === 0), AND
-			// 2. The original userContent was not empty (empty signals delegation resume where
-			//    the user message with tool_result and env details is already in history), OR
-			// 3. The message was removed in a previous iteration (userMessageWasRemoved === true)
-			// This prevents consecutive user messages while allowing re-add when needed
+			// See shouldAddUserMessageToHistory for the full add/skip rules (retry/empty/removed).
 			const isEmptyUserContent = currentUserContent.length === 0
-			const shouldAddUserMessage =
-				((currentItem.retryAttempt ?? 0) === 0 && !isEmptyUserContent) || currentItem.userMessageWasRemoved
+			const shouldAddUserMessage = shouldAddUserMessageToHistory({
+				retryAttempt: currentItem.retryAttempt,
+				isEmptyUserContent,
+				userMessageWasRemoved: currentItem.userMessageWasRemoved,
+			})
 			if (shouldAddUserMessage) {
 				await this.addToApiConversationHistory({ role: "user", content: finalUserContent })
-				TelemetryService.instance.captureConversationMessage(this.taskId, "user")
+				this.messageCounts.user++
 			}
 
 			// Since we sent off a placeholder api_req_started message to update the
@@ -3557,7 +3560,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					)
 					this.assistantMessageSavedToHistory = true
 
-					TelemetryService.instance.captureConversationMessage(this.taskId, "assistant")
+					this.messageCounts.assistant++
 				}
 
 				// Present any partial blocks that were just completed.
