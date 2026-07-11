@@ -314,7 +314,6 @@ describe("searchReplaceTool", () => {
 
 			expect(mockCline.diffViewProvider.saveChanges).toHaveBeenCalled()
 			expect(mockCline.didEditFile).toBe(true)
-			expect(mockCline.recordToolUsage).toHaveBeenCalledWith("search_replace")
 		})
 
 		it("reverts changes when user rejects", async () => {

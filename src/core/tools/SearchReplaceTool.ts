@@ -225,8 +225,7 @@ export class SearchReplaceTool extends BaseTool<"search_replace"> {
 			const message = await task.diffViewProvider.pushToolWriteResult(task, task.cwd, false)
 			pushToolResult(message)
 
-			// Record successful tool usage and cleanup
-			task.recordToolUsage("search_replace")
+			// Cleanup (tool usage is recorded centrally in presentAssistantMessage)
 			await task.diffViewProvider.reset()
 			this.resetPartialState()
 

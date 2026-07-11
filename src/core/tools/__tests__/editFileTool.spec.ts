@@ -560,7 +560,6 @@ describe("editFileTool", () => {
 
 			expect(mockTask.diffViewProvider.saveChanges).toHaveBeenCalled()
 			expect(mockTask.didEditFile).toBe(true)
-			expect(mockTask.recordToolUsage).toHaveBeenCalledWith("edit_file")
 		})
 
 		it("reverts changes when user rejects", async () => {

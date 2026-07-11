@@ -463,8 +463,7 @@ export class EditFileTool extends BaseTool<"edit_file"> {
 
 			pushToolResult(message + replacementInfo)
 
-			// Record successful tool usage and cleanup
-			task.recordToolUsage("edit_file")
+			// Cleanup (tool usage is recorded centrally in presentAssistantMessage)
 			await task.diffViewProvider.reset()
 			this.resetPartialState()
 
