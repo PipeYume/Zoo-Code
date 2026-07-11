@@ -177,10 +177,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// React live to VS Code's global telemetry toggle (recommended over only reading
 	// telemetry.telemetryLevel, which PostHogTelemetryClient still checks as a secondary gate).
+	// vscode.env.isTelemetryEnabled is ANDed in directly because the deprecated
+	// telemetry.telemetryLevel setting the client checks doesn't reflect this live event.
 	context.subscriptions.push(
 		vscode.env.onDidChangeTelemetryEnabled(() => {
 			const telemetrySetting = contextProxy.getGlobalState("telemetrySetting") ?? "unset"
-			TelemetryService.instance.updateTelemetryState(isTelemetryOptedIn(telemetrySetting))
+			TelemetryService.instance.updateTelemetryState(
+				isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
+			)
 		}),
 	)
 

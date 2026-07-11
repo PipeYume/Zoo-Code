@@ -321,8 +321,10 @@ describe("extension.ts", () => {
 	})
 
 	describe("telemetry level reactivity", () => {
-		beforeEach(() => {
+		beforeEach(async () => {
 			vi.resetModules()
+			const vscode = await import("vscode")
+			;(vscode.env as any).isTelemetryEnabled = true
 		})
 
 		test("registers a listener for vscode.env.onDidChangeTelemetryEnabled", async () => {
@@ -342,6 +344,7 @@ describe("extension.ts", () => {
 
 			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
 			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("enabled")
+			;(vscode.env as any).isTelemetryEnabled = true
 
 			const { activate } = await import("../extension")
 			await activate(mockContext)
@@ -349,19 +352,22 @@ describe("extension.ts", () => {
 			const updateTelemetryStateMock = vi.mocked(TelemetryService.instance.updateTelemetryState)
 			updateTelemetryStateMock.mockClear()
 
+			// The real vscode.env.onDidChangeTelemetryEnabled event carries no payload; the handler
+			// must read the current vscode.env.isTelemetryEnabled value, not any argument it's called with.
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(false)
+			onDidChangeHandler(undefined as any)
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(true)
 		})
 
-		test("treats a disabled stored setting as opted out even when VS Code telemetry is re-enabled", async () => {
+		test("treats a disabled stored setting as opted out even when VS Code telemetry is enabled", async () => {
 			const vscode = await import("vscode")
 			const { TelemetryService } = await import("@roo-code/telemetry")
 			const { ContextProxy } = await import("../core/config/ContextProxy")
 
 			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
 			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("disabled")
+			;(vscode.env as any).isTelemetryEnabled = true
 
 			const { activate } = await import("../extension")
 			await activate(mockContext)
@@ -370,7 +376,33 @@ describe("extension.ts", () => {
 			updateTelemetryStateMock.mockClear()
 
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(true)
+			onDidChangeHandler(undefined as any)
+
+			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
+		})
+
+		test("treats VS Code's live telemetry-disabled signal as opted out even when the stored setting is enabled", async () => {
+			const vscode = await import("vscode")
+			const { TelemetryService } = await import("@roo-code/telemetry")
+			const { ContextProxy } = await import("../core/config/ContextProxy")
+
+			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("enabled")
+			;(vscode.env as any).isTelemetryEnabled = true
+
+			const { activate } = await import("../extension")
+			await activate(mockContext)
+
+			const updateTelemetryStateMock = vi.mocked(TelemetryService.instance.updateTelemetryState)
+			updateTelemetryStateMock.mockClear()
+
+			// Simulate the user turning off VS Code's global telemetry toggle: the live env value
+			// flips before the event fires, and the handler must honor it rather than only the
+			// stored extension setting.
+			;(vscode.env as any).isTelemetryEnabled = false
+
+			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
+			onDidChangeHandler(undefined as any)
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
 		})
