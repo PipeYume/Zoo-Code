@@ -56,8 +56,8 @@ go—and, importantly, where they don't.
 ## **Your Choices & Control**
 
 - You can run models locally to prevent data being sent to third-parties.
-- Telemetry collection is enabled by default to help us improve Zoo Code, but
-  you can opt out at any time through the settings.
+- Telemetry collection is off by default and requires your explicit opt-in.
+  You can change your choice at any time through the settings.
 - You can delete Zoo Code to stop all data collection.
 
 ## **Security & Updates**

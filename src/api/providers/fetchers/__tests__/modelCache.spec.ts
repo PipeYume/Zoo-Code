@@ -45,6 +45,7 @@ vi.mock("../openrouter")
 vi.mock("../requesty")
 vi.mock("../kenari")
 vi.mock("../moonshot")
+vi.mock("../zoo-gateway")
 
 // Mock ContextProxy with a simple static instance
 vi.mock("../../../core/config/ContextProxy", () => ({
@@ -69,12 +70,14 @@ import { getOpenRouterModels } from "../openrouter"
 import { getRequestyModels } from "../requesty"
 import { getKenariModels } from "../kenari"
 import { getMoonshotModels } from "../moonshot"
+import { getZooGatewayModels } from "../zoo-gateway"
 
 const mockGetLiteLLMModels = getLiteLLMModels as Mock<typeof getLiteLLMModels>
 const mockGetOpenRouterModels = getOpenRouterModels as Mock<typeof getOpenRouterModels>
 const mockGetRequestyModels = getRequestyModels as Mock<typeof getRequestyModels>
 const mockGetKenariModels = getKenariModels as Mock<typeof getKenariModels>
 const mockGetMoonshotModels = getMoonshotModels as Mock<typeof getMoonshotModels>
+const mockGetZooGatewayModels = getZooGatewayModels as Mock<typeof getZooGatewayModels>
 
 const DUMMY_REQUESTY_KEY = "requesty-key-for-testing"
 
@@ -395,6 +398,39 @@ describe("empty cache protection", () => {
 
 			expect(result).toEqual(mockModels)
 			expect(mockSet).toHaveBeenCalledWith("openrouter", mockModels)
+		})
+
+		it("re-arms the empty-response throttle after a non-empty response from an auth-scoped provider", async () => {
+			// zoo-gateway is auth-scoped and skips caching entirely, but a non-empty response
+			// must still clear the empty-response throttle so a later empty response is reported again.
+			mockGetZooGatewayModels.mockResolvedValueOnce({})
+
+			await getModels({ provider: "zoo-gateway", apiKey: "test-key" })
+
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledTimes(1)
+
+			const mockModels = {
+				"zoo-gateway/model": {
+					maxTokens: 8192,
+					contextWindow: 128000,
+					supportsPromptCache: false,
+					description: "Zoo Gateway model",
+				},
+			}
+			mockGetZooGatewayModels.mockResolvedValueOnce(mockModels)
+
+			await getModels({ provider: "zoo-gateway", apiKey: "test-key" })
+
+			// Auth-scoped providers never populate the cache.
+			expect(mockSet).not.toHaveBeenCalled()
+
+			mockGetZooGatewayModels.mockResolvedValueOnce({})
+
+			await getModels({ provider: "zoo-gateway", apiKey: "test-key" })
+
+			// The throttle should have been re-armed by the non-empty response above, so this
+			// second empty response is reported again instead of being suppressed.
+			expect(TelemetryService.instance.captureEvent).toHaveBeenCalledTimes(2)
 		})
 	})
 

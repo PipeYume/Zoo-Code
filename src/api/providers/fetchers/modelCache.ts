@@ -295,15 +295,19 @@ export const getModels = async (options: GetModelsOptions): Promise<ModelRecord>
 
 		// Only cache non-empty results so a failed API response doesn't get persisted
 		// as if the provider had no models. Auth-scoped providers skip caching entirely.
-		if (modelCount > 0 && !shouldSkipCache) {
-			memoryCache.set(cacheKey, models)
-
-			await writeModels(cacheKey, models).catch((err) =>
-				console.error(`[MODEL_CACHE] Error writing ${cacheKey} models to file cache:`, err),
-			)
-
+		if (modelCount > 0) {
+			// Clear the empty-response throttle for any non-empty response, including from
+			// auth-scoped providers that skip caching, so a later empty response is reported again.
 			reportedEmptyModelResponse.delete(cacheKey)
-		} else if (modelCount === 0) {
+
+			if (!shouldSkipCache) {
+				memoryCache.set(cacheKey, models)
+
+				await writeModels(cacheKey, models).catch((err) =>
+					console.error(`[MODEL_CACHE] Error writing ${cacheKey} models to file cache:`, err),
+				)
+			}
+		} else {
 			captureModelCacheEmptyResponseOnce(provider, cacheKey, { context: "getModels", hasExistingCache: false })
 		}
 
