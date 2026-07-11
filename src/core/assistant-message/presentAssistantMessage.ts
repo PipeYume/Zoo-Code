@@ -303,14 +303,10 @@ export async function presentAssistantMessage(cline: Task) {
 			if (!toolCallId) {
 				const errorMessage =
 					"Invalid tool call: missing tool_use.id. XML tool calls are no longer supported. Remove any XML tool markup (e.g. <read_file>...</read_file>) and use native tool calling instead."
-				// Record a tool error for visibility/telemetry. Use the reported tool name if present.
+				// Record a tool error for visibility/telemetry. block.name is model-controlled and
+				// must never reach analytics unvalidated, so bucket it under a static key.
 				try {
-					if (
-						typeof (cline as any).recordToolError === "function" &&
-						typeof (block as any).name === "string"
-					) {
-						;(cline as any).recordToolError((block as any).name as ToolName, errorMessage)
-					}
+					cline.recordToolError("invalid_tool_call", errorMessage)
 				} catch {
 					// Best-effort only
 				}
@@ -901,10 +897,11 @@ export async function presentAssistantMessage(cline: Task) {
 						break
 					}
 
-					// Not a custom tool - handle as unknown tool error
+					// Not a custom tool - handle as unknown tool error. block.name is model-controlled
+					// and must never reach analytics unvalidated, so bucket it under a static key.
 					const errorMessage = `Unknown tool "${block.name}". This tool does not exist. Please use one of the available tools.`
 					cline.consecutiveMistakeCount++
-					cline.recordToolError(block.name as ToolName, errorMessage)
+					cline.recordToolError("invalid_tool_call", errorMessage)
 					await cline.say("error", t("tools:unknownToolError", { toolName: block.name }))
 					// Push tool_result directly WITHOUT setting didAlreadyUseTool
 					// This prevents the stream from being interrupted with "Response interrupted by tool use result"

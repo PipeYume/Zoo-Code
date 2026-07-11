@@ -101,11 +101,13 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 		// Verify consecutiveMistakeCount was incremented
 		expect(mockTask.consecutiveMistakeCount).toBe(1)
 
-		// Verify recordToolError was called
+		// Verify recordToolError was called, bucketed under a static key rather than the raw
+		// model-supplied tool name (which must never become an arbitrary analytics property key).
 		expect(mockTask.recordToolError).toHaveBeenCalledWith(
-			"nonexistent_tool",
+			"invalid_tool_call",
 			expect.stringContaining("Unknown tool"),
 		)
+		expect(mockTask.recordToolError).not.toHaveBeenCalledWith("nonexistent_tool", expect.anything())
 
 		// Verify error message was shown to user (uses i18n key)
 		expect(mockTask.say).toHaveBeenCalledWith("error", "unknownToolError")
@@ -217,13 +219,15 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 	it("does not record raw model-supplied tool names in tool usage analytics", async () => {
 		// block.name comes straight from the model's tool-call output and is only checked
 		// against isValidToolName() *after* recordToolUsage() would otherwise be called.
-		// An arbitrary/malicious model-supplied name must never become a toolsUsed key.
+		// An arbitrary/malicious model-supplied name must never become a toolsUsed key,
+		// whether via recordToolUsage (success path) or recordToolError (failure path).
 		const toolCallId = "tool_call_analytics_test"
+		const maliciousName = "'; DROP TABLE users; --"
 		mockTask.assistantMessageContent = [
 			{
 				type: "tool_use",
 				id: toolCallId,
-				name: "'; DROP TABLE users; --",
+				name: maliciousName,
 				params: {},
 				partial: false,
 			},
@@ -231,7 +235,8 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 
 		await presentAssistantMessage(mockTask)
 
-		expect(mockTask.recordToolUsage).not.toHaveBeenCalledWith("'; DROP TABLE users; --")
+		expect(mockTask.recordToolUsage).not.toHaveBeenCalledWith(maliciousName)
+		expect(mockTask.recordToolError).not.toHaveBeenCalledWith(maliciousName, expect.anything())
 	})
 
 	it("should still work with didRejectTool flag for unknown tool", async () => {
