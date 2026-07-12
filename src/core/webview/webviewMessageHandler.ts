@@ -636,9 +636,14 @@ export const webviewMessageHandler = async (
 
 			// Telemetry is on by disclosed default: "unset" (no choice made yet) leaves that
 			// default in effect, same as "enabled". Only an explicit "disabled" opts out.
+			// vscode.env.isTelemetryEnabled is ANDed in (matching extension.ts's
+			// onDidChangeTelemetryEnabled listener) so a webview reload can't re-enable
+			// telemetry while VS Code's global toggle is off.
 			provider.getStateToPostToWebview().then((state) => {
 				const { telemetrySetting } = state
-				TelemetryService.instance.updateTelemetryState(isTelemetryOptedIn(telemetrySetting))
+				TelemetryService.instance.updateTelemetryState(
+					isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
+				)
 			})
 
 			provider.isViewLaunched = true
@@ -2560,11 +2565,15 @@ export const webviewMessageHandler = async (
 				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, telemetrySetting)
 			}
 
-			// Update the telemetry state
+			// Update the telemetry state. vscode.env.isTelemetryEnabled is ANDed in
+			// (matching extension.ts's onDidChangeTelemetryEnabled listener) so this can't
+			// re-enable telemetry while VS Code's global toggle is off -- the
+			// captureTelemetrySettingsChanged calls above/below still track the user's
+			// stored preference transition on its own, independent of that live toggle.
 			await updateGlobalState("telemetrySetting", telemetrySetting)
 
 			if (TelemetryService.hasInstance()) {
-				TelemetryService.instance.updateTelemetryState(isOptedIn)
+				TelemetryService.instance.updateTelemetryState(isOptedIn && vscode.env.isTelemetryEnabled)
 			}
 
 			// If turning telemetry ON, fire event AFTER enabling

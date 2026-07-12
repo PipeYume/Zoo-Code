@@ -51,6 +51,16 @@ vi.mock("../rulesMessageHandler", () => ({
 	handleOpenRulesDirectory: vi.fn(),
 }))
 
+vi.mock("@roo-code/telemetry", () => ({
+	TelemetryService: {
+		hasInstance: vi.fn().mockReturnValue(false),
+		instance: {
+			updateTelemetryState: vi.fn(),
+			captureTelemetrySettingsChanged: vi.fn(),
+		},
+	},
+}))
+
 import type { ModelRecord } from "@roo-code/types"
 
 import { webviewMessageHandler } from "../webviewMessageHandler"
@@ -126,6 +136,9 @@ vi.mock("vscode", () => {
 		},
 		commands: {
 			executeCommand: vi.fn().mockResolvedValue(undefined),
+		},
+		env: {
+			isTelemetryEnabled: true,
 		},
 	}
 })
@@ -1710,5 +1723,50 @@ describe("webviewMessageHandler - kimiCodeSignOut", () => {
 		await webviewMessageHandler(mockClineProvider, { type: "kimiCodeSignOut" })
 
 		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith("Kimi Code sign out failed.")
+	})
+})
+
+describe("webviewMessageHandler - telemetrySetting", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		vi.mocked(vscode.env).isTelemetryEnabled = true
+	})
+
+	// Regression test: TelemetryService.updateTelemetryState must be gated on
+	// vscode.env.isTelemetryEnabled in addition to the stored setting, matching
+	// extension.ts's onDidChangeTelemetryEnabled listener. Without this AND, a user
+	// clicking Accept in the webview could re-enable telemetry even while VS Code's
+	// global telemetry toggle is off.
+	it("does not enable telemetry when the user accepts but VS Code's global telemetry toggle is off", async () => {
+		const { TelemetryService } = await import("@roo-code/telemetry")
+		vi.mocked(TelemetryService.hasInstance).mockReturnValue(true)
+		vi.mocked(vscode.env).isTelemetryEnabled = false
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockReturnValue(undefined)
+
+		await webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "enabled" })
+
+		expect(TelemetryService.instance.updateTelemetryState).toHaveBeenCalledWith(false)
+	})
+
+	it("enables telemetry when the user accepts and VS Code's global telemetry toggle is on", async () => {
+		const { TelemetryService } = await import("@roo-code/telemetry")
+		vi.mocked(TelemetryService.hasInstance).mockReturnValue(true)
+		vi.mocked(vscode.env).isTelemetryEnabled = true
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockReturnValue(undefined)
+
+		await webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "enabled" })
+
+		expect(TelemetryService.instance.updateTelemetryState).toHaveBeenCalledWith(true)
+	})
+
+	it("keeps telemetry disabled when the user declines, regardless of VS Code's global toggle", async () => {
+		const { TelemetryService } = await import("@roo-code/telemetry")
+		vi.mocked(TelemetryService.hasInstance).mockReturnValue(true)
+		vi.mocked(vscode.env).isTelemetryEnabled = true
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockReturnValue(undefined)
+
+		await webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "disabled" })
+
+		expect(TelemetryService.instance.updateTelemetryState).toHaveBeenCalledWith(false)
 	})
 })
