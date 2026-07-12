@@ -372,7 +372,11 @@ export class TelemetryService {
 
 		// Drain any in-flight capture/captureException calls first, so a client's shutdown()
 		// (which flushes its queue) can't run ahead of a capture that hasn't been enqueued yet.
-		await Promise.all(this.pendingClientCalls)
+		// Loop rather than a single snapshot: a call queued while draining (e.g. from a
+		// teardown-time error handler) would otherwise be missed by one Promise.all pass.
+		while (this.pendingClientCalls.size > 0) {
+			await Promise.all(this.pendingClientCalls)
+		}
 
 		await Promise.all(this.clients.map((client) => client.shutdown()))
 	}

@@ -44,6 +44,78 @@ describe("TelemetryService.shutdown draining", () => {
 		expect(captureOrder).toEqual(["captured", "shutdown"])
 	})
 
+	it("drains a second capture that gets queued after shutdown() has already started draining", async () => {
+		// Regression test: shutdown() must not take a single Promise.all snapshot of
+		// pendingClientCalls. A promise added to pendingClientCalls *after* Promise.all(set)
+		// has already been called is never awaited by that call, even if it never resolves
+		// -- Promise.all takes its list of promises to await synchronously, at call time.
+		// So a second capture queued while the first Promise.all pass is still pending (e.g.
+		// a teardown-time error handler reacting to something unrelated) would be silently
+		// dropped by a single-pass drain, letting client.shutdown() run without it.
+		let resolveFirstCapture!: () => void
+		const firstCapturePromise = new Promise<void>((resolve) => {
+			resolveFirstCapture = resolve
+		})
+
+		let resolveSecondCapture!: () => void
+		const secondCapturePromise = new Promise<void>((resolve) => {
+			resolveSecondCapture = resolve
+		})
+
+		const captureOrder: string[] = []
+		let firstCaptureStarted = false
+
+		const mockClient: TelemetryClient = {
+			setProvider: vi.fn(),
+			capture: vi.fn().mockImplementation(async () => {
+				if (!firstCaptureStarted) {
+					firstCaptureStarted = true
+					await firstCapturePromise
+					captureOrder.push("first-captured")
+					return
+				}
+
+				await secondCapturePromise
+				captureOrder.push("second-captured")
+			}),
+			captureException: vi.fn(),
+			updateTelemetryState: vi.fn(),
+			isTelemetryEnabled: vi.fn().mockReturnValue(true),
+			shutdown: vi.fn().mockImplementation(async () => {
+				captureOrder.push("shutdown")
+			}),
+		}
+
+		const service = new TelemetryService([mockClient])
+
+		service.captureEvent(TelemetryEventName.TASK_CREATED, { taskId: "first" })
+
+		const shutdownPromise = service.shutdown()
+
+		// Queue the second capture synchronously, immediately after shutdown() has started
+		// (and thus after its first Promise.all(pendingClientCalls) pass has already taken
+		// its snapshot). This is the scenario the loop fix protects against.
+		service.captureEvent(TelemetryEventName.TASK_CREATED, { taskId: "second" })
+
+		resolveFirstCapture()
+		// Flush several microtask ticks so a buggy single-pass drain has every opportunity
+		// to run client.shutdown() before we check -- a couple of ticks isn't enough since
+		// the mocked capture/shutdown chain itself spans a few microtask hops.
+		for (let i = 0; i < 4; i++) {
+			await Promise.resolve()
+		}
+
+		// The second capture is still pending (its own resolver hasn't fired) -- shutdown
+		// must not have completed yet, otherwise it dropped the second capture.
+		expect(captureOrder).not.toContain("shutdown")
+
+		resolveSecondCapture()
+		await shutdownPromise
+
+		expect(mockClient.capture).toHaveBeenCalledTimes(2)
+		expect(captureOrder).toEqual(["first-captured", "second-captured", "shutdown"])
+	})
+
 	it("does not let a rejected capture prevent shutdown from completing", async () => {
 		const mockClient: TelemetryClient = {
 			setProvider: vi.fn(),
