@@ -634,8 +634,8 @@ export const webviewMessageHandler = async (
 					),
 				)
 
-			// Only capture telemetry once the user has explicitly opted in; "unset" (no
-			// choice made yet) and "disabled" are both treated as not opted in.
+			// Telemetry is on by disclosed default: "unset" (no choice made yet) leaves that
+			// default in effect, same as "enabled". Only an explicit "disabled" opts out.
 			provider.getStateToPostToWebview().then((state) => {
 				const { telemetrySetting } = state
 				TelemetryService.instance.updateTelemetryState(isTelemetryOptedIn(telemetrySetting))

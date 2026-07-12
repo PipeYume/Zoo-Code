@@ -161,14 +161,14 @@ describe("About", () => {
 		expect(screen.getByRole("checkbox", { name: /telemetry/i })).toBeChecked()
 	})
 
-	it("does not show the telemetry checkbox as checked when the setting is unset (no consent given yet)", () => {
+	it("shows the telemetry checkbox as checked when the setting is unset (disclosed opt-out default)", () => {
 		render(
 			<TranslationProvider>
 				<About {...defaultProps} telemetrySetting="unset" />
 			</TranslationProvider>,
 		)
 
-		expect(screen.getByRole("checkbox", { name: /telemetry/i })).not.toBeChecked()
+		expect(screen.getByRole("checkbox", { name: /telemetry/i })).toBeChecked()
 	})
 
 	it("does not show the telemetry checkbox as checked when the setting is disabled", () => {

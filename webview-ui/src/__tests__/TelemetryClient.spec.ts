@@ -77,7 +77,26 @@ describe("TelemetryClient", () => {
 			expect(posthog.init).not.toHaveBeenCalled()
 		})
 
-		it("doesn't initialize PostHog when telemetry is unset", () => {
+		it("initializes PostHog when telemetry is unset and credentials are present (disclosed opt-out default)", () => {
+			// Arrange
+			const API_KEY = "test-api-key"
+			const DISTINCT_ID = "test-user-id"
+
+			// Act
+			telemetryClient.updateTelemetryState("unset", API_KEY, DISTINCT_ID)
+
+			// Assert
+			expect(posthog.init).toHaveBeenCalledWith(
+				API_KEY,
+				expect.objectContaining({
+					api_host: "https://us.i.posthog.com",
+					persistence: "localStorage",
+					loaded: expect.any(Function),
+				}),
+			)
+		})
+
+		it("doesn't initialize PostHog when telemetry is unset but credentials are missing", () => {
 			// Act
 			telemetryClient.updateTelemetryState("unset")
 

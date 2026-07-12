@@ -11,9 +11,10 @@ const TelemetryBanner = () => {
 	const { t } = useAppTranslation()
 	const [isDismissed, setIsDismissed] = useState(false)
 
-	// A neutral dismiss ("x") intentionally sends no message, leaving the
-	// setting as "unset" (routed to disabled for actual capture). Only the
-	// explicit Accept/Decline actions record the user's choice.
+	// A neutral dismiss ("x") intentionally sends no message, leaving the setting
+	// "unset" so the disclosed opt-out default (telemetry on) stays in effect.
+	// Only an explicit Decline (-> "disabled") opts out. Only the explicit
+	// Accept/Decline actions record the user's choice.
 	const handleClose = () => {
 		setIsDismissed(true)
 	}
@@ -42,7 +43,7 @@ const TelemetryBanner = () => {
 
 	return (
 		<div className="relative px-4 py-2.5 pr-10 bg-vscode-banner-background border-b border-vscode-panel-border text-sm leading-normal text-vscode-foreground">
-			{/* Close button (X) - neutral dismiss, does not opt in */}
+			{/* Close button (X) - neutral dismiss, does not record a choice */}
 			<button
 				onClick={handleClose}
 				className="absolute top-1.5 right-2 bg-transparent border-none text-vscode-foreground cursor-pointer text-2xl p-1 opacity-70 hover:opacity-100 transition-opacity duration-200 leading-none"

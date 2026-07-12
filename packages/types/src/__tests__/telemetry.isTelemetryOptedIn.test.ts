@@ -3,7 +3,7 @@
 import { isTelemetryOptedIn } from "../telemetry.js"
 
 describe("isTelemetryOptedIn", () => {
-	it("returns true only for an explicit 'enabled' setting", () => {
+	it("returns true for an explicit 'enabled' setting", () => {
 		expect(isTelemetryOptedIn("enabled")).toBe(true)
 	})
 
@@ -11,11 +11,11 @@ describe("isTelemetryOptedIn", () => {
 		expect(isTelemetryOptedIn("disabled")).toBe(false)
 	})
 
-	it("returns false for 'unset' (no explicit consent yet)", () => {
-		expect(isTelemetryOptedIn("unset")).toBe(false)
+	it("returns true for 'unset' (disclosed opt-out default applies)", () => {
+		expect(isTelemetryOptedIn("unset")).toBe(true)
 	})
 
-	it("returns false for undefined (treated the same as unset)", () => {
-		expect(isTelemetryOptedIn(undefined)).toBe(false)
+	it("returns true for undefined (treated the same as unset)", () => {
+		expect(isTelemetryOptedIn(undefined)).toBe(true)
 	})
 })

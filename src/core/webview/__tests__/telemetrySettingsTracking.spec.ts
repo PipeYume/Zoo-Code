@@ -50,7 +50,7 @@ describe("Telemetry Settings Tracking", () => {
 			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(false)
 		})
 
-		it("should not fire an opt-out event when going from unset to disabled (was never opted in)", () => {
+		it("should fire an opt-out event when going from unset to disabled (explicit Decline)", () => {
 			const previousSetting = "unset" as TelemetrySetting
 			const newSetting = "disabled" as TelemetrySetting
 
@@ -63,8 +63,9 @@ describe("Telemetry Settings Tracking", () => {
 
 			TelemetryService.instance.updateTelemetryState(isOptedIn)
 
-			// "unset" was never opted in, so there is no opt-out transition to report.
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).not.toHaveBeenCalled()
+			// "unset" is opted in under the disclosed opt-out default, so unset -> disabled
+			// is a genuine opt-out transition.
+			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledWith("unset", "disabled")
 			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(false)
 		})
 	})
@@ -116,7 +117,7 @@ describe("Telemetry Settings Tracking", () => {
 			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(true)
 		})
 
-		it("should fire an opt-in event when going from unset to enabled (explicit Accept)", () => {
+		it("should not fire an event when going from unset to enabled (already opted in by default)", () => {
 			const previousSetting = "unset" as TelemetrySetting
 			const newSetting = "enabled" as TelemetrySetting
 
@@ -133,18 +134,21 @@ describe("Telemetry Settings Tracking", () => {
 				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, newSetting)
 			}
 
-			// "unset" is not opted in, so unset -> enabled is a genuine opt-in transition.
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledWith("unset", "enabled")
+			// "unset" is already opted in under the disclosed opt-out default, so explicit
+			// Accept (unset -> enabled) is a no-op transition, not a new opt-in.
+			expect(mockTelemetryService.captureTelemetrySettingsChanged).not.toHaveBeenCalled()
 			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(true)
 		})
 	})
 
 	describe("neutral banner dismiss ('unset' left as-is)", () => {
-		it("does not report telemetry as opted in while the setting remains unset", () => {
+		it("leaves the disclosed opt-out default in effect while the setting remains unset", () => {
 			// A neutral dismiss of the consent banner sends no telemetrySetting message at
 			// all, so the stored setting stays "unset". Confirm "unset" alone -- with no
-			// transition -- is not treated as consent.
-			expect(isTelemetryOptedIn("unset" as TelemetrySetting)).toBe(false)
+			// transition, and no affirmative choice recorded either way -- resolves to the
+			// disclosed default (telemetry on) rather than silently opting the user in via
+			// dismissal itself.
+			expect(isTelemetryOptedIn("unset" as TelemetrySetting)).toBe(true)
 		})
 	})
 
