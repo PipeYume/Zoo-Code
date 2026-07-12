@@ -6,6 +6,8 @@ export interface BedrockMockServer {
 	url: string
 	/** Headers from the most recent converse-stream request (populated after first call). */
 	lastRequestHeaders: http2.IncomingHttpHeaders | undefined
+	/** Parsed JSON bodies of every converse-stream request received so far, oldest first. */
+	requestBodies: unknown[]
 	close(): Promise<void>
 }
 
@@ -59,7 +61,7 @@ function encodeFrame(eventType: string, payload: object): Buffer {
 	return frame
 }
 
-function buildToolCallFrames(toolName: string, toolUseId: string, argsJson: string): Buffer[] {
+export function buildToolCallFrames(toolName: string, toolUseId: string, argsJson: string): Buffer[] {
 	const frames: Buffer[] = []
 	frames.push(encodeFrame("messageStart", { role: "assistant" }))
 	frames.push(
@@ -88,7 +90,40 @@ function buildToolCallFrames(toolName: string, toolUseId: string, argsJson: stri
 	return frames
 }
 
-export async function startBedrockMockServer(): Promise<BedrockMockServer> {
+// A response with no content blocks at all -- no text, no tool_use. Exercises the
+// "no assistant messages" retry path (Task#recursivelyMakeClineRequests), which is
+// otherwise unreachable from a real model (a real model asked to return nothing
+// still typically returns some text) and untestable at the unit level without
+// deeply mocking the streaming loop.
+export function buildEmptyResponseFrames(): Buffer[] {
+	const frames: Buffer[] = []
+	frames.push(encodeFrame("messageStart", { role: "assistant" }))
+	frames.push(encodeFrame("messageStop", { stopReason: "end_turn" }))
+	frames.push(
+		encodeFrame("metadata", {
+			metrics: { latencyMs: 1 },
+			usage: { inputTokens: 100, outputTokens: 0, totalTokens: 100, serverToolUsage: {} },
+		}),
+	)
+	return frames
+}
+
+export interface BedrockMockServerOptions {
+	/**
+	 * Frame sequences to serve, one per converse-stream request, in order. The last
+	 * entry repeats for any request beyond the queue's length. Defaults to always
+	 * returning the attempt_completion("4") tool call (the pre-existing behavior).
+	 */
+	responses?: Buffer[][]
+}
+
+export async function startBedrockMockServer(options: BedrockMockServerOptions = {}): Promise<BedrockMockServer> {
+	const responses = options.responses ?? [
+		buildToolCallFrames("attempt_completion", "tooluse_bedrock_mock_001", JSON.stringify({ result: "4" })),
+	]
+	let requestCount = 0
+	const requestBodies: unknown[] = []
+
 	// HTTP/2 cleartext (h2c) — matches what @aws-sdk/client-bedrock-runtime uses by default.
 	const server = http2.createServer()
 	let lastRequestHeaders: http2.IncomingHttpHeaders | undefined
@@ -111,18 +146,22 @@ export async function startBedrockMockServer(): Promise<BedrockMockServer> {
 
 		lastRequestHeaders = headers
 
-		// Drain the request body before responding (AWS SDK sends the full request before reading).
-		stream.resume()
+		// Capture the request body (AWS SDK sends the full request before reading the response).
+		const bodyChunks: Buffer[] = []
+		stream.on("data", (chunk: Buffer) => bodyChunks.push(chunk))
 		stream.on("end", () => {
+			try {
+				requestBodies.push(JSON.parse(Buffer.concat(bodyChunks).toString("utf8")))
+			} catch {
+				requestBodies.push(undefined)
+			}
+
 			stream.respond({
 				":status": 200,
 				"content-type": "application/vnd.amazon.eventstream",
 			})
-			const frames = buildToolCallFrames(
-				"attempt_completion",
-				"tooluse_bedrock_mock_001",
-				JSON.stringify({ result: "4" }),
-			)
+			const frames = responses[Math.min(requestCount, responses.length - 1)] ?? []
+			requestCount++
 			for (const frame of frames) {
 				stream.write(frame)
 			}
@@ -138,6 +177,9 @@ export async function startBedrockMockServer(): Promise<BedrockMockServer> {
 		url,
 		get lastRequestHeaders() {
 			return lastRequestHeaders
+		},
+		get requestBodies() {
+			return requestBodies
 		},
 		close: () => {
 			// Destroy all open HTTP/2 sessions first so server.close() resolves immediately

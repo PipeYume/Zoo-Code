@@ -3737,11 +3737,16 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 						if (response === "yesButtonClicked") {
 							await this.say("api_req_retried")
 
-							// Push the same content back to retry
+							// Push the same content back to retry. Mark that user message was
+							// removed (same as the auto-retry path above) so it gets re-added --
+							// and messageCounts.user re-incremented -- on the retried attempt;
+							// otherwise shouldAddUserMessageToHistory sees retryAttempt > 0 with
+							// userMessageWasRemoved unset and skips re-adding it entirely.
 							stack.push({
 								userContent: currentUserContent,
 								includeFileDetails: false,
 								retryAttempt: (currentItem.retryAttempt ?? 0) + 1,
+								userMessageWasRemoved: true,
 							})
 
 							// Continue to retry the request
