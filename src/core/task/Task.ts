@@ -3692,8 +3692,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					if (this.apiConversationHistory.length > 0) {
 						const lastMessage = this.apiConversationHistory[this.apiConversationHistory.length - 1]
 						if (lastMessage.role === "user") {
-							// Remove the last user message that we added earlier
+							// Remove the last user message that we added earlier. Decrement
+							// messageCounts.user to match -- both retry branches below mark
+							// userMessageWasRemoved so the message (and its count) is restored
+							// exactly once when the retry succeeds, keeping the total symmetric
+							// regardless of how many empty-response cycles occur first.
 							this.apiConversationHistory.pop()
+							this.messageCounts.user--
 						}
 					}
 
