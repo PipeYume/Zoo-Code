@@ -304,6 +304,10 @@ describe("Task persistence", () => {
 				task: "test task",
 				startTask: false,
 			})
+			// Dispose the idle-telemetry-check interval before running all timers, so
+			// runAllTimersAsync doesn't treat it as an infinite loop (it's unrelated
+			// to what this test exercises).
+			task.dispose()
 
 			const promise = task.retrySaveApiConversationHistory()
 			await vi.runAllTimersAsync()
@@ -326,6 +330,10 @@ describe("Task persistence", () => {
 				task: "test task",
 				startTask: false,
 			})
+			// Dispose the idle-telemetry-check interval before running all timers, so
+			// runAllTimersAsync doesn't treat it as an infinite loop (it's unrelated
+			// to what this test exercises).
+			task.dispose()
 
 			const promise = task.retrySaveApiConversationHistory()
 			await vi.runAllTimersAsync()

@@ -140,8 +140,11 @@ export const taskPropertiesSchema = z.object({
 			pending: z.number(),
 		})
 		.optional(),
-	// Per-task tool/message summaries, captured once on Task Completed instead
-	// of as separate per-turn events (reduces Product Analytics volume).
+	// Per-task tool/message summaries, captured once per Task Completed
+	// installment instead of as separate per-turn events (reduces Product
+	// Analytics volume). A single task may emit more than one installment
+	// (see completionReason); each installment's counts are the delta since
+	// the previous installment for that taskId, not a running total.
 	toolsUsed: z.record(z.string(), z.object({ attempts: z.number(), failures: z.number() })).optional(),
 	messageCount: z
 		.object({
@@ -149,6 +152,13 @@ export const taskPropertiesSchema = z.object({
 			assistant: z.number(),
 		})
 		.optional(),
+	// Why this Task Completed installment was emitted: the model called
+	// attempt_completion ("attempt_completion" -- regardless of whether the
+	// user went on to accept, decline, or give feedback; this is NOT a signal
+	// that the user accepted the result), the task went idle with unreported
+	// activity ("idle"), or the extension/task was shut down with unreported
+	// activity still pending ("shutdown").
+	completionReason: z.enum(["attempt_completion", "idle", "shutdown"]).optional(),
 })
 
 export type TaskProperties = z.infer<typeof taskPropertiesSchema>

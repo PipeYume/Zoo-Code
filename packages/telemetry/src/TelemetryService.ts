@@ -171,14 +171,27 @@ export class TelemetryService {
 	 * Captures task completion, optionally summarizing the per-task tool and
 	 * message counts that were previously reported as separate per-turn events
 	 * (`Tool Used`, `Conversation Message`) to reduce Product Analytics volume.
+	 *
+	 * A single task may emit this more than once over its lifetime (e.g. an
+	 * "idle" or "shutdown" installment followed later by a final
+	 * "attempt_completion" one) -- toolsUsed/messageCount are always the delta
+	 * since the previous emission for that task, not a running total, so
+	 * summing installments for a taskId reconstructs the full-task counts
+	 * without double-counting.
+	 *
+	 * Note "attempt_completion" means the model called that tool, not that the
+	 * user accepted the result -- it fires the same way whether the user goes
+	 * on to accept, decline, or give feedback instead.
 	 */
 	public captureTaskCompleted(
 		taskId: string,
 		toolsUsed?: ToolUsage,
 		messageCount?: { user: number; assistant: number },
+		completionReason: "attempt_completion" | "idle" | "shutdown" = "attempt_completion",
 	): void {
 		this.captureEvent(TelemetryEventName.TASK_COMPLETED, {
 			taskId,
+			completionReason,
 			...(toolsUsed !== undefined && { toolsUsed }),
 			...(messageCount !== undefined && { messageCount }),
 		})

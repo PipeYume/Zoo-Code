@@ -323,9 +323,24 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	consecutiveNoAssistantMessagesCount: number = 0
 	toolUsage: ToolUsage = {}
 
-	// Conversation message counts, summarized once on Task Completed instead
-	// of emitting a separate telemetry event per turn.
+	// Conversation message counts, summarized once per Task Completed
+	// installment instead of emitting a separate telemetry event per turn.
 	messageCounts: { user: number; assistant: number } = { user: 0, assistant: 0 }
+
+	// Idle/shutdown telemetry flush: reports toolUsage/messageCounts for tasks that
+	// go quiet or get torn down without the model ever calling attempt_completion
+	// (or without the user accepting it), so long-running/abandoned tasks aren't
+	// invisible to telemetry. Each flush reports only what changed since the previous
+	// one, tracked via telemetryToolUsageBaseline/telemetryMessageCountsBaseline --
+	// task.toolUsage/messageCounts themselves are never mutated by this, since they're
+	// also read as running totals by the public TaskCompleted API event and the UI.
+	// Checked on an interval rather than hooked into every say()/ask() call site.
+	private static readonly IDLE_TELEMETRY_CHECK_INTERVAL_MS = 5 * 60 * 1000
+	private static readonly IDLE_TELEMETRY_THRESHOLD_MS = 30 * 60 * 1000
+	private idleTelemetryCheckInterval?: NodeJS.Timeout
+	private lastTelemetryFlushAt: number = Date.now()
+	private telemetryToolUsageBaseline: ToolUsage = {}
+	private telemetryMessageCountsBaseline: { user: number; assistant: number } = { user: 0, assistant: 0 }
 
 	// Checkpoints
 	enableCheckpoints: boolean
@@ -601,6 +616,8 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			this.TOKEN_USAGE_EMIT_INTERVAL_MS,
 			{ leading: true, trailing: true, maxWait: this.TOKEN_USAGE_EMIT_INTERVAL_MS },
 		)
+
+		this.startIdleTelemetryCheck()
 
 		onCreated?.(this)
 
@@ -2274,6 +2291,17 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	public dispose(): void {
 		console.log(`[Task#dispose] disposing task ${this.taskId}.${this.instanceId}`)
+
+		// Stop the idle telemetry check and report any unflushed activity as a
+		// shutdown installment, so a task torn down mid-work (panel closed, task
+		// switched, extension deactivated) isn't invisible to telemetry.
+		try {
+			clearInterval(this.idleTelemetryCheckInterval)
+			this.idleTelemetryCheckInterval = undefined
+			this.flushTelemetryInstallment("shutdown")
+		} catch (error) {
+			console.error("Error flushing shutdown telemetry:", error)
+		}
 
 		// Cancel any in-progress HTTP request
 		try {
@@ -4680,6 +4708,70 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		if (error) {
 			this.emit(RooCodeEventName.TaskToolFailed, this.taskId, toolName, error)
 		}
+	}
+
+	/**
+	 * Emits a Task Completed installment for whatever toolUsage/messageCounts have
+	 * changed since the previous installment (from any reason), then advances the
+	 * telemetry baseline so a later installment reports only its own delta. Does
+	 * NOT touch task.toolUsage/messageCounts themselves -- those stay running totals
+	 * for the public TaskCompleted API event and the UI. No-ops if nothing changed
+	 * since the last installment, so idle/shutdown checks don't emit empty events
+	 * for tasks that were already fully reported (e.g. right after attempt_completion).
+	 */
+	public flushTelemetryInstallment(reason: "attempt_completion" | "idle" | "shutdown"): void {
+		const toolUsageDelta: ToolUsage = {}
+
+		for (const [toolName, usage] of Object.entries(this.toolUsage) as [ToolName, ToolUsage[ToolName]][]) {
+			if (!usage) {
+				continue
+			}
+
+			const baseline = this.telemetryToolUsageBaseline[toolName]
+			const attempts = usage.attempts - (baseline?.attempts ?? 0)
+			const failures = usage.failures - (baseline?.failures ?? 0)
+
+			if (attempts > 0 || failures > 0) {
+				toolUsageDelta[toolName] = { attempts, failures }
+			}
+		}
+
+		const messageCountDelta = {
+			user: this.messageCounts.user - this.telemetryMessageCountsBaseline.user,
+			assistant: this.messageCounts.assistant - this.telemetryMessageCountsBaseline.assistant,
+		}
+
+		const hasToolUsageDelta = Object.keys(toolUsageDelta).length > 0
+		const hasMessageDelta = messageCountDelta.user > 0 || messageCountDelta.assistant > 0
+
+		if (!hasToolUsageDelta && !hasMessageDelta) {
+			return
+		}
+
+		this.emitFinalTokenUsageUpdate()
+		TelemetryService.instance.captureTaskCompleted(this.taskId, toolUsageDelta, messageCountDelta, reason)
+
+		this.telemetryToolUsageBaseline = JSON.parse(JSON.stringify(this.toolUsage))
+		this.telemetryMessageCountsBaseline = { ...this.messageCounts }
+		this.lastTelemetryFlushAt = Date.now()
+	}
+
+	private startIdleTelemetryCheck(): void {
+		this.idleTelemetryCheckInterval = setInterval(() => {
+			// lastMessageTs only moves forward on activity, so comparing it against the
+			// last flush tells us whether anything happened since that flush -- if the
+			// task has been quiet since well before the last flush, there's nothing new
+			// to report and flushTelemetryInstallment's own empty-check would no-op anyway,
+			// but skipping here avoids waking up to do that check needlessly.
+			const idleForMs = Date.now() - (this.lastMessageTs ?? this.lastTelemetryFlushAt)
+
+			if (idleForMs >= Task.IDLE_TELEMETRY_THRESHOLD_MS) {
+				this.flushTelemetryInstallment("idle")
+			}
+		}, Task.IDLE_TELEMETRY_CHECK_INTERVAL_MS)
+
+		// Don't hold the process open just for this timer.
+		this.idleTelemetryCheckInterval?.unref?.()
 	}
 
 	// Getters

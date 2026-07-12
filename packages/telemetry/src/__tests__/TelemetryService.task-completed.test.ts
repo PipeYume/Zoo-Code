@@ -18,14 +18,14 @@ describe("TelemetryService.captureTaskCompleted", () => {
 		}
 	})
 
-	it("captures Task Completed with the taskId when no summary is provided", () => {
+	it("captures Task Completed with the taskId and a default 'attempt_completion' completionReason when no summary is provided", () => {
 		const service = new TelemetryService([mockClient])
 
 		service.captureTaskCompleted("task_1")
 
 		expect(mockClient.capture).toHaveBeenCalledWith({
 			event: TelemetryEventName.TASK_COMPLETED,
-			properties: { taskId: "task_1" },
+			properties: { taskId: "task_1", completionReason: "attempt_completion" },
 		})
 	})
 
@@ -42,8 +42,24 @@ describe("TelemetryService.captureTaskCompleted", () => {
 			event: TelemetryEventName.TASK_COMPLETED,
 			properties: {
 				taskId: "task_1",
+				completionReason: "attempt_completion",
 				toolsUsed: { read_file: { attempts: 3, failures: 0 }, apply_diff: { attempts: 1, failures: 1 } },
 				messageCount: { user: 4, assistant: 5 },
+			},
+		})
+	})
+
+	it("includes the given completionReason for idle/shutdown installments", () => {
+		const service = new TelemetryService([mockClient])
+
+		service.captureTaskCompleted("task_1", { read_file: { attempts: 1, failures: 0 } }, undefined, "idle")
+
+		expect(mockClient.capture).toHaveBeenCalledWith({
+			event: TelemetryEventName.TASK_COMPLETED,
+			properties: {
+				taskId: "task_1",
+				completionReason: "idle",
+				toolsUsed: { read_file: { attempts: 1, failures: 0 } },
 			},
 		})
 	})

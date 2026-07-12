@@ -85,6 +85,9 @@ describe("attemptCompletionTool", () => {
 			taskId: "task_1",
 			apiConfiguration: { apiProvider: "test" } as any,
 			api: { getModel: vi.fn().mockReturnValue({ id: "test-model", info: {} }) } as any,
+			flushTelemetryInstallment: vi.fn((reason: "attempt_completion" | "idle" | "shutdown") => {
+				mockCaptureTaskCompleted(mockTask.taskId, mockTask.toolUsage, mockTask.messageCounts, reason)
+			}),
 		}
 	})
 
@@ -586,6 +589,56 @@ describe("attemptCompletionTool", () => {
 				})
 				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
 				expect(mockPushToolResult).not.toHaveBeenCalledWith("")
+				// Emission now happens once per validated attempt_completion call, before
+				// delegation is attempted -- independent of whether delegation succeeds.
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledTimes(1)
+			})
+
+			it("does not emit a duplicate telemetry installment when replaying an already-completed subtask from history", async () => {
+				// Simulates the user revisiting a subtask from history: the child's
+				// historyItem.status is already "completed", so this handler runs again
+				// on a fresh Task instance (zero telemetry baseline). It must not report
+				// toolUsage/messageCounts as a "new" installment for work that was already
+				// flushed when the subtask first completed.
+				const block: AttemptCompletionToolUse = {
+					type: "tool_use",
+					name: "attempt_completion",
+					params: { result: "9" },
+					nativeArgs: { result: "9" },
+					partial: false,
+				}
+				const mockProvider = {
+					log: vi.fn(),
+					getTaskWithId: vi.fn().mockImplementation((id: string) => {
+						if (id === "child-1") {
+							return Promise.resolve({ historyItem: { id, status: "completed" } })
+						}
+						throw new Error(`unexpected task id ${id}`)
+					}),
+					reopenParentFromDelegation: vi.fn(),
+				}
+
+				Object.assign(mockTask, {
+					taskId: "child-1",
+					parentTaskId: "parent-1",
+					providerRef: { deref: () => mockProvider },
+					toolUsage: { read_file: { attempts: 5, failures: 0 } },
+					messageCounts: { user: 3, assistant: 4 },
+				})
+
+				const callbacks: AttemptCompletionCallbacks = {
+					askApproval: mockAskApproval,
+					handleError: mockHandleError,
+					pushToolResult: mockPushToolResult,
+					askFinishSubTaskApproval: mockAskFinishSubTaskApproval,
+					toolDescription: mockToolDescription,
+				}
+
+				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
+
+				expect(mockAskFinishSubTaskApproval).not.toHaveBeenCalled()
+				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
+				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
 				expect(mockCaptureTaskCompleted).not.toHaveBeenCalled()
 			})
 
@@ -634,7 +687,12 @@ describe("attemptCompletionTool", () => {
 				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
 				expect(mockProvider.log).toHaveBeenCalledWith(expect.stringContaining("Skipping delegation"))
 				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1", {}, { user: 0, assistant: 0 })
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith(
+					"child-1",
+					{},
+					{ user: 0, assistant: 0 },
+					"attempt_completion",
+				)
 			})
 
 			it("delegates an interrupted subtask completion when the parent is still delegated and awaiting that child", async () => {
@@ -733,10 +791,15 @@ describe("attemptCompletionTool", () => {
 				expect(mockProvider.reopenParentFromDelegation).not.toHaveBeenCalled()
 				expect(mockProvider.log).toHaveBeenCalledWith(expect.stringContaining("Skipping delegation"))
 				expect(mockTask.ask).toHaveBeenCalledWith("completion_result", "", false)
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("child-1", {}, { user: 0, assistant: 0 })
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith(
+					"child-1",
+					{},
+					{ user: 0, assistant: 0 },
+					"attempt_completion",
+				)
 			})
 
-			it("emits TaskCompleted only when completion is accepted", async () => {
+			it("emits the public TaskCompleted API event only when completion is accepted, but reports telemetry either way", async () => {
 				const block: AttemptCompletionToolUse = {
 					type: "tool_use",
 					name: "attempt_completion",
@@ -758,7 +821,12 @@ describe("attemptCompletionTool", () => {
 				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
 
 				expect(mockHandleError).not.toHaveBeenCalled()
-				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith("task_1", {}, { user: 0, assistant: 0 })
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith(
+					"task_1",
+					{},
+					{ user: 0, assistant: 0 },
+					"attempt_completion",
+				)
 				expect(mockTask.emit).toHaveBeenCalledWith(
 					RooCodeEventName.TaskCompleted,
 					"task_1",
@@ -797,10 +865,14 @@ describe("attemptCompletionTool", () => {
 					"task_1",
 					{ read_file: { attempts: 3, failures: 0 }, apply_diff: { attempts: 1, failures: 1 } },
 					{ user: 4, assistant: 5 },
+					"attempt_completion",
 				)
 			})
 
-			it("does not emit TaskCompleted when user provides follow-up feedback", async () => {
+			it("still reports telemetry for a model-initiated completion even when the user provides follow-up feedback instead of accepting", async () => {
+				// A task that's declined/given feedback and never explicitly accepted previously
+				// reported nothing to telemetry at all -- this call is what a long-running or
+				// ultimately-abandoned task relies on to be visible in aggregate metrics.
 				const block: AttemptCompletionToolUse = {
 					type: "tool_use",
 					name: "attempt_completion",
@@ -826,7 +898,14 @@ describe("attemptCompletionTool", () => {
 				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
 
 				expect(mockHandleError).not.toHaveBeenCalled()
-				expect(mockCaptureTaskCompleted).not.toHaveBeenCalled()
+				expect(mockCaptureTaskCompleted).toHaveBeenCalledWith(
+					"task_1",
+					{},
+					{ user: 0, assistant: 0 },
+					"attempt_completion",
+				)
+				// The public RooCodeEventName.TaskCompleted API event is unaffected by this
+				// change -- it still only fires once the user actually accepts.
 				expect(mockTask.emit).not.toHaveBeenCalledWith(
 					RooCodeEventName.TaskCompleted,
 					expect.anything(),
