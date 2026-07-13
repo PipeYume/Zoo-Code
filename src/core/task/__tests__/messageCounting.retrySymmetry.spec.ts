@@ -33,6 +33,15 @@ describe("empty-assistant-response retry keeps messageCounts.user symmetric", ()
 		messageCounts.user--
 	}
 
+	function simulateDeclineRetry(messageCounts: { user: number; assistant: number }) {
+		// Mirrors Task.ts's "User declined to retry" branch: the popped user message is
+		// re-added directly (not via shouldAddUserMessageToHistory) and a synthetic failure
+		// assistant message is appended, so both increments are paired explicitly here
+		// rather than going through simulateAttempt.
+		messageCounts.user++
+		messageCounts.assistant++
+	}
+
 	it("ends at 1 after one empty-response retry that then succeeds (not 2)", () => {
 		const messageCounts = { user: 0, assistant: 0 }
 
@@ -77,5 +86,23 @@ describe("empty-assistant-response retry keeps messageCounts.user symmetric", ()
 		simulateAttempt(messageCounts, { retryAttempt: 1, isEmptyUserContent: false, userMessageWasRemoved: true })
 
 		expect(messageCounts.user).toBeGreaterThanOrEqual(0)
+	})
+
+	it("stays symmetric when the user declines to retry after an empty response", () => {
+		const messageCounts = { user: 0, assistant: 0 }
+
+		// First attempt: user message added, count incremented.
+		simulateAttempt(messageCounts, { retryAttempt: 0, isEmptyUserContent: false, userMessageWasRemoved: false })
+		expect(messageCounts).toEqual({ user: 1, assistant: 0 })
+
+		// Assistant returns nothing -- popped, decremented.
+		simulatePopOnEmptyResponse(messageCounts)
+		expect(messageCounts).toEqual({ user: 0, assistant: 0 })
+
+		// User declines to retry: message is re-added directly, plus a synthetic failure
+		// assistant message -- exactly one logical user turn and one assistant turn
+		// occurred overall, so both counters must end at 1, not 0.
+		simulateDeclineRetry(messageCounts)
+		expect(messageCounts).toEqual({ user: 1, assistant: 1 })
 	})
 })

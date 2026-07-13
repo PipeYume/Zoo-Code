@@ -40,6 +40,14 @@ go—and, importantly, where they don't.
   We retain telemetry only as long as needed for product analytics and
   debugging. This PostHog-based telemetry does **not** collect your code or AI
   prompts, and you can opt out at any time through the settings.
+- **Zoo Code Cloud Task Sync**: If you sign in to Zoo Code Cloud, your task
+  history — including your prompts and the assistant's responses — is uploaded
+  to and stored on Zoo Code's servers so you can view and resume tasks across
+  devices. This is separate from, and more than, the PostHog usage telemetry
+  described above. Task sync is on by default once you're signed in (or follows
+  your organization's policy if your account belongs to one); you can turn it
+  off in Zoo Code Cloud account settings, and signing out of Zoo Code Cloud
+  stops it entirely.
 - **Marketplace Requests**: When you browse or search the Marketplace for Model
   Configuration Profiles (MCPs) or Custom Modes, Zoo Code makes a secure API
   call to Zoo Code's backend servers to retrieve listing information. These

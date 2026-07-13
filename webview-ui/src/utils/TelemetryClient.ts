@@ -6,10 +6,15 @@ class TelemetryClient {
 	private static instance: TelemetryClient
 	private static telemetryEnabled: boolean = false
 
-	public updateTelemetryState(telemetrySetting: TelemetrySetting, apiKey?: string, distinctId?: string) {
+	public updateTelemetryState(
+		telemetrySetting: TelemetrySetting,
+		apiKey?: string,
+		distinctId?: string,
+		vscodeTelemetryEnabled: boolean = true,
+	) {
 		posthog.reset()
 
-		if (isTelemetryOptedIn(telemetrySetting) && apiKey && distinctId) {
+		if (isTelemetryOptedIn(telemetrySetting) && apiKey && distinctId && vscodeTelemetryEnabled) {
 			TelemetryClient.telemetryEnabled = true
 
 			posthog.init(apiKey, {

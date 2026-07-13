@@ -88,6 +88,15 @@ import { getLMStudioModels } from "../../api/providers/fetchers/lmstudio"
 
 const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
 
+// Serializes handling of "telemetrySetting" messages. Each invocation reads the previous
+// setting, awaits a persistence write, then applies the new live telemetry state -- with no
+// serialization, two rapid messages (e.g. a fast toggle) can interleave across those awaits:
+// each invocation captures its own isOptedIn in a closure, so whichever invocation's tail end
+// (TelemetryService.instance.updateTelemetryState) happens to resolve *last* wins, regardless
+// of which message the user sent last. Chaining onto this promise ensures a given invocation's
+// entire read-write-apply sequence completes before the next one starts.
+let telemetrySettingQueue: Promise<void> = Promise.resolve()
+
 import { MarketplaceManager, MarketplaceItemType } from "../../services/marketplace"
 import { setPendingTodoList } from "../tools/UpdateTodoListTool"
 import {
@@ -2555,33 +2564,46 @@ export const webviewMessageHandler = async (
 			}
 			break
 		case "telemetrySetting": {
-			const telemetrySetting = message.text as TelemetrySetting
-			const previousSetting = getGlobalState("telemetrySetting") || "unset"
-			const isOptedIn = isTelemetryOptedIn(telemetrySetting)
-			const wasPreviouslyOptedIn = isTelemetryOptedIn(previousSetting)
+			// Chain onto the shared queue so a concurrent "telemetrySetting" message (e.g. a
+			// rapid toggle) can't interleave its read-write-apply sequence with this one -- see
+			// the telemetrySettingQueue comment above for why that matters. Swallow a prior
+			// link's rejection before chaining (rather than letting .then() propagate it) so one
+			// failed update can't permanently poison every subsequent telemetrySetting message
+			// for the rest of the session.
+			const thisUpdate = telemetrySettingQueue
+				.catch(() => undefined)
+				.then(async () => {
+					const telemetrySetting = message.text as TelemetrySetting
+					const previousSetting = getGlobalState("telemetrySetting") || "unset"
+					const isOptedIn = isTelemetryOptedIn(telemetrySetting)
+					const wasPreviouslyOptedIn = isTelemetryOptedIn(previousSetting)
 
-			// If turning telemetry OFF, fire event BEFORE disabling
-			if (wasPreviouslyOptedIn && !isOptedIn && TelemetryService.hasInstance()) {
-				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, telemetrySetting)
-			}
+					// If turning telemetry OFF, fire event BEFORE disabling
+					if (wasPreviouslyOptedIn && !isOptedIn && TelemetryService.hasInstance()) {
+						TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, telemetrySetting)
+					}
 
-			// Update the telemetry state. vscode.env.isTelemetryEnabled is ANDed in
-			// (matching extension.ts's onDidChangeTelemetryEnabled listener) so this can't
-			// re-enable telemetry while VS Code's global toggle is off -- the
-			// captureTelemetrySettingsChanged calls above/below still track the user's
-			// stored preference transition on its own, independent of that live toggle.
-			await updateGlobalState("telemetrySetting", telemetrySetting)
+					// Update the telemetry state. vscode.env.isTelemetryEnabled is ANDed in
+					// (matching extension.ts's onDidChangeTelemetryEnabled listener) so this can't
+					// re-enable telemetry while VS Code's global toggle is off -- the
+					// captureTelemetrySettingsChanged calls above/below still track the user's
+					// stored preference transition on its own, independent of that live toggle.
+					await updateGlobalState("telemetrySetting", telemetrySetting)
 
-			if (TelemetryService.hasInstance()) {
-				TelemetryService.instance.updateTelemetryState(isOptedIn && vscode.env.isTelemetryEnabled)
-			}
+					if (TelemetryService.hasInstance()) {
+						TelemetryService.instance.updateTelemetryState(isOptedIn && vscode.env.isTelemetryEnabled)
+					}
 
-			// If turning telemetry ON, fire event AFTER enabling
-			if (!wasPreviouslyOptedIn && isOptedIn && TelemetryService.hasInstance()) {
-				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, telemetrySetting)
-			}
+					// If turning telemetry ON, fire event AFTER enabling
+					if (!wasPreviouslyOptedIn && isOptedIn && TelemetryService.hasInstance()) {
+						TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, telemetrySetting)
+					}
 
-			await provider.postStateToWebview()
+					await provider.postStateToWebview()
+				})
+			telemetrySettingQueue = thisUpdate
+
+			await thisUpdate
 			break
 		}
 		case "debugSetting": {

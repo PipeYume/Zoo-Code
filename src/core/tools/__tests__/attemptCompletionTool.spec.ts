@@ -642,6 +642,55 @@ describe("attemptCompletionTool", () => {
 				expect(mockCaptureTaskCompleted).not.toHaveBeenCalled()
 			})
 
+			it("does not emit a duplicate public TaskCompleted event when replaying an already-completed subtask from history", async () => {
+				// Same stale-replay scenario as above, but the user then clicks the completion
+				// result's "yes" button again while revisiting -- this reruns the handler on a
+				// fresh Task instance, so the public RooCodeEventName.TaskCompleted API event
+				// (task.emit) must not fire a second time for a subtask that already completed
+				// (and already emitted it) the first time through.
+				const block: AttemptCompletionToolUse = {
+					type: "tool_use",
+					name: "attempt_completion",
+					params: { result: "9" },
+					nativeArgs: { result: "9" },
+					partial: false,
+				}
+				const mockProvider = {
+					log: vi.fn(),
+					getTaskWithId: vi.fn().mockImplementation((id: string) => {
+						if (id === "child-1") {
+							return Promise.resolve({ historyItem: { id, status: "completed" } })
+						}
+						throw new Error(`unexpected task id ${id}`)
+					}),
+					reopenParentFromDelegation: vi.fn(),
+				}
+
+				Object.assign(mockTask, {
+					taskId: "child-1",
+					parentTaskId: "parent-1",
+					providerRef: { deref: () => mockProvider },
+					ask: vi.fn().mockResolvedValue({ response: "yesButtonClicked", text: "", images: [] }),
+				})
+
+				const callbacks: AttemptCompletionCallbacks = {
+					askApproval: mockAskApproval,
+					handleError: mockHandleError,
+					pushToolResult: mockPushToolResult,
+					askFinishSubTaskApproval: mockAskFinishSubTaskApproval,
+					toolDescription: mockToolDescription,
+				}
+
+				await attemptCompletionTool.handle(mockTask as Task, block, callbacks)
+
+				expect(mockTask.emit).not.toHaveBeenCalledWith(
+					RooCodeEventName.TaskCompleted,
+					expect.anything(),
+					expect.anything(),
+					expect.anything(),
+				)
+			})
+
 			it("does not resume the parent when the parent is no longer awaiting this child", async () => {
 				const block: AttemptCompletionToolUse = {
 					type: "tool_use",

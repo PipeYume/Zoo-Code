@@ -1769,4 +1769,52 @@ describe("webviewMessageHandler - telemetrySetting", () => {
 
 		expect(TelemetryService.instance.updateTelemetryState).toHaveBeenCalledWith(false)
 	})
+
+	// Finding #12 regression: without serialization, two concurrent "telemetrySetting" messages
+	// each capture their own isOptedIn in a closure and apply it to TelemetryService whenever
+	// their own persistence write resolves -- with no ordering guarantee between the two
+	// invocations. A slow first write racing a fast second write could let the *first*
+	// message's (now-stale) intent win the live telemetry state, even though the *second*
+	// message reflects the user's actual final choice.
+	it("applies the most recently sent telemetrySetting last, even if an earlier message's write is slower", async () => {
+		const { TelemetryService } = await import("@roo-code/telemetry")
+		vi.mocked(TelemetryService.hasInstance).mockReturnValue(true)
+		vi.mocked(vscode.env).isTelemetryEnabled = true
+
+		// Track the "stored" setting so the second call's getGlobalState read reflects
+		// whatever the first call has (or hasn't yet) written -- mirrors ContextProxy's real
+		// synchronous stateCache update inside setValue.
+		let storedSetting: string | undefined
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation(() => storedSetting)
+
+		let resolveSlowWrite!: () => void
+		const slowWrite = new Promise<void>((resolve) => {
+			resolveSlowWrite = resolve
+		})
+
+		vi.mocked(mockClineProvider.contextProxy.setValue).mockImplementation(async (_key, value) => {
+			if (value === "disabled") {
+				// First message's write is slow -- resolves only after we explicitly release it
+				// below, once the second (fast) message has already been sent.
+				await slowWrite
+			}
+			storedSetting = value as string
+		})
+
+		// First message: turn telemetry off (slow write).
+		const first = webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "disabled" })
+
+		// Second message: turn telemetry back on (fast write), sent immediately after.
+		const second = webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "enabled" })
+
+		// Now let the first message's write proceed.
+		resolveSlowWrite()
+
+		await Promise.all([first, second])
+
+		// The user's final, most-recently-sent choice was "enabled" -- the live telemetry
+		// state must reflect that, not "disabled" from the stale, slower first message.
+		const calls = vi.mocked(TelemetryService.instance.updateTelemetryState).mock.calls
+		expect(calls.at(-1)).toEqual([true])
+	})
 })

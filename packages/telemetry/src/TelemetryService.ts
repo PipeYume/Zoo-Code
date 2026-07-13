@@ -27,6 +27,15 @@ const CIRCUIT_BREAKER_WINDOW_MS = 10 * 60 * 1000
 const CIRCUIT_BREAKER_COOLDOWN_MS = 10 * 60 * 1000
 
 /**
+ * Upper bound on how long shutdown() will wait for in-flight capture calls to drain.
+ * deactivate() awaits shutdown() before terminal cleanup, so an unbounded wait here
+ * (e.g. a capture stuck on network I/O that never resolves/rejects) would block the
+ * extension host from ever finishing deactivation. Losing an in-flight capture on
+ * timeout is an acceptable tradeoff against blocking shutdown indefinitely.
+ */
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 3000
+
+/**
  * TelemetryService wrapper class that defers initialization.
  * This ensures that we only create the various clients after environment
  * variables are loaded.
@@ -42,6 +51,10 @@ export class TelemetryService {
 	// shutdown() can drain them before flushing/closing the clients -- otherwise a capture that's
 	// still mid-flight when shutdown() runs could be lost entirely.
 	private pendingClientCalls = new Set<Promise<unknown>>()
+
+	// Set at the start of shutdown() so new captureEvent/captureException calls stop being
+	// tracked (and, once clients are closing, stop being sent) instead of racing the drain.
+	private isShuttingDown = false
 
 	constructor(private clients: TelemetryClient[]) {}
 
@@ -133,7 +146,7 @@ export class TelemetryService {
 	 */
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	public captureEvent(eventName: TelemetryEventName, properties?: Record<string, any>): void {
-		if (!this.isReady) {
+		if (!this.isReady || this.isShuttingDown) {
 			return
 		}
 
@@ -150,7 +163,7 @@ export class TelemetryService {
 	 * @param additionalProperties Additional properties to include with the exception
 	 */
 	public captureException(error: Error, additionalProperties?: Record<string, unknown>): void {
-		if (!this.isReady) {
+		if (!this.isReady || this.isShuttingDown) {
 			return
 		}
 
@@ -182,6 +195,11 @@ export class TelemetryService {
 	 * Note "attempt_completion" means the model called that tool, not that the
 	 * user accepted the result -- it fires the same way whether the user goes
 	 * on to accept, decline, or give feedback instead.
+	 *
+	 * IMPORTANT for anyone querying this event (e.g. a PostHog dashboard/funnel):
+	 * "one row" no longer means "one finished task". Group by taskId and sum
+	 * toolsUsed/messageCount across completionReason installments -- do not
+	 * treat `count()` of raw events as a count of completed tasks.
 	 */
 	public captureTaskCompleted(
 		taskId: string,
@@ -370,12 +388,23 @@ export class TelemetryService {
 			return
 		}
 
+		// Stop accepting new captures immediately, before draining -- otherwise a steady trickle
+		// of new calls (e.g. from a teardown-time error handler) could keep pendingClientCalls
+		// non-empty indefinitely and the drain loop below would never terminate on its own.
+		this.isShuttingDown = true
+
 		// Drain any in-flight capture/captureException calls first, so a client's shutdown()
 		// (which flushes its queue) can't run ahead of a capture that hasn't been enqueued yet.
-		// Loop rather than a single snapshot: a call queued while draining (e.g. from a
-		// teardown-time error handler) would otherwise be missed by one Promise.all pass.
-		while (this.pendingClientCalls.size > 0) {
-			await Promise.all(this.pendingClientCalls)
+		// Loop rather than a single snapshot: a call already in flight when draining started may
+		// itself still be tracked by the time we check again. Bounded by a timeout so a capture
+		// stuck on network I/O that never resolves/rejects can't block deactivate() forever --
+		// losing that one capture is an acceptable tradeoff against hanging terminal cleanup.
+		const drainStart = Date.now()
+		while (this.pendingClientCalls.size > 0 && Date.now() - drainStart < SHUTDOWN_DRAIN_TIMEOUT_MS) {
+			await Promise.race([
+				Promise.all(this.pendingClientCalls),
+				new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_TIMEOUT_MS - (Date.now() - drainStart))),
+			])
 		}
 
 		await Promise.all(this.clients.map((client) => client.shutdown()))

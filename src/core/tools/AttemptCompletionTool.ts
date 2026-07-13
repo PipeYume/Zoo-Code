@@ -187,7 +187,12 @@ export class AttemptCompletionTool extends BaseTool<"attempt_completion"> {
 			const { response, text, images } = await task.ask("completion_result", "", false)
 
 			if (response === "yesButtonClicked") {
-				this.emitPublicTaskCompleted(task)
+				// A stale history replay reruns this handler on a fresh Task instance for a
+				// subtask that already completed (and already emitted TaskCompleted) the first
+				// time through -- re-acknowledging it from history must not emit it again.
+				if (!isStaleHistoryReplay) {
+					this.emitPublicTaskCompleted(task)
+				}
 				return
 			}
 

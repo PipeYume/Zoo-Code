@@ -406,6 +406,22 @@ describe("extension.ts", () => {
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
 		})
+
+		test("pushes a state update to the webview so its own PostHog client picks up the new vscode.env.isTelemetryEnabled value", async () => {
+			const vscode = await import("vscode")
+			const { ClineProvider } = await import("../core/webview/ClineProvider")
+
+			const { activate } = await import("../extension")
+			await activate(mockContext)
+
+			const visibleInstance = (ClineProvider as any).getVisibleInstance()
+			vi.mocked(visibleInstance.postStateToWebviewWithoutClineMessages).mockClear()
+
+			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
+			onDidChangeHandler(undefined as any)
+
+			expect(visibleInstance.postStateToWebviewWithoutClineMessages).toHaveBeenCalled()
+		})
 	})
 
 	describe("deactivate", () => {

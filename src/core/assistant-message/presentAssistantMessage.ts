@@ -42,6 +42,39 @@ import { formatResponse } from "../prompts/responses"
 import { sanitizeToolUseId } from "../../utils/tool-id"
 
 /**
+ * Maps a (possibly model-controlled) tool name to the key that's safe to record for
+ * telemetry (recordToolUsage/recordToolError). block.name must never reach analytics
+ * unvalidated, since it becomes a nested property key on the Task Completed event:
+ * - A registered custom tool records as "custom_tool".
+ * - A statically known tool name (including "use_mcp_tool" itself) records as-is.
+ * - A dynamic MCP tool name (the "mcp_serverName_toolName" convention accepted by
+ *   isValidToolName) records as "use_mcp_tool", matching how the dedicated
+ *   mcp_tool_use block type above always records -- the serverName/toolName portion
+ *   is model-controlled and must never become a raw toolsUsed key itself.
+ * - Anything else (including a name that merely starts with "mcp_" but isn't a real
+ *   dynamic MCP tool, or any other invalid/malformed name) records as "invalid_tool_call".
+ */
+export function toTelemetryToolName(
+	toolName: string,
+	isCustomTool: boolean,
+	experiments?: Record<string, boolean>,
+): ToolName {
+	if (isCustomTool) {
+		return "custom_tool"
+	}
+
+	if (toolName.startsWith("mcp_")) {
+		return "use_mcp_tool"
+	}
+
+	if (isValidToolName(toolName, experiments)) {
+		return toolName
+	}
+
+	return "invalid_tool_call"
+}
+
+/**
  * Processes and presents assistant message content to the user interface.
  *
  * This function is the core message handling system that:
@@ -422,7 +455,10 @@ export async function presentAssistantMessage(cline: Task) {
 
 					cline.consecutiveMistakeCount++
 					try {
-						cline.recordToolError(block.name as ToolName, errorMessage)
+						// isKnownTool is already true here, but block.name may still be a
+						// model-controlled "mcp_..." string rather than a real MCP tool --
+						// bucket dynamic MCP names the same way as the recordToolUsage path.
+						cline.recordToolError(toTelemetryToolName(block.name, false, stateExperiments), errorMessage)
 					} catch {
 						// Best-effort only
 					}
@@ -599,16 +635,31 @@ export async function presentAssistantMessage(cline: Task) {
 						is_error: true,
 					})
 
+					// Record the failed attempt so it isn't silently missing from toolsUsed --
+					// otherwise a tool that's disallowed for the current mode (or fails other
+					// validation) leaves no telemetry trace at all, unlike every other failure
+					// path in this function. Bucketed the same way as the success path above so
+					// block.name (model-controlled) never reaches analytics unvalidated.
+					const isCustomToolAttempt = Boolean(
+						stateExperiments?.customTools && customToolRegistry.has(block.name),
+					)
+					cline.recordToolError(
+						toTelemetryToolName(block.name, isCustomToolAttempt, stateExperiments),
+						error.message,
+					)
+
 					break
 				}
 
 				// Record tool usage only for known tool names -- block.name is model-controlled
 				// and must never reach analytics (recordToolUsage/toolsUsed) unvalidated, since it
-				// becomes a nested property key on the Task Completed event.
-				const isCustomTool = stateExperiments?.customTools && customToolRegistry.has(block.name)
+				// becomes a nested property key on the Task Completed event. Dynamic MCP tool
+				// names are bucketed under the static "use_mcp_tool" key by toTelemetryToolName,
+				// same as the mcp_tool_use block type above -- block.name here could otherwise be
+				// any model-controlled "mcp_..." string, not necessarily a real MCP tool.
+				const isCustomTool = Boolean(stateExperiments?.customTools && customToolRegistry.has(block.name))
 				if (isCustomTool || isValidToolName(block.name, stateExperiments)) {
-					const recordName = isCustomTool ? "custom_tool" : block.name
-					cline.recordToolUsage(recordName)
+					cline.recordToolUsage(toTelemetryToolName(block.name, isCustomTool, stateExperiments))
 				}
 
 				// Track legacy format usage for read_file tool (for migration monitoring)

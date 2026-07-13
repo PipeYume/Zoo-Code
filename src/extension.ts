@@ -185,6 +185,11 @@ export async function activate(context: vscode.ExtensionContext) {
 			TelemetryService.instance.updateTelemetryState(
 				isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
 			)
+
+			// Push the new vscode.env.isTelemetryEnabled value to the webview too, so its
+			// own PostHog client (gated separately in TelemetryClient.ts) can't keep
+			// sending events after the global toggle flips off mid-session.
+			void ClineProvider.getVisibleInstance()?.postStateToWebviewWithoutClineMessages()
 		}),
 	)
 

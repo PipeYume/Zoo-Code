@@ -239,6 +239,29 @@ describe("presentAssistantMessage - Unknown Tool Handling", () => {
 		expect(mockTask.recordToolError).not.toHaveBeenCalledWith(maliciousName, expect.anything())
 	})
 
+	it("does not record a raw mcp_-prefixed model-supplied name in tool usage analytics either", async () => {
+		// isValidToolName() (mocked here to always return false, i.e. this suite's "unknown
+		// tool" path) would, in production, treat ANY "mcp_"-prefixed string as a valid
+		// dynamic MCP tool name. Exercise that prefix specifically so a crafted
+		// "mcp_<injection>" name is also confirmed to never reach analytics as a raw key.
+		const toolCallId = "tool_call_mcp_analytics_test"
+		const maliciousMcpName = "mcp_'; DROP TABLE users; --"
+		mockTask.assistantMessageContent = [
+			{
+				type: "tool_use",
+				id: toolCallId,
+				name: maliciousMcpName,
+				params: {},
+				partial: false,
+			},
+		]
+
+		await presentAssistantMessage(mockTask)
+
+		expect(mockTask.recordToolUsage).not.toHaveBeenCalledWith(maliciousMcpName)
+		expect(mockTask.recordToolError).not.toHaveBeenCalledWith(maliciousMcpName, expect.anything())
+	})
+
 	it("should still work with didRejectTool flag for unknown tool", async () => {
 		const toolCallId = "tool_call_rejected_test"
 		mockTask.assistantMessageContent = [

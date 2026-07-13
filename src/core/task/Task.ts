@@ -3758,21 +3758,29 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 							continue
 						} else {
 							// User declined to retry
-							// Re-add the user message we removed.
+							// Re-add the user message we removed (see messageCounts.user-- above)
+							// and increment messageCounts.user to match, same as the normal
+							// add-to-history path -- otherwise this abandoned-task path
+							// permanently undercounts by one.
 							await this.addToApiConversationHistory({
 								role: "user",
 								content: currentUserContent,
 							})
+							this.messageCounts.user++
 
 							await this.say(
 								"error",
 								"Unexpected API Response: The language model did not provide any assistant messages. This may indicate an issue with the API or the model's output.",
 							)
 
+							// Synthetic assistant message recording the failure -- increment
+							// messageCounts.assistant to match, same as the normal
+							// assistant-message-saved path.
 							await this.addToApiConversationHistory({
 								role: "assistant",
 								content: [{ type: "text", text: "Failure: I did not provide a response." }],
 							})
+							this.messageCounts.assistant++
 						}
 					}
 				}
