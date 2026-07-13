@@ -648,12 +648,22 @@ export const webviewMessageHandler = async (
 			// vscode.env.isTelemetryEnabled is ANDed in (matching extension.ts's
 			// onDidChangeTelemetryEnabled listener) so a webview reload can't re-enable
 			// telemetry while VS Code's global toggle is off.
-			provider.getStateToPostToWebview().then((state) => {
-				const { telemetrySetting } = state
-				TelemetryService.instance.updateTelemetryState(
-					isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
-				)
-			})
+			//
+			// Read the setting synchronously via getGlobalState (same as the "telemetrySetting"
+			// handler below) rather than awaiting provider.getStateToPostToWebview() -- that
+			// async gap let this continuation resolve after a concurrent "telemetrySetting"
+			// message's queued update and clobber it with a stale value, the same interleaving
+			// class of bug telemetrySettingQueue exists to prevent. Routing through the queue
+			// here too means webviewDidLaunch can't race a concurrent telemetrySetting message
+			// either.
+			telemetrySettingQueue = telemetrySettingQueue
+				.catch(() => undefined)
+				.then(async () => {
+					const telemetrySetting = getGlobalState("telemetrySetting") || "unset"
+					TelemetryService.instance.updateTelemetryState(
+						isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
+					)
+				})
 
 			provider.isViewLaunched = true
 			break

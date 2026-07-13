@@ -976,7 +976,7 @@
 	},
 	"footer": {
 		"telemetry": {
-			"label": "Hata ve kullanım raporlamaya izin ver",
+			"label": "Hata ve kullanım raporlamasına izin ver",
 			"description": "Adınız veya hesabınız yerine kuruluma bağlı bir tanımlayıcıyla ilişkilendirilmiş kullanım verileri ve hata raporları göndererek Zoo Code'u geliştirmeye yardım edin. Bu telemetri kodunuzu veya istemlerinizi toplamaz. Daha fazla ayrıntı için <privacyLink>gizlilik politikamıza</privacyLink> bakın. Bunu istediğiniz zaman kapatabilirsiniz."
 		},
 		"settings": {

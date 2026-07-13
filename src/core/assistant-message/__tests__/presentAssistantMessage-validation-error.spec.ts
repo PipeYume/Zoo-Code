@@ -3,6 +3,15 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { presentAssistantMessage } from "../presentAssistantMessage"
 
+type ToolResult = { type: string; tool_use_id: string; is_error?: boolean }
+type MockTask = Record<string, unknown> & {
+	assistantMessageContent: unknown[]
+	userMessageContent: ToolResult[]
+	pushToolResultToUserContent: ReturnType<typeof vi.fn>
+	recordToolUsage: ReturnType<typeof vi.fn>
+	recordToolError: ReturnType<typeof vi.fn>
+}
+
 // Mock dependencies
 vi.mock("../../task/Task")
 vi.mock("../../tools/validateToolUse", () => ({
@@ -24,7 +33,7 @@ vi.mock("@roo-code/telemetry", () => ({
 }))
 
 describe("presentAssistantMessage - validateToolUse throws", () => {
-	let mockTask: any
+	let mockTask: MockTask
 
 	beforeEach(() => {
 		mockTask = {
@@ -59,11 +68,11 @@ describe("presentAssistantMessage - validateToolUse throws", () => {
 			},
 			say: vi.fn().mockResolvedValue(undefined),
 			ask: vi.fn().mockResolvedValue({ response: "yesButtonClicked" }),
-		}
+		} as unknown as MockTask
 
-		mockTask.pushToolResultToUserContent = vi.fn().mockImplementation((toolResult: any) => {
+		mockTask.pushToolResultToUserContent = vi.fn().mockImplementation((toolResult: ToolResult) => {
 			const existingResult = mockTask.userMessageContent.find(
-				(block: any) => block.type === "tool_result" && block.tool_use_id === toolResult.tool_use_id,
+				(block) => block.type === "tool_result" && block.tool_use_id === toolResult.tool_use_id,
 			)
 			if (existingResult) {
 				return false
@@ -86,7 +95,7 @@ describe("presentAssistantMessage - validateToolUse throws", () => {
 			},
 		]
 
-		await presentAssistantMessage(mockTask)
+		await presentAssistantMessage(mockTask as never)
 
 		// The failed attempt must not vanish from telemetry: neither recordToolUsage (the tool
 		// never actually ran) nor silence -- it must show up via recordToolError instead.
@@ -98,9 +107,9 @@ describe("presentAssistantMessage - validateToolUse throws", () => {
 
 		// The tool_result error is still sent to the model as before.
 		const toolResult = mockTask.userMessageContent.find(
-			(item: any) => item.type === "tool_result" && item.tool_use_id === toolCallId,
+			(item) => item.type === "tool_result" && item.tool_use_id === toolCallId,
 		)
 		expect(toolResult).toBeDefined()
-		expect(toolResult.is_error).toBe(true)
+		expect(toolResult?.is_error).toBe(true)
 	})
 })

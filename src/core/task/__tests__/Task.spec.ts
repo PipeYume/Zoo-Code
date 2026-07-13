@@ -239,7 +239,7 @@ const mockMessages = [
 ]
 
 describe("Cline", () => {
-	let mockProvider: any
+	let mockProvider: ClineProvider
 	let mockApiConfig: ProviderSettings
 	let mockOutputChannel: any
 	let mockExtensionContext: vscode.ExtensionContext
@@ -2980,7 +2980,7 @@ describe("Telemetry installments (idle/shutdown flush)", () => {
 			} as unknown as vscode.OutputChannel,
 			"sidebar",
 			new ContextProxy(mockExtensionContext),
-		) as any
+		)
 		mockProvider.postMessageToWebview = vi.fn().mockResolvedValue(undefined)
 		mockProvider.postStateToWebview = vi.fn().mockResolvedValue(undefined)
 

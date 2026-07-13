@@ -713,7 +713,7 @@ describe("MODEL_CACHE_EMPTY_RESPONSE throttling", () => {
 
 		const NodeCacheModule = await import("node-cache")
 		const MockedNodeCache = vi.mocked(NodeCacheModule.default)
-		const mockCache: any = new MockedNodeCache()
+		const mockCache = vi.mocked(new MockedNodeCache())
 		mockCache.get.mockReturnValue(undefined)
 	})
 

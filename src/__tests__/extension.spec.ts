@@ -288,7 +288,7 @@ describe("extension.ts", () => {
 					telemetryClient: null,
 					authService: null,
 					hasActiveSession: vi.fn().mockReturnValue(false),
-				} as any
+				} as unknown as never
 			})
 
 			vi.mocked(CloudService.hasInstance).mockReturnValue(true)
@@ -297,7 +297,11 @@ describe("extension.ts", () => {
 			const { activate } = await import("../extension")
 			await activate(mockContext)
 
-			const provider = (ClineProvider as any).getVisibleInstance()
+			const provider = (
+				ClineProvider as unknown as {
+					getVisibleInstance(): { postStateToWebviewWithoutClineMessages: ReturnType<typeof vi.fn> }
+				}
+			).getVisibleInstance()
 			provider.postStateToWebviewWithoutClineMessages.mockClear()
 
 			await authStateChangedHandler!({
@@ -324,7 +328,7 @@ describe("extension.ts", () => {
 		beforeEach(async () => {
 			vi.resetModules()
 			const vscode = await import("vscode")
-			;(vscode.env as any).isTelemetryEnabled = true
+			;(vscode.env as { isTelemetryEnabled: boolean }).isTelemetryEnabled = true
 		})
 
 		test("registers a listener for vscode.env.onDidChangeTelemetryEnabled", async () => {
@@ -342,9 +346,11 @@ describe("extension.ts", () => {
 			const { TelemetryService } = await import("@roo-code/telemetry")
 			const { ContextProxy } = await import("../core/config/ContextProxy")
 
-			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			const mockContextProxyInstance = await (
+				ContextProxy.getInstance as unknown as () => Promise<{ getGlobalState: ReturnType<typeof vi.fn> }>
+			)()
 			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("enabled")
-			;(vscode.env as any).isTelemetryEnabled = true
+			;(vscode.env as { isTelemetryEnabled: boolean }).isTelemetryEnabled = true
 
 			const { activate } = await import("../extension")
 			await activate(mockContext)
@@ -355,7 +361,7 @@ describe("extension.ts", () => {
 			// The real vscode.env.onDidChangeTelemetryEnabled event carries no payload; the handler
 			// must read the current vscode.env.isTelemetryEnabled value, not any argument it's called with.
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(undefined as any)
+			onDidChangeHandler(undefined as never)
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(true)
 		})
@@ -365,9 +371,11 @@ describe("extension.ts", () => {
 			const { TelemetryService } = await import("@roo-code/telemetry")
 			const { ContextProxy } = await import("../core/config/ContextProxy")
 
-			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			const mockContextProxyInstance = await (
+				ContextProxy.getInstance as unknown as () => Promise<{ getGlobalState: ReturnType<typeof vi.fn> }>
+			)()
 			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("disabled")
-			;(vscode.env as any).isTelemetryEnabled = true
+			;(vscode.env as { isTelemetryEnabled: boolean }).isTelemetryEnabled = true
 
 			const { activate } = await import("../extension")
 			await activate(mockContext)
@@ -376,7 +384,7 @@ describe("extension.ts", () => {
 			updateTelemetryStateMock.mockClear()
 
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(undefined as any)
+			onDidChangeHandler(undefined as never)
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
 		})
@@ -386,9 +394,11 @@ describe("extension.ts", () => {
 			const { TelemetryService } = await import("@roo-code/telemetry")
 			const { ContextProxy } = await import("../core/config/ContextProxy")
 
-			const mockContextProxyInstance = await (ContextProxy.getInstance as any)()
+			const mockContextProxyInstance = await (
+				ContextProxy.getInstance as unknown as () => Promise<{ getGlobalState: ReturnType<typeof vi.fn> }>
+			)()
 			vi.mocked(mockContextProxyInstance.getGlobalState).mockReturnValue("enabled")
-			;(vscode.env as any).isTelemetryEnabled = true
+			;(vscode.env as { isTelemetryEnabled: boolean }).isTelemetryEnabled = true
 
 			const { activate } = await import("../extension")
 			await activate(mockContext)
@@ -399,10 +409,10 @@ describe("extension.ts", () => {
 			// Simulate the user turning off VS Code's global telemetry toggle: the live env value
 			// flips before the event fires, and the handler must honor it rather than only the
 			// stored extension setting.
-			;(vscode.env as any).isTelemetryEnabled = false
+			;(vscode.env as { isTelemetryEnabled: boolean }).isTelemetryEnabled = false
 
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(undefined as any)
+			onDidChangeHandler(undefined as never)
 
 			expect(updateTelemetryStateMock).toHaveBeenCalledWith(false)
 		})
@@ -414,11 +424,15 @@ describe("extension.ts", () => {
 			const { activate } = await import("../extension")
 			await activate(mockContext)
 
-			const visibleInstance = (ClineProvider as any).getVisibleInstance()
+			const visibleInstance = (
+				ClineProvider as unknown as {
+					getVisibleInstance(): { postStateToWebviewWithoutClineMessages: ReturnType<typeof vi.fn> }
+				}
+			).getVisibleInstance()
 			vi.mocked(visibleInstance.postStateToWebviewWithoutClineMessages).mockClear()
 
 			const onDidChangeHandler = vi.mocked(vscode.env.onDidChangeTelemetryEnabled).mock.calls[0][0]
-			onDidChangeHandler(undefined as any)
+			onDidChangeHandler(undefined as never)
 
 			expect(visibleInstance.postStateToWebviewWithoutClineMessages).toHaveBeenCalled()
 		})

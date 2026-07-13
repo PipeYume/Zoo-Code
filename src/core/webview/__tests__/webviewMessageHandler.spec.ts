@@ -11,6 +11,10 @@ vi.mock("../../../api/providers/fetchers/lmstudio", () => ({
 	getLMStudioModels: vi.fn(),
 }))
 
+vi.mock("../../../integrations/theme/getTheme", () => ({
+	getTheme: vi.fn().mockResolvedValue({}),
+}))
+
 vi.mock("../../../integrations/openai-codex/oauth", () => ({
 	openAiCodexOAuthManager: {
 		getAccessToken: vi.fn(),
@@ -1816,5 +1820,113 @@ describe("webviewMessageHandler - telemetrySetting", () => {
 		// state must reflect that, not "disabled" from the stale, slower first message.
 		const calls = vi.mocked(TelemetryService.instance.updateTelemetryState).mock.calls
 		expect(calls.at(-1)).toEqual([true])
+	})
+
+	// CodeRabbit follow-up on the finding #12 fix: webviewDidLaunch's telemetry init read state
+	// via an async provider.getStateToPostToWebview().then(...) continuation, outside
+	// telemetrySettingQueue -- so it could resolve after a concurrent "telemetrySetting" message
+	// and clobber that message's queued (correct) update with a stale value. webviewDidLaunch now
+	// reads getGlobalState synchronously and is routed through the same queue.
+	it("does not let webviewDidLaunch's telemetry init race and clobber a concurrent telemetrySetting message", async () => {
+		const { TelemetryService } = await import("@roo-code/telemetry")
+		vi.mocked(TelemetryService.hasInstance).mockReturnValue(true)
+		vi.mocked(vscode.env).isTelemetryEnabled = true
+
+		// webviewDidLaunch starts out "unset" (disclosed opt-out default -- opted in). Scoped to
+		// the "telemetrySetting" key specifically -- webviewDidLaunch also calls
+		// updateGlobalState("customModes", ...) through the same contextProxy mock, which must
+		// not clobber storedSetting.
+		let storedSetting: string | undefined = "unset"
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation((key: string) =>
+			key === "telemetrySetting" ? storedSetting : undefined,
+		)
+		vi.mocked(mockClineProvider.contextProxy.setValue).mockImplementation(async (key: string, value) => {
+			if (key === "telemetrySetting") {
+				storedSetting = value as string
+			}
+		})
+
+		vi.mocked(mockClineProvider.customModesManager.getCustomModes).mockResolvedValue([])
+		const providerForLaunch = mockClineProvider as unknown as {
+			getMcpHub: ReturnType<typeof vi.fn>
+			providerSettingsManager: { listConfig: ReturnType<typeof vi.fn> }
+			getStateToPostToWebview: ReturnType<typeof vi.fn>
+		}
+		providerForLaunch.getMcpHub = vi.fn().mockReturnValue(undefined)
+		providerForLaunch.providerSettingsManager = {
+			listConfig: vi.fn().mockResolvedValue(undefined),
+		}
+
+		// Deferred-promise handshake instead of setTimeout delays, so ordering is enforced
+		// explicitly rather than by racing real clock delays. Signals when webviewDidLaunch has
+		// taken its (pre-fix) state snapshot -- only fires under the *old* code path
+		// (provider.getStateToPostToWebview().then(...)); the fix never calls it at all.
+		let snapshotTaken!: () => void
+		const snapshotTakenPromise = new Promise<void>((resolve) => {
+			snapshotTaken = resolve
+		})
+		let releaseSnapshot!: () => void
+		const snapshotReleased = new Promise<void>((resolve) => {
+			releaseSnapshot = resolve
+		})
+
+		// Snapshots storedSetting at call time (mirroring the real ClineProvider building its
+		// state object synchronously before any internal awaits), signals it was taken, then
+		// waits until the test explicitly releases it -- by which point the concurrent
+		// telemetrySetting write below has already landed, making the snapshot genuinely stale
+		// once its .then() callback finally runs.
+		providerForLaunch.getStateToPostToWebview = vi.fn().mockImplementation(async () => {
+			const snapshot = storedSetting
+			snapshotTaken()
+			await snapshotReleased
+			return { telemetrySetting: snapshot }
+		})
+
+		// webviewDidLaunch fires first (e.g. webview reload) -- its telemetry init is now queued
+		// behind telemetrySettingQueue rather than resolving independently.
+		const launch = webviewMessageHandler(mockClineProvider, { type: "webviewDidLaunch" })
+
+		// Wait for webviewDidLaunch to either take its (pre-fix) snapshot, or flush a fixed
+		// number of microtask turns as a same-tick fallback for the fixed code path (which never
+		// triggers that signal) -- enough for its synchronous prefix (await getCustomModes(),
+		// await updateGlobalState()) to run, without relying on a wall-clock timer.
+		await Promise.race([
+			snapshotTakenPromise,
+			(async () => {
+				for (let i = 0; i < 10; i++) {
+					await Promise.resolve()
+				}
+			})(),
+		])
+
+		// A concurrent "telemetrySetting" message turns telemetry off, and is awaited to
+		// completion -- including its own updateTelemetryState(false) call -- *before* the
+		// deferred (pre-fix-only) snapshot below is released. Against the pre-fix code, this
+		// proves the snapshot it captured earlier ("unset") is genuinely stale by the time its
+		// .then() callback finally runs: the user's real, later choice already landed.
+		const disable = webviewMessageHandler(mockClineProvider, { type: "telemetrySetting", text: "disabled" })
+		await disable
+
+		// Now release the deferred snapshot so a getStateToPostToWebview() call, if the old code
+		// path is exercised, resolves (with its already-captured, now-stale value) only after
+		// the disable write above has fully landed.
+		const snapshotResolved = vi.mocked(providerForLaunch.getStateToPostToWebview).mock.results[0]?.value as
+			| Promise<unknown>
+			| undefined
+		releaseSnapshot()
+
+		await Promise.all([launch, snapshotResolved])
+
+		// webviewDidLaunch's telemetry init is fire-and-forget from the handler's own point of
+		// view (the "webviewDidLaunch" case doesn't await it), so even awaiting
+		// getStateToPostToWebview() directly isn't enough to observe its .then() callback --
+		// flush one more microtask turn for that callback to run.
+		await Promise.resolve()
+
+		// The user's explicit "disabled" choice must be the final state -- webviewDidLaunch's
+		// queued re-application of the (by-then-stale) "unset"/opted-in state must not run after
+		// and override it.
+		const calls = vi.mocked(TelemetryService.instance.updateTelemetryState).mock.calls
+		expect(calls.at(-1)).toEqual([false])
 	})
 })
