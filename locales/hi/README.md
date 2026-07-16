@@ -30,41 +30,15 @@
 
 Roo Code से Zoo Code में आने के लिए एक quick guide तुम्हें [Roo→Zoo migration guide](https://docs.zoocode.dev/roo-to-zoo-migration) में मिल जाएगी। We plan to help users as much as possible during the transition, और उसी support के लिए हमारा [Reddit](https://www.reddit.com/r/ZooCode) और [Discord](https://discord.gg/VxfP4Vx3gX) है। अगर तुम्हें कोई problem हो या कोई question हो, आकर पूछो।
 
-## v3.55.0 में नया क्या है
+## v3.68.0 में नया क्या है
 
-**Zoo Code का पहला feature release** marketplace handoff पर आगे बढ़ता है और इसमें एक नया provider, Roo Code के upstream sunset merge, और chat, provider settings, और rendering में user-facing fixes की एक नई खेप शामिल है।
-
-- Xiaomi MiMo को first-class API provider के रूप में जोड़ा गया।
-- Roo Code के upstream sunset merge और उससे जुड़े platform updates को शामिल किया गया।
-- MCP sign-in copy, Gemini की full-tool requests, और unsupported models के लिए OpenAI temperature handling को ठीक किया गया।
-- Markdown में single-tilde rendering और diagnostics temp-file naming को ठीक किया गया।
-- Z.AI, GLM, और Vertex AI के लिए provider defaults और region coverage को बेहतर बनाया गया।
-
-<details>
-  <summary>🌐 उपलब्ध भाषाएँ</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **GLM-5.2 समर्थन के साथ Friendli प्रदाता** — Friendli के जरिए नवीनतम GLM मॉडल का उपयोग करें।
+- **Ollama के लिए नेटिव thinking/reasoning समर्थन** — Ollama मॉडल इस्तेमाल करते समय reasoning आउटपुट को शुरू से अंत तक सुरक्षित रखें।
+- **Anthropic कस्टम `apiModelId` फिक्स** — कस्टम Anthropic मॉडल ID अब चुपचाप `claude-sonnet-4-5` पर वापस जाने के बजाय चुनी हुई रहती हैं।
+- फिक्स: Ollama प्रदाता में tool result हैंडलिंग और समय से पहले context condensing।
+- फिक्स: delegated subtask रुकने पर parent-child task link को बनाए रखें।
+- अधिक विश्वसनीय responses के लिए Anthropic Vertex Claude content block handling में सुधार।
+- CI, nightly publishing, और dependency/tooling अपडेट्स।
 
 ## Zoo Code आपके लिए क्या कर सकता है?
 

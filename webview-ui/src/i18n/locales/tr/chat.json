@@ -40,6 +40,14 @@
 		"title": "Yeni Görev Başlat",
 		"tooltip": "Yeni bir görev başlat"
 	},
+	"seeNewChanges": {
+		"title": "Yeni Değişiklikleri Gör",
+		"tooltip": "Son prompt'undan bu yana yapılan değişiklikleri göster"
+	},
+	"restoreChanges": {
+		"title": "Değişiklikleri Geri Yükle",
+		"tooltip": "Dosyaları ve görev durumunu son prompt'una geri yükle"
+	},
 	"proceedAnyways": {
 		"title": "Yine de Devam Et",
 		"tooltip": "Komut çalışırken devam et"
@@ -221,6 +229,7 @@
 		"abort": "İptal Et",
 		"pid": "PID: {{pid}}",
 		"exitStatus": "{{exitCode}} durumuyla çıkıldı",
+		"malformedCommand": "Hatalı komut: shell sozdizimi hatasi",
 		"manageCommands": "Komut İzinlerini Yönet",
 		"commandManagementDescription": "Komut izinlerini yönetin: Otomatik yürütmeye izin vermek için ✓'e, yürütmeyi reddetmek için ✗'e tıklayın. Desenler açılıp kapatılabilir veya listelerden kaldırılabilir. <settingsLink>Tüm ayarları görüntüle</settingsLink>",
 		"addToAllowed": "İzin verilenler listesine ekle",
@@ -331,16 +340,11 @@
 	"announcement": {
 		"title": "Zoo Code {{version}} yayınlandı",
 		"support": "Lütfen <githubLink>GitHub</githubLink>'da bize yıldız vererek Zoo Code'u destekle.",
-		"handoff": {
-			"heading": "Roo Code geri döndü! Artık Zoo Code adlı, topluluk tarafından sürdürülen bir eklenti!!",
-			"description": "Takip etmiyorsan kaçırmış olabilirsin: Roo Code ekibi kısa süre önce Roo Code geliştirmesini aşamalı olarak sonlandırdığını ve yaptıkları çalışmaları arşivlediğini duyurdu. Ama endişelenme; topluluk, Roo Code mirasını yeni bir ad ve yeni bir yuva ile sürdürmek için öne çıktı! Artık sadece tek bir \"Roo\" değiliz; bir topluluğuz, istersen bir \"Zoo\" diyebilirsin. Zoo Code, Roo Code'un bıraktığı yerden devam eden, topluluk tarafından sürdürülen bir eklenti ve Roo'nun ruhunu korurken yeni özellikler ve iyileştirmeler sunmaya kararlıyız. Geliştiriciler için böylesine harika bir araç yarattıkları ve yaptıkları inanılmaz iş için tüm Roo Code ekibine kocaman bir teşekkür göndermek istiyoruz. Onların temeli üzerine inşa etmeyi sürdürmekten ve topluluğun gelecekte Zoo Code'u nereye taşıyacağını görmekten heyecan duyuyoruz!",
-			"readMore": "Zoo Code'un yeni ana sayfasına göz at ve tam duyuruyu oku"
-		},
 		"release": {
 			"heading": "Yenilikler:",
-			"highlight1": "Xiaomi MiMo sağlayıcısı: Xiaomi MiMo, MiMo modellerini doğrudan Zoo Code içinde yapılandırabilmen için birinci sınıf bir API sağlayıcısı olarak eklendi.",
-			"highlight2": "Zoo Code upstream handoff'u: Zoo Code'u topluluk handoff çalışmasıyla uyumlu tutmak için en son upstream sunset merge'i ve ilgili platform güncellemeleri alındı.",
-			"highlight3": "Sohbet ve sağlayıcılarda kararlılık düzeltmeleri: MCP oturum açma metni, Gemini tam araç seti istekleri, OpenAI temperature işleme ve Markdown single-tilde renderingi düzeltildi."
+			"highlight1": "GLM-5.2 destekli Friendli sağlayıcısı — en yeni GLM modelini Friendli üzerinden kullan.",
+			"highlight2": "Ollama için yerel thinking/reasoning desteği — Ollama modellerini kullanırken reasoning çıktısını uçtan uca koru.",
+			"highlight3": "Anthropic özel `apiModelId` düzeltmesi — özel Anthropic model kimlikleri artık sessizce `claude-sonnet-4-5` modeline geri dönmek yerine seçili kalıyor."
 		},
 		"cloudAgents": {
 			"heading": "Cloud'daki yenilikler:",

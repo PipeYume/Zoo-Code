@@ -30,41 +30,15 @@
 
 Pots trobar una guia ràpida per passar de Roo Code a Zoo Code a la [guia de migració Roo→Zoo](https://docs.zoocode.dev/roo-to-zoo-migration). Volem ajudar tant com puguem durant la transició, i per això tens el nostre [Reddit](https://www.reddit.com/r/ZooCode) i [Discord](https://discord.gg/VxfP4Vx3gX) per a aquest suport. Si tens problemes o alguna pregunta, entra i pregunta.
 
-## Novetats a la v3.55.0
+## Novetats a la v3.68.0
 
-**La primera release de funcionalitats de Zoo Code** es basa en el traspàs al Marketplace amb un proveïdor nou, la fusió upstream del sunset de Roo Code i una ronda de correccions visibles per a l'usuari al xat, la configuració dels proveïdors i el renderitzat.
-
-- S'ha afegit Xiaomi MiMo com a proveïdor d'API de primer nivell.
-- S'ha incorporat la fusió upstream del sunset de Roo Code i les actualitzacions relacionades de la plataforma.
-- S'han corregit els textos de l'inici de sessió d'MCP, les sol·licituds completes d'eines de Gemini i la gestió de la temperatura d'OpenAI per a models que no l'admeten.
-- S'ha corregit el renderitzat del text amb una sola titlla a Markdown i el nom dels fitxers temporals de diagnòstic.
-- S'han millorat els valors per defecte dels proveïdors i la cobertura de regions per a Z.AI, GLM i Vertex AI.
-
-<details>
-  <summary>🌐 Idiomes disponibles</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **Proveïdor Friendli amb suport per a GLM-5.2** — utilitza el model GLM més recent a través de Friendli.
+- **Suport natiu de thinking/reasoning per a Ollama** — conserva la sortida de raonament d'extrem a extrem quan fas servir models d'Ollama.
+- **Correcció del `apiModelId` personalitzat d'Anthropic** — els identificadors de model personalitzats d'Anthropic ara es mantenen seleccionats en lloc de tornar en silenci a `claude-sonnet-4-5`.
+- Correcció: gestió dels resultats d'eines del proveïdor Ollama i condensació prematura del context.
+- Correcció: conserva l'enllaç pare-fill de la tasca quan s'interromp una subtasca delegada.
+- Millora la gestió dels blocs de contingut de Claude a Anthropic Vertex per obtenir respostes més fiables.
+- Actualitzacions de CI, publicació nightly i dependències/eines.
 
 ## Què pot fer Zoo Code per TU?
 

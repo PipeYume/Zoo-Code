@@ -1,15 +1,24 @@
 import * as path from "path"
 import * as os from "os"
 import * as fs from "fs/promises"
+import { readFileSync } from "fs"
 
 import { runTests } from "@vscode/test-electron"
 import { LLMock } from "@copilotkit/aimock"
 
 import { addApplyDiffResultFixtures } from "./fixtures/apply-diff"
+import { addDeepSeekV4Fixtures } from "./fixtures/deepseek-v4"
 import { addExecuteCommandResultFixtures } from "./fixtures/execute-command"
+import { addFastExitShellRaceResultFixtures } from "./fixtures/fast-exit-shell-race"
+import { addZeroChunkShellRaceResultFixtures } from "./fixtures/zero-chunk-shell-race"
+import { addTerminalReuseShellRaceFixtures } from "./fixtures/terminal-reuse-shell-race"
+import { addLongRuningSilentCommandFixtures } from "./fixtures/long-running-silent-command"
+import { addColdShellInitFixtures } from "./fixtures/cold-shell-init"
+import { addTerminalProfileResultFixtures } from "./fixtures/terminal-profile"
 import { addListFilesResultFixtures } from "./fixtures/list-files"
 import { addReadFileResultFixtures } from "./fixtures/read-file"
 import { addSearchFilesResultFixtures } from "./fixtures/search-files"
+import { addSubtaskFixtures } from "./fixtures/subtasks"
 import { addUseMcpToolResultFixtures } from "./fixtures/use-mcp-tool"
 import { addWriteToFileResultFixtures } from "./fixtures/write-to-file"
 
@@ -26,12 +35,21 @@ function isDeepSeekTargetedRun(testFile?: string, testGrep?: string) {
 	return testGrep?.toLowerCase().includes("deepseek") ?? false
 }
 
+function isBedrockTargetedRun(testFile?: string, testGrep?: string) {
+	if (testFile?.toLowerCase().includes("bedrock.test")) {
+		return true
+	}
+
+	return testGrep?.toLowerCase().includes("bedrock") ?? false
+}
+
 async function main() {
 	const isRecord = process.env.AIMOCK_RECORD === "true"
 	const testGrep = getCliFlagValue("--grep") || process.env.TEST_GREP
 	const testFile = getCliFlagValue("--file") || process.env.TEST_FILE
 	const isDeepSeekTest = isDeepSeekTargetedRun(testFile, testGrep)
 	const isGeminiTest = testFile?.toLowerCase().includes("gemini.test") ?? false
+	const isBedrockTest = isBedrockTargetedRun(testFile, testGrep)
 
 	if (isRecord && isDeepSeekTest && !process.env.DEEPSEEK_API_KEY) {
 		throw new Error("AIMOCK_RECORD=true requires DEEPSEEK_API_KEY to record DeepSeek fixtures")
@@ -49,7 +67,9 @@ async function main() {
 	// Replay mode starts aimock when no real API key is present or USE_MOCK is forced.
 	const hasRealApiKey = isDeepSeekTest
 		? !!process.env.DEEPSEEK_API_KEY
-		: !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY)
+		: isBedrockTest
+			? true // Bedrock test starts its own binary-event-stream mock server when no real token
+			: !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY)
 	const useMock = isRecord || !hasRealApiKey || process.env.USE_MOCK === "true"
 
 	let mock: InstanceType<typeof LLMock> | undefined
@@ -96,11 +116,19 @@ async function main() {
 			if (!isRecord) {
 				addApplyDiffResultFixtures(mock)
 				addExecuteCommandResultFixtures(mock)
+				addFastExitShellRaceResultFixtures(mock)
+				addZeroChunkShellRaceResultFixtures(mock)
+				addTerminalReuseShellRaceFixtures(mock)
+				addLongRuningSilentCommandFixtures(mock)
+				addColdShellInitFixtures(mock)
+				addTerminalProfileResultFixtures(mock)
 				addListFilesResultFixtures(mock)
 				addReadFileResultFixtures(mock)
 				addSearchFilesResultFixtures(mock)
+				addSubtaskFixtures(mock)
 				addUseMcpToolResultFixtures(mock)
 				addWriteToFileResultFixtures(mock)
+				addDeepSeekV4Fixtures(mock)
 
 				// The modes test (switch_mode → ask) triggers a second API call whose last
 				// user message starts with <environment_details> directly — no <user_message>
@@ -141,12 +169,16 @@ async function main() {
 		}
 
 		// Download VS Code, unzip it and run the integration test
+		// Read VS Code version from package.json to keep in sync with @types/vscode
+		const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"))
+		const vscodeVersion = process.env.VSCODE_VERSION || pkg.devDependencies["@types/vscode"]
+
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,
 			launchArgs: [testWorkspace],
 			extensionTestsEnv,
-			version: process.env.VSCODE_VERSION || "1.101.2",
+			version: vscodeVersion,
 		})
 	} catch (error) {
 		console.error("Failed to run tests", error)

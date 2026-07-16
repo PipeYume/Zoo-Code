@@ -15,6 +15,7 @@ import type { McpServer } from "./mcp.js"
 import type { ModelRecord, RouterModels } from "./model.js"
 import type { OpenAiCodexRateLimitInfo } from "./providers/openai-codex-rate-limits.js"
 import type { SkillMetadata } from "./skills.js"
+import type { RuleMetadata } from "./rules.js"
 import type { TelemetrySetting } from "./telemetry.js"
 import type { WorktreeIncludeStatus } from "./worktree.js"
 
@@ -38,6 +39,7 @@ export interface ExtensionMessage {
 		| "commitSearchResults"
 		| "listApiConfig"
 		| "routerModels"
+		| "zooGatewayCredentialsReady"
 		| "openAiModels"
 		| "ollamaModels"
 		| "lmStudioModels"
@@ -63,11 +65,11 @@ export interface ExtensionMessage {
 		| "commandExecutionStatus"
 		| "mcpExecutionStatus"
 		| "vsCodeSetting"
+		| "terminalProfiles"
 		| "authenticatedUser"
 		| "condenseTaskContextStarted"
 		| "condenseTaskContextResponse"
 		| "singleRouterModelFetchResponse"
-		| "rooCreditBalance"
 		| "indexingStatusUpdate"
 		| "indexCleared"
 		| "codebaseIndexConfig"
@@ -98,7 +100,9 @@ export interface ExtensionMessage {
 		| "branchWorktreeIncludeResult"
 		| "folderSelected"
 		| "skills"
+		| "rules"
 		| "fileContent"
+		| "rooHistoryImportProgress"
 	text?: string
 	/** For fileContent: { path, content, error? } */
 	fileContent?: { path: string; content: string | null; error?: string }
@@ -153,6 +157,8 @@ export interface ExtensionMessage {
 	error?: string
 	setting?: string
 	value?: any // eslint-disable-line @typescript-eslint/no-explicit-any
+	/** Sanitized VS Code terminal profile names for the `terminalProfiles` message. */
+	profiles?: string[]
 	hasContent?: boolean
 	items?: MarketplaceItem[]
 	userInfo?: CloudUserInfo
@@ -174,7 +180,17 @@ export interface ExtensionMessage {
 	list?: string[] // For dismissedUpsells
 	tools?: SerializedCustomToolDefinition[] // For customToolsResult
 	skills?: SkillMetadata[] // For skills response
+	rules?: RuleMetadata[] // For rules response
 	modes?: { slug: string; name: string }[] // For modes response
+	rooHistoryImportProgress?: {
+		status: "starting" | "copying" | "finished" | "failed"
+		copiedFileCount: number
+		totalFileCount: number
+		importedTaskCount: number
+		totalTaskCount: number
+		currentTaskId?: string
+		currentFileName?: string
+	}
 	aggregatedCosts?: {
 		// For taskWithAggregatedCosts response
 		totalCost: number
@@ -276,8 +292,12 @@ export type ExtensionState = Pick<
 	| "terminalZshOhMy"
 	| "terminalZshP10k"
 	| "terminalZdotdir"
+	| "terminalProfile"
 	| "execaShellPath"
 	| "diagnosticsEnabled"
+	| "autoCloseZooOpenedFiles"
+	| "autoCloseZooOpenedFilesAfterUserEdited"
+	| "autoCloseZooOpenedNewFiles"
 	| "language"
 	| "modeApiConfigs"
 	| "customModePrompts"
@@ -293,6 +313,7 @@ export type ExtensionState = Pick<
 	| "openRouterImageGenerationSelectedModel"
 	| "includeTaskHistoryInEnhance"
 	| "reasoningBlockCollapsed"
+	| "chatFontSize"
 	| "enterBehavior"
 	| "includeCurrentTime"
 	| "includeCurrentCost"
@@ -314,6 +335,7 @@ export type ExtensionState = Pick<
 	taskHistory: HistoryItem[]
 
 	writeDelayMs: number
+	diffFuzzyThreshold: number
 
 	enableCheckpoints: boolean
 	checkpointTimeout: number // Timeout for checkpoint initialization in seconds (default: 15)
@@ -374,6 +396,12 @@ export type ExtensionState = Pick<
 	zooCodeBaseUrl?: string
 	deviceName?: string
 	debug?: boolean
+
+	/**
+	 * Platform info for conditional feature support (e.g. semble binary availability).
+	 */
+	platform?: string
+	arch?: string
 
 	/**
 	 * Monotonically increasing sequence number for clineMessages state pushes.
@@ -442,7 +470,6 @@ export interface WebviewMessage {
 		| "requestOllamaModels"
 		| "requestLmStudioModels"
 		| "requestRooModels"
-		| "requestRooCreditBalance"
 		| "requestVsCodeLmModels"
 		| "openImage"
 		| "saveImage"
@@ -454,6 +481,8 @@ export interface WebviewMessage {
 		| "updateVSCodeSetting"
 		| "getVSCodeSetting"
 		| "vsCodeSetting"
+		| "requestTerminalProfiles"
+		| "openTerminalProfilePicker"
 		| "updateCondensingPrompt"
 		| "playSound"
 		| "playTts"
@@ -492,6 +521,8 @@ export interface WebviewMessage {
 		| "openCustomModesSettings"
 		| "checkpointDiff"
 		| "checkpointRestore"
+		| "completionCheckpointDiff"
+		| "completionCheckpointRestore"
 		| "deleteMcpServer"
 		| "codebaseIndexEnabled"
 		| "telemetrySetting"
@@ -575,6 +606,7 @@ export interface WebviewMessage {
 		| "removeInstalledMarketplaceItem"
 		| "marketplaceInstallResult"
 		| "shareTaskSuccess"
+		| "importRooHistory"
 		// Skills messages
 		| "requestSkills"
 		| "createSkill"
@@ -582,6 +614,12 @@ export interface WebviewMessage {
 		| "moveSkill"
 		| "updateSkillModes"
 		| "openSkillFile"
+		// Rules messages
+		| "requestRules"
+		| "createRule"
+		| "deleteRule"
+		| "openRuleFile"
+		| "openRulesDirectory"
 	text?: string
 	taskId?: string
 	editedMessageContent?: string
@@ -661,6 +699,7 @@ export interface WebviewMessage {
 			| "vercel-ai-gateway"
 			| "bedrock"
 			| "openrouter"
+			| "semble"
 		codebaseIndexEmbedderBaseUrl?: string
 		codebaseIndexEmbedderModelId: string
 		codebaseIndexEmbedderModelDimension?: number // Generic dimension for all providers

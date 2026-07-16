@@ -53,18 +53,15 @@
 You can find a quick guide for migrating from Roo Code to Zoo Code in the [Roo→Zoo migration guide](https://docs.zoocode.dev/roo-to-zoo-migration). We plan to try and help users as they transition over, we have our [Reddit](https://www.reddit.com/r/ZooCode) and [Discord](https://discord.gg/VxfP4Vx3gX)
 for this exact support, so if you are having problems or if you have question, jump on and ask.
 
-## What's New in v3.55.0
+## What's New in v3.68.0
 
-**Zoo Code's first feature release** builds on the marketplace handoff with a
-new provider, the upstream sunset merge, and a round of user-facing fixes
-across chat, provider settings, and rendering.
-
-- Add Xiaomi MiMo as a first-class API provider
-- Pull in the upstream Roo Code sunset merge and related platform updates
-- Fix MCP sign-in copy, Gemini full-tool requests, and OpenAI temperature
-  handling for unsupported models
-- Fix Markdown single-tilde rendering and diagnostics temp-file naming
-- Improve provider defaults and region coverage for Z.AI, GLM, and Vertex AI
+- **Friendli provider with GLM-5.2 support** — use the latest GLM model through Friendli.
+- **Native Ollama thinking/reasoning support** — preserve reasoning output end-to-end when you use Ollama models.
+- **Anthropic custom `apiModelId` fix** — custom Anthropic model IDs now stay selected instead of silently falling back to `claude-sonnet-4-5`.
+- Fix: Ollama provider tool result handling and premature context condensing.
+- Fix: preserve the parent-child task link when a delegated subtask is interrupted.
+- Improve Anthropic Vertex Claude content block handling for more reliable responses.
+- CI, nightly publishing, and dependency/tooling updates.
 
 <details>
   <summary>🌐 Available languages</summary>
@@ -88,7 +85,7 @@ across chat, provider settings, and rendering.
 - [简体中文](locales/zh-CN/README.md)
 - [繁體中文](locales/zh-TW/README.md)
 - ...
-  </details>
+    </details>
 
 ---
 

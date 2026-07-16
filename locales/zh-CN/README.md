@@ -30,41 +30,15 @@
 
 你可以在 [Roo→Zoo 迁移指南](https://docs.zoocode.dev/roo-to-zoo-migration) 中找到从 Roo Code 迁移到 Zoo Code 的快速说明。我们希望在大家迁移过程中尽可能提供帮助，这也是我们设立 [Reddit](https://www.reddit.com/r/ZooCode) 和 [Discord](https://discord.gg/VxfP4Vx3gX) 社区的原因。如果你遇到问题或有任何疑问，欢迎加入后直接提问。
 
-## v3.55.0 新增内容
+## v3.68.0 新增内容
 
-**Zoo Code 首个功能版本** 在 Marketplace 交接的基础上，带来了一个新提供商、Roo Code 的上游 sunset merge，以及一轮覆盖聊天、提供商设置和渲染的用户可见修复。
-
-- 新增 Xiaomi MiMo 一等 API 提供商支持。
-- 合入 Roo Code 的上游 sunset merge 及相关平台更新。
-- 修复 MCP 登录文案、Gemini 全工具集请求，以及 OpenAI 在不支持 temperature 的模型上的处理。
-- 修复 Markdown 单波浪线渲染和诊断临时文件命名。
-- 改进 Z.AI、GLM 和 Vertex AI 的提供商默认值与区域覆盖。
-
-<details>
-  <summary>🌐 可用语言</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **支持 GLM-5.2 的 Friendli 提供商** — 通过 Friendli 使用最新的 GLM 模型。
+- **Ollama 原生 thinking/reasoning 支持** — 使用 Ollama 模型时可端到端保留 reasoning 输出。
+- **Anthropic 自定义 `apiModelId` 修复** — 自定义 Anthropic 模型 ID 现在会保持选中，不再静默回退到 `claude-sonnet-4-5`。
+- 修复：Ollama 提供商的工具结果处理和过早的上下文压缩。
+- 修复：委派子任务被中断时保留父子任务链接。
+- 改进 Anthropic Vertex 中 Claude 内容块的处理，以获得更可靠的响应。
+- CI、nightly 发布以及依赖/工具更新。
 
 ## Zoo Code 能为您做什么？
 

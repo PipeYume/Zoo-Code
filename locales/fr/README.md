@@ -30,41 +30,15 @@
 
 Tu peux trouver un guide rapide pour passer de Roo Code à Zoo Code dans le [guide de migration Roo→Zoo](https://docs.zoocode.dev/roo-to-zoo-migration). On veut aider au maximum pendant la transition, et notre [Reddit](https://www.reddit.com/r/ZooCode) et notre [Discord](https://discord.gg/VxfP4Vx3gX) sont là pour ça. Si tu rencontres un problème ou si tu as une question, viens demander.
 
-## Nouveautés de la v3.55.0
+## Nouveautés de la v3.68.0
 
-**La première release de fonctionnalités de Zoo Code** s'appuie sur le passage au Marketplace avec un nouveau fournisseur, la fusion upstream du sunset de Roo Code et une série de correctifs visibles pour l'utilisateur dans le chat, les réglages des fournisseurs et le rendu.
-
-- Ajout de Xiaomi MiMo comme fournisseur d'API de premier plan.
-- Intégration de la fusion upstream du sunset de Roo Code et des mises à jour de plateforme associées.
-- Correction du texte de connexion MCP, des requêtes Gemini avec tout l'ensemble d'outils et de la gestion de la température OpenAI pour les modèles qui ne la prennent pas en charge.
-- Correction du rendu Markdown avec un tilde unique et du nommage des fichiers temporaires de diagnostic.
-- Amélioration des valeurs par défaut des fournisseurs et de la couverture régionale pour Z.AI, GLM et Vertex AI.
-
-<details>
-  <summary>🌐 Langues disponibles</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **Provider Friendli avec prise en charge de GLM-5.2** — utilise le dernier modèle GLM via Friendli.
+- **Prise en charge native du thinking/reasoning pour Ollama** — préserve la sortie de raisonnement de bout en bout quand tu utilises des modèles Ollama.
+- **Correction du `apiModelId` personnalisé d'Anthropic** — les identifiants de modèle Anthropic personnalisés restent désormais sélectionnés au lieu de revenir silencieusement à `claude-sonnet-4-5`.
+- Correctif : gestion des résultats d'outils du fournisseur Ollama et condensation prématurée du contexte.
+- Correctif : préserve le lien parent-enfant de la tâche lorsqu'une sous-tâche déléguée est interrompue.
+- Améliore la gestion des blocs de contenu Claude dans Anthropic Vertex pour des réponses plus fiables.
+- Mises à jour de la CI, de la publication nightly et des dépendances/outils.
 
 ## Que peut faire Zoo Code pour VOUS ?
 

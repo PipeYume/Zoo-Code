@@ -30,41 +30,15 @@
 
 Roo Code에서 Zoo Code로 옮겨오는 빠른 가이드는 [Roo→Zoo 마이그레이션 가이드](https://docs.zoocode.dev/roo-to-zoo-migration)에서 확인할 수 있어. 전환하는 동안 사용자들을 최대한 돕고 싶고, 바로 그 지원을 위해 [Reddit](https://www.reddit.com/r/ZooCode)와 [Discord](https://discord.gg/VxfP4Vx3gX)를 운영하고 있어. 문제가 있거나 궁금한 점이 있으면 들어와서 편하게 물어봐.
 
-## v3.55.0의 새로운 기능
+## v3.68.0의 새로운 기능
 
-**Zoo Code의 첫 기능 릴리스**는 Marketplace handoff를 바탕으로 새 provider, Roo Code의 upstream sunset merge, 그리고 채팅, provider 설정, rendering 전반의 사용자 체감 수정 사항을 담고 있어요.
-
-- Xiaomi MiMo를 first-class API provider로 추가했어요.
-- Roo Code의 upstream sunset merge와 관련 platform 업데이트를 반영했어요.
-- MCP sign-in 문구, Gemini의 full-tool 요청, 지원하지 않는 모델에 대한 OpenAI temperature 처리 문제를 수정했어요.
-- Markdown single-tilde 렌더링과 diagnostics temp-file 이름을 수정했어요.
-- Z.AI, GLM, Vertex AI의 provider 기본값과 region 지원 범위를 개선했어요.
-
-<details>
-  <summary>🌐 사용 가능한 언어</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **GLM-5.2를 지원하는 Friendli 프로바이더** — Friendli를 통해 최신 GLM 모델을 사용할 수 있습니다.
+- **Ollama용 네이티브 thinking/reasoning 지원** — Ollama 모델을 사용할 때 reasoning 출력을 처음부터 끝까지 유지합니다.
+- **Anthropic 사용자 지정 `apiModelId` 수정** — 사용자 지정 Anthropic 모델 ID가 이제 조용히 `claude-sonnet-4-5`로 되돌아가지 않고 선택된 상태로 유지됩니다.
+- 수정: Ollama 프로바이더의 도구 결과 처리 및 너무 이른 컨텍스트 압축.
+- 수정: 위임된 하위 작업이 중단될 때 부모-자식 작업 연결을 유지합니다.
+- Anthropic Vertex Claude 콘텐츠 블록 처리를 개선해 더 안정적인 응답을 제공합니다.
+- CI, nightly 배포, 의존성/툴링 업데이트.
 
 ## Zoo Code가 당신을 위해 무엇을 할 수 있을까요?
 

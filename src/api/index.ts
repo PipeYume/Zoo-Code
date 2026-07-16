@@ -31,8 +31,11 @@ import {
 	SambaNovaHandler,
 	ZAiHandler,
 	FireworksHandler,
+	FriendliHandler,
 	VercelAiGatewayHandler,
 	OpencodeGoHandler,
+	KenariHandler,
+	ZooGatewayHandler,
 	MiniMaxHandler,
 	MimoHandler,
 	BasetenHandler,
@@ -89,6 +92,12 @@ export interface ApiHandlerCreateMessageMetadata {
 	 * Only applies to providers that support function calling restrictions (e.g., Gemini).
 	 */
 	allowedFunctionNames?: string[]
+	/**
+	 * Abort signal for cancelling the HTTP request mid-stream.
+	 * Passed through to AI SDK's streamText() so the underlying HTTP request is aborted
+	 * when the user clicks stop, preventing wasted API tokens/compute on the provider side.
+	 */
+	abortSignal?: AbortSignal
 }
 
 export interface ApiHandler {
@@ -99,6 +108,13 @@ export interface ApiHandler {
 	): ApiStream
 
 	getModel(): { id: string; info: ModelInfo }
+
+	/**
+	 * Optional context window for context-management / auto-condense when it must differ from
+	 * getModel().info.contextWindow. Only VS Code LM overrides it (static `maxInputTokens` vs its
+	 * inflated live window); others leave it undefined and callers fall back.
+	 */
+	getCondenseContextWindow?(): number
 
 	/**
 	 * Counts tokens for content blocks
@@ -175,10 +191,16 @@ export function buildApiHandler(configuration: ProviderSettings): ApiHandler {
 			return new ZAiHandler(options)
 		case "fireworks":
 			return new FireworksHandler(options)
+		case "friendli":
+			return new FriendliHandler(options)
 		case "vercel-ai-gateway":
 			return new VercelAiGatewayHandler(options)
 		case "opencode-go":
 			return new OpencodeGoHandler(options)
+		case "kenari":
+			return new KenariHandler(options)
+		case "zoo-gateway":
+			return new ZooGatewayHandler(options)
 		case "minimax":
 			return new MiniMaxHandler(options)
 		case "baseten":

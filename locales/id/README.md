@@ -30,41 +30,15 @@
 
 Kamu bisa menemukan panduan singkat untuk berpindah dari Roo Code ke Zoo Code di [panduan migrasi Roo→Zoo](https://docs.zoocode.dev/roo-to-zoo-migration). Kami ingin membantu pengguna semaksimal mungkin selama masa transisi, dan itulah gunanya [Reddit](https://www.reddit.com/r/ZooCode) dan [Discord](https://discord.gg/VxfP4Vx3gX) kami. Kalau kamu mengalami masalah atau punya pertanyaan, langsung mampir dan tanya.
 
-## Yang Baru di v3.55.0
+## Yang Baru di v3.68.0
 
-**Rilis fitur pertama Zoo Code** melanjutkan handoff Marketplace dengan provider baru, merge upstream sunset Roo Code, dan serangkaian perbaikan yang langsung terasa di chat, pengaturan provider, dan rendering.
-
-- Menambahkan Xiaomi MiMo sebagai provider API kelas utama.
-- Mengambil merge upstream sunset Roo Code beserta pembaruan platform terkait.
-- Memperbaiki teks sign-in MCP, request Gemini dengan tool set penuh, dan penanganan temperature OpenAI untuk model yang tidak mendukungnya.
-- Memperbaiki render Markdown untuk single tilde dan penamaan file sementara diagnostik.
-- Meningkatkan default provider dan cakupan region untuk Z.AI, GLM, dan Vertex AI.
-
-<details>
-  <summary>🌐 Bahasa yang tersedia</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **Provider Friendli dengan dukungan GLM-5.2** — gunakan model GLM terbaru lewat Friendli.
+- **Dukungan thinking/reasoning native untuk Ollama** — pertahankan keluaran penalaran dari awal hingga akhir saat kamu memakai model Ollama.
+- **Perbaikan `apiModelId` kustom Anthropic** — ID model Anthropic kustom kini tetap terpilih alih-alih diam-diam kembali ke `claude-sonnet-4-5`.
+- Perbaikan: penanganan hasil tool penyedia Ollama dan pemadatan konteks yang terlalu dini.
+- Perbaikan: pertahankan tautan induk-anak tugas saat subtugas yang didelegasikan terputus.
+- Peningkatan penanganan blok konten Claude Anthropic Vertex untuk respons yang lebih andal.
+- Pembaruan CI, publikasi nightly, dan dependensi/tooling.
 
 ## Apa yang Bisa Zoo Code Lakukan Untuk ANDA?
 

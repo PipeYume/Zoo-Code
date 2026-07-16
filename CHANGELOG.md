@@ -1,5 +1,189 @@
 # Zoo Code Changelog
 
+## [3.68.0]
+
+### Minor Changes
+
+- Add Friendli provider with GLM-5.2 support for another hosted way to use the latest GLM model (#722 by @Lee-Si-Yoon, PR #721 by @Lee-Si-Yoon)
+- Add native thinking/reasoning support for Ollama models to preserve reasoning output end-to-end (#831 by @navedmerchant, PR #832 by @navedmerchant)
+- Fix(anthropic): honor custom `apiModelId` selections instead of silently defaulting to `claude-sonnet-4-5` (#418 by @tatianadenel-devops, #843 by @grizmin, PR #842 by @grizmin)
+- Fix(ollama): correctly handle tool results and prevent premature context condensing (#847 by @navedmerchant, PR #848 by @navedmerchant)
+- Improve Anthropic Vertex Claude content block handling for more reliable responses (#788 by @daewoongoh, PR #789 by @daewoongoh)
+- Fix(task-lifecycle): preserve the parent-child link when a delegated subtask is interrupted (#560 by @edelauna, PR #787 by @edelauna)
+- Refactor: remove the deprecated `openai-error-handler` shim and use the shared `error-handler` directly (#766 by @daewoongoh, PR #767 by @daewoongoh)
+- Feat(nightly-publish): publish Open VSX pre-releases and skip nightly publish on release merges (#784 by @edelauna, PR #790 by @edelauna)
+- Fix(ci): don't skip fork-PR label reconciliation on scheduled and manual runs (PR #234 by @app/roomote)
+- Fix(label-pr-review-state): detect merge conflicts and label PRs with `has-conflicts` (PR #269 by @app/roomote)
+- Chore(deps): update the `github/codeql-action` digest to `411c4c9` (PR #803 by @app/renovate)
+- Chore(deps): update `@types/react` to `v18.3.31` (PR #805 by @app/renovate)
+- Chore(deps): update `axios` to `v1.18.1` (PR #806 by @app/renovate)
+- Chore: merge the v3.66.0 release preparation branch into `main` (PR #795 by @navedmerchant)
+
+## [3.66.0]
+
+### Minor Changes
+
+- Add Claude Sonnet 5 support across Anthropic, Bedrock, and Vertex providers (#777 by @navedmerchant, PR #778 by @navedmerchant)
+- Upgrade Semble to v0.4.1 with flattened result parsing and localized status messages (#733 by @navedmerchant, PR #734 by @navedmerchant)
+- Add task-lifecycle status transition guard and startup delegation reconciliation to prevent invalid task state transitions (#366 by @edelauna, PR #692 by @edelauna)
+- Fix: LiteLLM cache key collision and silent fallback to a non-existent default model (#638 by @awschmeder, PR #647 by @awschmeder)
+- Fix: reliable auto context condensing for the VS Code Language Model API (#714 by @simurg79, PR #710 by @simurg79)
+- Fix(ThinkingBudget): support `xhigh` and all extended reasoning effort values (#713 by @6rz6, PR #774 by @edelauna)
+- Fix(deepseek): round-trip `reasoning_content` in thinking mode to prevent 400 errors (#201 by @leosdad, PR #775 by @edelauna)
+- Fix(gemini): base64-encode `thoughtSignature` bypass token to fix the Vertex AI empty-response loop (#536 by @edelauna, PR #776 by @edelauna)
+- Fix: provider cache reset after settings import (#689 by @JunyongParkDev, PR #726 by @JunyongParkDev)
+- Fix(delegation): atomically serialize `reopenParentFromDelegation` (#365 by @edelauna, PR #725 by @edelauna)
+- Fix: shell default profile name type guard (#686 by @daewoongoh, PR #687 by @daewoongoh)
+- chore(security): dependency-review, invisible-char detection, and least-privilege workflow permissions (#782 by @edelauna, PR #783 by @edelauna)
+- chore: upgrade `@anthropic-ai/sdk` to 0.104.1 and `@anthropic-ai/vertex-sdk` to 0.17.1 (#438 by @p12tic, PR #600 by @p12tic)
+- chore: enforce no-floating-promises in core/task/ (PR #253 by @0xMink)
+- ci: improve PR label reconciliation with CI gating and event triggers (PR #228 by @app/roomote)
+- fix(deps): update AI SDKs and providers (PR #744 by @app/renovate)
+- chore(deps): update build, lint, and test tooling (PR #745 by @app/renovate)
+- chore(deps): update dependency mermaid to v11.16.0 (PR #742 by @app/renovate)
+- chore(deps): update dependency posthog-js to v1.393.5 (PR #746 by @app/renovate)
+- chore(deps): update dependency ajv to v8.20.0 (PR #747 by @app/renovate)
+- chore(deps): update dependency react-use to v17.6.1 (PR #740 by @app/renovate)
+- chore(deps): update dependency reconnecting-eventsource to v1.6.5 (PR #741 by @app/renovate)
+- chore(deps): update dependency pdf-parse to v1.1.4 (PR #739 by @app/renovate)
+- chore(deps): update dependency ovsx to v0.10.12 (PR #738 by @app/renovate)
+- chore(deps): update dependency only-allow to v1.2.2 (PR #737 by @app/renovate)
+
+## [3.64.0]
+
+### Minor Changes
+
+- Add Rules Management UI — new Rules tab in Settings to create, delete, and open global and workspace Zoo rules (#660 by @ivanarifin, PR #657 by @ivanarifin)
+- Add completion change review actions — "See New Changes" and "Restore Changes" buttons after task completion let you inspect and undo changes from the latest prompt (#661 by @ivanarifin, PR #633 by @ivanarifin)
+- Add kimi-k2p7-code model on Fireworks provider (PR #599 by @p12tic)
+- feat: add abort signal core plumbing — threads AbortSignal through the API metadata layer for future provider-level cancellation (#434 by @easonLiangWorldedtech, PR #674 by @easonLiangWorldedtech)
+- feat: add TaskSemaphore utility for parallel task coordination (#362 by @edelauna, PR #675 by @edelauna)
+- feat(experiments): register PARALLEL_TOOL_EXECUTION feature flag (internal-only) (#363 by @edelauna, PR #678 by @edelauna)
+- Add Roo Code history import to the About page (PR #141 by @roomote)
+- Fix: configurable relaxed diff thresholds and diagnostics reduce "edit unsuccessful" errors (#452 by @DannyVarodBlueVine, PR #470 by @nigeldelviero)
+- Fix: auto-closing edited files is now opt-in — the setting defaults to off (#719 by @edelauna, PR #720 by @edelauna)
+- Fix(diff-view): make auto-closing edited files opt-in, fixing setting that could not be unchecked (#667 by @navedmerchant, PR #668 by @navedmerchant)
+- Fix(delegation): serialize delegateParentAndOpenChild with atomicReadAndUpdate to prevent race conditions (#364 by @edelauna, #365 by @edelauna, PR #691 by @edelauna)
+- Fix(ask_followup_question): report non-array follow_up suggestions as a type error (#511 by @nh2, PR #662 by @nh2)
+- Fix: parse Gemma 4 `<thought>` reasoning tags alongside `<think>` (#323 by @sagidM, PR #324 by @sagidM)
+- docs(prompt): enhance apply_diff tool instructions to improve Gemini model success rate (#611 by @awschmeder, PR #619 by @awschmeder)
+- chore(deps): update undici to v6.27.0 [security] (PR #659 by @renovate)
+- chore(deps): update @types/node, @vscode/test-cli, execa, axios (PR #669, #670, #671, #673 by @renovate)
+- test(mcp): fix McpHub Windows command wrapping test ordering (PR #632 by @HappyLiang12)
+- fix(McpHub): resolve flaky McpHub.spec.ts tests after Vitest 4 upgrade (PR #666 by @edelauna)
+
+## [3.62.0]
+
+### Minor Changes
+
+- Add GLM-5.2 support — the latest GLM model is now available in your provider settings (#597 by @percy4, PR #608 by @MobCode100)
+- Add OpenCode-Go native model parameters, Anthropic-format routing, and context-token fix for more reliable responses (#646 by @ykoneee, PR #652 by @navedmerchant)
+- Add tool-writer mode to the Marketplace — a new specialized mode for writing and maintaining tool definitions (#603 by @RayCarro, PR #604 by @RayCarro)
+- Add LiteLLM support for forwarding taskId as X-Zoo-Session-ID request header for better request tracing (#590 by @awschmeder, PR #591 by @awschmeder)
+- Fix: Apply apiRequestTimeout consistently across all providers (#565 by @daewoongoh, PR #567 by @daewoongoh)
+- Fix: Restore diff view scroll position and fix tab handling on save/deny (#586 by @awschmeder, PR #589 by @awschmeder)
+- Fix: Deliver terminal completion signal when end event wins the race against setActiveStream (#489 by @drzraf, #622 by @onlineapps-cloud, PR #645 by @edelauna)
+- Fix: Fetch OpenCode-Go models unconditionally — the /models endpoint is public (PR #437 by @proyectoauraorg)
+- Refactor: Extract RateLimitClock from Task static state for cleaner rate-limit handling (#361 by @edelauna, PR #628 by @edelauna)
+- Refactor: Use extractReasoningFromDelta helper for reasoning extraction across providers (PR #588 by @daewoongoh)
+- Fix: Automate PR review-state and stale labels in GitHub Actions (PR #636 by @edelauna)
+- Re-enable the prefer-const ESLint rule (PR #250 by @0xMink)
+- Add stale PR workflows and auto-closure policy (PR #631 by @edelauna)
+- Update dependency vitest to v4 [security] (PR #443 by @app/renovate)
+- Update dependency shell-quote to v1.8.4 [security] (PR #554 by @app/renovate)
+- Update dependency esbuild to v0.28.1 [security] (PR #595 by @app/renovate)
+- Update dependency vite to v8.0.16 [security] (PR #642 by @app/renovate)
+- Update GitHub Actions (PR #521 by @app/renovate)
+
+## [3.60.0]
+
+### Minor Changes
+
+- Add Claude Fable 5 support across Anthropic, Bedrock, and Vertex providers (PR #555 by @taltas)
+- Add OpenAI GPT-5.5 support (PR #537 by @scream4ik)
+- Add per-mode MCP server restrictions — configure an allowlist to restrict which MCP servers are active per mode (PR #453 by @simurg79)
+- Add workspace `rootResolution` setting for controlling path resolution in multi-root workspaces (PR #538 by @simurg79)
+- Add LiteLLM support for `reasoning_content` and `reasoning` fields in streaming responses (PR #449 by @daewoongoh)
+- Add Show Ripgrep Diagnostic command for easier ripgrep troubleshooting (PR #281 by @0xMink)
+- Redesign terminal profile settings UX — unified dropdown, consistent layout, and improved styling (#119 by @chenyuanrun, #321 by @F915, PR #533 by @F915)
+- Fix chat window running out of memory when transcript grows large (PR #153 by @app/roomote)
+- Fix relative symlinks in rules files not resolving correctly using realpath of parent directory (PR #442 by @p12tic)
+- Fix command approval buttons not clearing when auto-executed (PR #480 by @awschmeder)
+- Fix multi-line quoted command parsing, auto-approval behavior, and malformed-command error surfacing (PR #483 by @awschmeder)
+- Fix `list-files` tool to validate directory exists before spawning ripgrep (#557 by @edelauna, PR #558 by @edelauna)
+- Fix child tasks returning to parent when parent status is active in AttemptCompletionTool (PR #510 by @edelauna)
+- Fix surface in-stream errors from Zoo and Vercel AI gateways (PR #569 by @JamesRobert20)
+- Gate marketplace publish behind PR approval check (PR #516 by @edelauna)
+- Stabilize flaky e2e provider suite ordering and zai requestCapture race (#512 by @edelauna, #514 by @edelauna, PR #45 by @app/roomote)
+- Fix flaky e2e subtasks fixture collision and task identity prompt (#561, PR #563 by @simurg79)
+- Add contributing guidelines: PR expectations and AI-assisted contribution policy (PR #562 by @edelauna)
+- Configure knip and remove dead code (PR #225 by @app/roomote)
+- Pin dependencies (PR #423 by @app/renovate)
+
+## [3.58.1]
+
+### Patch Changes
+
+- Fix: Remove unsupported `--no-absolute-filenames` tar argument (#491 by @kazenshi, PR #492 by @kazenshi)
+
+## 3.58.0
+
+### Minor Changes
+
+- Add Zoo Gateway provider with auth callback and multi-profile token sync (PR #344 by @JamesRobert20, PR #345 by @JamesRobert20, PR #347 by @JamesRobert20)
+- Add Gemini 3.5 Flash support (PR #331 by @jeanbispo)
+- Add Semble as a local on-the-fly embedding provider for code indexing (PR #399 by @navedmerchant)
+- Remove extension-side LLM telemetry; server logs only through gateway (PR #346 by @JamesRobert20)
+- Add VS Code integrated terminal shell override (PR #277 by @proyectoauraorg)
+- Add configurable chat font size (#157 by @duvw, PR #276 by @proyectoauraorg)
+- Render GitHub-style alerts in the webview (#258 by @melck, PR #275 by @proyectoauraorg)
+- Add configurable max output tokens for GLM models (#161 by @app/roomote, PR #274 by @proyectoauraorg)
+- Introduce WorkspacePathResolver for async symlink-aware path canonicalization (#389 by @edelauna, PR #428 by @proyectoauraorg)
+- Better secure release workflows and GitHub Actions (PR #482 by @edelauna)
+- Fix React crash from malformed follow-up suggestion mode (PR #414 by @edelauna)
+- Fix OpenAI temperature omitted when no custom value is set (#242 by @brunocasado, PR #247 by @proyectoauraorg)
+- Handle per-key failures during settings import (PR #401 by @taltas)
+- Add comprehensive test coverage for ReadFileTool (PR #222 by @proyectoauraorg)
+- Unskip VS Code e2e replay for subtasks (PR #94 by @app/roomote)
+- Fix e2e cache: replace paths filter with content-hash cache skip (PR #268 by @app/roomote)
+- Remove deprecated requestRooCreditBalance handler (PR #385 by @JamesRobert20)
+- Update mermaid to v11.15.0 for a security fix (PR #235 by @app/renovate)
+- Update axios to v1.16.0 for a security fix (PR #400 by @app/renovate)
+- Pin dependencies (PR #353 by @app/renovate)
+- Remove unused tmp dependency and other unused packages (PR #341 by @app/renovate)
+
+## 3.56.0
+
+### Minor Changes
+
+- Add Claude Opus 4.8 support across Anthropic, Bedrock, and Vertex providers (PR #386 by @vandre-sales)
+- Add Opencode Go as a first-class provider (#172 by @vijay-0001, PR #319 by @proyectoauraorg)
+- Add glm-5.1, kimi-k2.6, and deepseek-v4-pro models to the Fireworks provider (#198 by @DeCodeTheWeb, PR #231 by @proyectoauraorg)
+- Show Zoo Code identity in outbound provider activity logs (#203 by @yfdyh000, PR #219 by @app/roomote)
+- Fix API requests hanging indefinitely on VS Code 1.122.0+ (#381 by @greatgradz-svg, #382 by @abcxlab, PR #383 by @app/roomote)
+- Fix terminal task cancellation so the running process is terminated when a task is cancelled (#245 by @proyectoauraorg, PR #261 by @proyectoauraorg)
+- Fix terminal Ctrl+C retry so processes that need multiple SIGINT signals are properly stopped (#266 by @edelauna, PR #272 by @proyectoauraorg)
+- Fix Gemini provider to honor custom model IDs instead of falling back to the default (#227 by @notoccupy2023-design, PR #317 by @proyectoauraorg)
+- Fix truncated Grok diffs caused by missing diff markers (#186 by @jcalfee, PR #230 by @proyectoauraorg)
+- Fix PowerShell detection on Windows when no shell profile is configured (#82 by @rossdonald, PR #239 by @proyectoauraorg)
+- Fix Vertex AI warning when the Google Cloud Credentials field receives a file path instead of JSON (PR #294 by @0xMink)
+- Rename Zoo Code in VS Code code actions (#328 by @rrewll, PR #329 by @rrewll)
+- Localize VS Code code action commands (#334 by @edelauna, PR #339 by @rrewll)
+- Migrate webview build to Vite 8 (PR #214 by @maxdewald)
+- Add comprehensive unit tests for AskFollowupQuestionTool and ListFilesTool (#206 by @app/roomote, PR #212, #213 by @proyectoauraorg)
+- Update `diff` to v5.2.2 for a security fix (PR #173 by @app/renovate)
+- Update `i18next-http-backend` to v3.0.5 for a security fix (PR #174 by @app/renovate)
+- Update `fast-xml-parser` to v5.7.0 for a security fix (PR #179 by @app/renovate)
+- Update `simple-git` to v3.36.0 for a security fix (PR #182 by @app/renovate)
+- Update `uuid` and pin esbuild/rollup/vite for a security fix (PR #205 by @app/renovate)
+- Update `turbo` to v2.9.14 for a security fix (PR #236 by @app/renovate)
+
+## 3.55.1
+
+### Patch Changes
+
+- Fix API requests hanging indefinitely on VS Code 1.122.0+ when Zoo Code could not find the bundled ripgrep binary after the `@vscode/ripgrep-universal` rename (#381 by @greatgradz-svg, PR #248 by @0xMink).
+
 All notable changes to Zoo Code will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Zoo Code uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

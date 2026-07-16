@@ -35,6 +35,8 @@ type ModelIdKey = keyof Pick<
 	| "litellmModelId"
 	| "vercelAiGatewayModelId"
 	| "opencodeGoModelId"
+	| "kenariModelId"
+	| "zooGatewayModelId"
 	| "apiModelId"
 	| "ollamaModelId"
 	| "lmStudioModelId"

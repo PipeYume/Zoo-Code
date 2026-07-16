@@ -30,41 +30,15 @@
 
 Bạn có thể xem hướng dẫn nhanh để chuyển từ Roo Code sang Zoo Code trong [hướng dẫn chuyển đổi Roo→Zoo](https://docs.zoocode.dev/roo-to-zoo-migration). Chúng tôi muốn hỗ trợ người dùng nhiều nhất có thể trong quá trình chuyển đổi, và đó chính là lý do chúng tôi có [Reddit](https://www.reddit.com/r/ZooCode) và [Discord](https://discord.gg/VxfP4Vx3gX). Nếu bạn gặp vấn đề hoặc có câu hỏi, cứ vào hỏi nhé.
 
-## Điểm mới trong v3.55.0
+## Điểm mới trong v3.68.0
 
-**Bản phát hành tính năng đầu tiên của Zoo Code** tiếp tục phần handoff lên Marketplace với một provider mới, merge upstream sunset của Roo Code và một loạt bản sửa lỗi mà người dùng cảm nhận được ở chat, cài đặt provider và phần render.
-
-- Thêm Xiaomi MiMo như một provider API hạng nhất.
-- Tích hợp merge upstream sunset của Roo Code cùng các cập nhật nền tảng liên quan.
-- Sửa nội dung sign-in của MCP, các request Gemini với đầy đủ tool và cách xử lý temperature của OpenAI cho những model không hỗ trợ.
-- Sửa render Markdown với single tilde và cách đặt tên file tạm cho diagnostics.
-- Cải thiện giá trị mặc định của provider và độ phủ region cho Z.AI, GLM và Vertex AI.
-
-<details>
-  <summary>🌐 Các ngôn ngữ có sẵn</summary>
-
-- [English](../../README.md)
-- [Català](../ca/README.md)
-- [Deutsch](../de/README.md)
-- [Español](../es/README.md)
-- [Français](../fr/README.md)
-- [हिंदी](../hi/README.md)
-- [Bahasa Indonesia](../id/README.md)
-- [Italiano](../it/README.md)
-- [日本語](../ja/README.md)
-- [한국어](../ko/README.md)
-- [Nederlands](../nl/README.md)
-- [Polski](../pl/README.md)
-- [Português (BR)](../pt-BR/README.md)
-- [Русский](../ru/README.md)
-- [Türkçe](../tr/README.md)
-- [Tiếng Việt](../vi/README.md)
-- [简体中文](../zh-CN/README.md)
-- [繁體中文](../zh-TW/README.md)
-- ...
-  </details>
-
----
+- **Nhà cung cấp Friendli với hỗ trợ GLM-5.2** — dùng mẫu GLM mới nhất qua Friendli.
+- **Hỗ trợ thinking/reasoning gốc cho Ollama** — giữ đầu ra suy luận xuyên suốt khi bạn dùng các mẫu Ollama.
+- **Sửa lỗi `apiModelId` tùy chỉnh của Anthropic** — ID mẫu Anthropic tùy chỉnh giờ sẽ tiếp tục được chọn thay vì âm thầm rơi về `claude-sonnet-4-5`.
+- Sửa lỗi: xử lý kết quả công cụ của nhà cung cấp Ollama và cô đọng ngữ cảnh quá sớm.
+- Sửa lỗi: giữ liên kết cha-con của tác vụ khi một tác vụ con được ủy quyền bị gián đoạn.
+- Cải thiện xử lý khối nội dung Claude trên Anthropic Vertex để có phản hồi đáng tin cậy hơn.
+- Cập nhật CI, phát hành nightly và phụ thuộc/công cụ.
 
 ## Zoo Code có thể làm gì cho BẠN?
 

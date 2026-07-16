@@ -40,6 +40,14 @@
 		"title": "开始新任务",
 		"tooltip": "开始一个新任务"
 	},
+	"seeNewChanges": {
+		"title": "查看新更改",
+		"tooltip": "查看自上次 prompt 以来所做的更改"
+	},
+	"restoreChanges": {
+		"title": "恢复更改",
+		"tooltip": "将文件和任务状态恢复到上次 prompt"
+	},
 	"proceedAnyways": {
 		"title": "仍然继续",
 		"tooltip": "在命令执行时继续"
@@ -221,6 +229,7 @@
 		"abort": "中止",
 		"pid": "PID: {{pid}}",
 		"exitStatus": "已退出，状态码 {{exitCode}}",
+		"malformedCommand": "命令格式错误：shell 语法错误",
 		"manageCommands": "管理命令权限",
 		"commandManagementDescription": "管理命令权限：点击 ✓ 允许自动执行，点击 ✗ 拒绝执行。可以打开/关闭模式或从列表中删除。<settingsLink>查看所有设置</settingsLink>",
 		"addToAllowed": "添加到允许列表",
@@ -331,16 +340,11 @@
 	"announcement": {
 		"title": "Zoo Code {{version}} 已发布",
 		"support": "请在 <githubLink>GitHub</githubLink> 上为 Zoo Code 点星支持我们。",
-		"handoff": {
-			"heading": "Roo Code 回来了！现在以社区维护的 Zoo Code 插件之名继续前进！！",
-			"description": "如果你还没关注到，Roo Code 团队最近宣布将逐步停止 Roo Code 的开发，并归档他们已经完成的工作。但别担心，社区已经站了出来，以全新的名称和新家园延续 Roo Code 的传承！我们不再只是一个单独的“Roo”，而是一个社区，一个“Zoo”。Zoo Code 是一个由社区维护的插件，在 Roo Code 停下的地方继续前进。我们会继续保留 Roo 的精神，同时带来新功能和改进。我们也要向整个 Roo Code 团队致以诚挚感谢，感谢他们的卓越工作，打造出这样一款出色的开发者工具。我们很高兴能在他们打下的基础上继续建设，也期待看到社区未来会把 Zoo Code 带到哪里！",
-			"readMore": "查看 Zoo Code 的新主页并阅读完整公告"
-		},
 		"release": {
 			"heading": "新增功能：",
-			"highlight1": "Xiaomi MiMo 提供商：已将 Xiaomi MiMo 添加为一等 API 提供商，让你可以直接在 Zoo Code 中配置 MiMo 模型。",
-			"highlight2": "Zoo Code 上游交接：已合入最新的上游 sunset merge 及相关平台更新，让 Zoo Code 持续与社区交接工作保持一致。",
-			"highlight3": "聊天与提供商稳定性修复：已修复 MCP 登录文案、Gemini 全工具集请求、OpenAI temperature 处理，以及 Markdown 单波浪线渲染。"
+			"highlight1": "支持 GLM-5.2 的 Friendli 提供商 — 通过 Friendli 使用最新的 GLM 模型。",
+			"highlight2": "Ollama 原生 thinking/reasoning 支持 — 使用 Ollama 模型时可端到端保留 reasoning 输出。",
+			"highlight3": "Anthropic 自定义 `apiModelId` 修复 — 自定义 Anthropic 模型 ID 现在会保持选中，不再静默回退到 `claude-sonnet-4-5`。"
 		},
 		"cloudAgents": {
 			"heading": "云端新功能：",

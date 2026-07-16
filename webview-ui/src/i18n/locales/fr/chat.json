@@ -40,6 +40,14 @@
 		"title": "Commencer une nouvelle tâche",
 		"tooltip": "Démarrer une nouvelle tâche"
 	},
+	"seeNewChanges": {
+		"title": "Voir les nouveaux changements",
+		"tooltip": "Affiche les changements effectués depuis ton dernier prompt"
+	},
+	"restoreChanges": {
+		"title": "Restaurer les changements",
+		"tooltip": "Restaure les fichiers et l'état de la tâche à ton dernier prompt"
+	},
 	"proceedAnyways": {
 		"title": "Continuer quand même",
 		"tooltip": "Continuer pendant l'exécution de la commande"
@@ -221,6 +229,7 @@
 		"running": "En cours d'exécution",
 		"pid": "PID : {{pid}}",
 		"exitStatus": "Terminé avec le statut {{exitCode}}",
+		"malformedCommand": "Commande mal formée : erreur de syntaxe shell",
 		"manageCommands": "Commandes approuvées automatiquement",
 		"addToAllowed": "Ajouter à la liste autorisée",
 		"removeFromAllowed": "Retirer de la liste autorisée",
@@ -330,16 +339,11 @@
 	"announcement": {
 		"title": "Zoo Code {{version}} est disponible",
 		"support": "Soutiens Zoo Code en nous donnant une étoile sur <githubLink>GitHub</githubLink>.",
-		"handoff": {
-			"heading": "Roo Code est de retour ! Désormais comme plugin maintenu par la communauté sous le nom Zoo Code !!",
-			"description": "Si tu n'as pas suivi, l'équipe Roo Code a récemment annoncé qu'elle arrêtait le développement de Roo Code et archivait le travail accompli. Mais pas de panique : la communauté a pris le relais pour faire vivre l'héritage de Roo Code avec un nouveau nom et un nouveau foyer ! Nous ne sommes plus juste un seul « Roo », nous sommes une communauté, un « Zoo » si tu veux. Zoo Code est un plugin maintenu par la communauté qui reprend là où Roo Code s'est arrêté, et nous nous engageons à préserver l'esprit de Roo tout en ajoutant de nouvelles fonctionnalités et améliorations. Nous voulons adresser un immense merci à toute l'équipe Roo Code pour son travail incroyable et pour avoir créé un outil aussi formidable pour les développeurs. Nous sommes ravis de poursuivre sur leurs bases et de voir jusqu'où la communauté mènera Zoo Code.",
-			"readMore": "Voir la nouvelle page d'accueil de Zoo Code et lire l'annonce complète"
-		},
 		"release": {
 			"heading": "Nouveautés :",
-			"highlight1": "Fournisseur Xiaomi MiMo : Xiaomi MiMo a été ajouté comme fournisseur d'API de premier plan pour que tu puisses configurer les modèles MiMo directement dans Zoo Code.",
-			"highlight2": "Handoff upstream de Zoo Code : Nous avons intégré la dernière fusion upstream du sunset et les mises à jour de plateforme associées pour garder Zoo Code aligné avec le travail de relais de la communauté.",
-			"highlight3": "Correctifs de stabilité dans le chat et les fournisseurs : Le texte de connexion MCP, les requêtes Gemini avec tout l'ensemble d'outils, la gestion de la température OpenAI et le rendu Markdown avec un tilde unique ont été corrigés."
+			"highlight1": "Provider Friendli avec prise en charge de GLM-5.2 — utilise le dernier modèle GLM via Friendli.",
+			"highlight2": "Prise en charge native du thinking/reasoning pour Ollama — préserve la sortie de raisonnement de bout en bout quand tu utilises des modèles Ollama.",
+			"highlight3": "Correction du `apiModelId` personnalisé d'Anthropic — les identifiants de modèle Anthropic personnalisés restent désormais sélectionnés au lieu de revenir silencieusement à `claude-sonnet-4-5`."
 		},
 		"cloudAgents": {
 			"heading": "Nouveautés dans le Cloud :",

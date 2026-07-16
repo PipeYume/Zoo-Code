@@ -3,6 +3,7 @@ export * from "./baseten.js"
 export * from "./bedrock.js"
 export * from "./deepseek.js"
 export * from "./fireworks.js"
+export * from "./friendli.js"
 export * from "./gemini.js"
 export * from "./lite-llm.js"
 export * from "./lm-studio.js"
@@ -23,15 +24,18 @@ export * from "./vscode-llm.js"
 export * from "./xai.js"
 export * from "./vercel-ai-gateway.js"
 export * from "./opencode-go.js"
+export * from "./kenari.js"
 export * from "./zai.js"
 export * from "./minimax.js"
 export * from "./mimo.js"
+export * from "./zoo-gateway.js"
 
 import { anthropicDefaultModelId } from "./anthropic.js"
 import { basetenDefaultModelId } from "./baseten.js"
 import { bedrockDefaultModelId } from "./bedrock.js"
 import { deepSeekDefaultModelId } from "./deepseek.js"
 import { fireworksDefaultModelId } from "./fireworks.js"
+import { friendliDefaultModelId } from "./friendli.js"
 import { geminiDefaultModelId } from "./gemini.js"
 import { litellmDefaultModelId } from "./lite-llm.js"
 import { mistralDefaultModelId } from "./mistral.js"
@@ -48,9 +52,11 @@ import { vscodeLlmDefaultModelId } from "./vscode-llm.js"
 import { xaiDefaultModelId } from "./xai.js"
 import { vercelAiGatewayDefaultModelId } from "./vercel-ai-gateway.js"
 import { opencodeGoDefaultModelId } from "./opencode-go.js"
+import { kenariDefaultModelId } from "./kenari.js"
 import { internationalZAiDefaultModelId, mainlandZAiDefaultModelId } from "./zai.js"
 import { minimaxDefaultModelId } from "./minimax.js"
 import { mimoDefaultModelId } from "./mimo.js"
+import { zooGatewayDefaultModelId } from "./zoo-gateway.js"
 
 // Import the ProviderName type from provider-settings to avoid duplication
 import type { ProviderName } from "../provider-settings.js"
@@ -109,6 +115,8 @@ export function getProviderDefaultModelId(
 			return sambaNovaDefaultModelId
 		case "fireworks":
 			return fireworksDefaultModelId
+		case "friendli":
+			return friendliDefaultModelId
 		case "qwen-code":
 			return qwenCodeDefaultModelId
 		case "poe":
@@ -119,6 +127,10 @@ export function getProviderDefaultModelId(
 			return vercelAiGatewayDefaultModelId
 		case "opencode-go":
 			return opencodeGoDefaultModelId
+		case "kenari":
+			return kenariDefaultModelId
+		case "zoo-gateway":
+			return zooGatewayDefaultModelId
 		case "anthropic":
 		case "gemini-cli":
 		case "fake-ai":

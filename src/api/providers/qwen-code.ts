@@ -14,6 +14,7 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 
 import { BaseProvider } from "./base-provider"
+import { extractReasoningFromDelta } from "./utils/extract-reasoning"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 
 const QWEN_OAUTH_BASE_URL = "https://chat.qwen.ai"
@@ -75,6 +76,7 @@ export class QwenCodeHandler extends BaseProvider implements SingleCompletionHan
 					"X-DashScope-UserAgent": `QwenCode/1.0.0 (${os.platform()}; ${os.arch()})`,
 					"X-DashScope-AuthType": "qwen-oauth",
 				},
+				timeout: this.timeoutMs,
 			})
 		}
 		return this.client
@@ -283,11 +285,9 @@ export class QwenCodeHandler extends BaseProvider implements SingleCompletionHan
 				}
 			}
 
-			if ("reasoning_content" in delta && delta.reasoning_content) {
-				yield {
-					type: "reasoning",
-					text: (delta.reasoning_content as string | undefined) || "",
-				}
+			const reasoningText = extractReasoningFromDelta(delta)
+			if (reasoningText) {
+				yield { type: "reasoning", text: reasoningText }
 			}
 
 			// Handle tool calls in stream - emit partial chunks for NativeToolCallParser
