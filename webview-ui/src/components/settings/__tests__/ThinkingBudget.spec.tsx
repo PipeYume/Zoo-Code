@@ -587,5 +587,48 @@ describe("ThinkingBudget", () => {
 
 			expect(screen.getByTestId("max-output-tokens")).toBeInTheDocument()
 		})
+
+		it("should use a minimum of 8192 for the Anthropic standalone max output slider", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{ apiProvider: "anthropic", apiModelId: "claude-sonnet-4-5" }}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						maxTokens: 64000,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			const slider = screen.getByTestId("max-output-tokens").querySelector("input[type='range']")!
+			expect(slider.getAttribute("min")).toBe("8192")
+		})
+
+		it("should clamp modelMaxTokens to 8192 when reasoning is enabled for an Anthropic hybrid model", () => {
+			const setApiConfigurationField = vi.fn()
+
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					setApiConfigurationField={setApiConfigurationField}
+					apiConfiguration={{
+						apiProvider: "anthropic",
+						apiModelId: "claude-sonnet-4-5",
+						modelMaxTokens: 1024,
+						enableReasoningEffort: true,
+					}}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						maxTokens: 64000,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(setApiConfigurationField).toHaveBeenCalledWith("modelMaxTokens", 8192, false)
+		})
 	})
 })

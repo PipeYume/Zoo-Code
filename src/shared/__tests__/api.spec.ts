@@ -160,6 +160,38 @@ describe("getModelMaxOutputTokens", () => {
 		expect(result).toBe(32_768)
 	})
 
+	test("should honor modelMaxTokens override for non-reasoning Anthropic models", () => {
+		const model: ModelInfo = {
+			contextWindow: 200_000,
+			supportsPromptCache: true,
+			maxTokens: 8192,
+		}
+
+		const settings: ProviderSettings = {
+			apiProvider: "anthropic",
+			modelMaxTokens: 4096,
+		}
+
+		const result = getModelMaxOutputTokens({ modelId: "claude-3-5-sonnet-20241022", model, settings })
+		expect(result).toBe(4096)
+	})
+
+	test("should cap modelMaxTokens override for non-reasoning Anthropic models at model maxTokens", () => {
+		const model: ModelInfo = {
+			contextWindow: 200_000,
+			supportsPromptCache: true,
+			maxTokens: 8192,
+		}
+
+		const settings: ProviderSettings = {
+			apiProvider: "anthropic",
+			modelMaxTokens: 16_384,
+		}
+
+		const result = getModelMaxOutputTokens({ modelId: "claude-3-5-sonnet-20241022", model, settings })
+		expect(result).toBe(8192)
+	})
+
 	test("should preserve Anthropic hybrid token handling when a model also supports binary reasoning", () => {
 		const model: ModelInfo = {
 			contextWindow: 1_000_000,

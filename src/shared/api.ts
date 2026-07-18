@@ -122,12 +122,15 @@ export const getModelMaxOutputTokens = ({
 		format === "anthropic" ||
 		(format === "openrouter" && modelId.startsWith("anthropic/"))
 
+	// For all Anthropic contexts, honor an explicit modelMaxTokens override (capped at the
+	// model's advertised ceiling) so the UI slider's persisted value is actually sent to the API.
+	if (isAnthropicContext && settings?.modelMaxTokens != null && settings.modelMaxTokens > 0) {
+		return model.maxTokens ? Math.min(settings.modelMaxTokens, model.maxTokens) : settings.modelMaxTokens
+	}
+
 	// For "Hybrid" reasoning models, discard the model's actual maxTokens for Anthropic contexts
-	// unless the user has explicitly configured an output token budget.
+	// when the user has not configured an output token budget.
 	if (model.supportsReasoningBudget && isAnthropicContext) {
-		if (settings?.modelMaxTokens != null && settings.modelMaxTokens > 0) {
-			return model.maxTokens ? Math.min(settings.modelMaxTokens, model.maxTokens) : settings.modelMaxTokens
-		}
 		return ANTHROPIC_DEFAULT_MAX_TOKENS
 	}
 
