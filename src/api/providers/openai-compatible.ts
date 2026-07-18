@@ -79,7 +79,13 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 	/**
 	 * Get the model information. Must be implemented by subclasses.
 	 */
-	abstract override getModel(): { id: string; info: ModelInfo; maxTokens?: number; temperature?: number }
+	abstract override getModel(): {
+		id: string
+		info: ModelInfo
+		maxTokens?: number
+		temperature?: number
+		reasoningEffort?: ModelInfo["reasoningEffort"]
+	}
 
 	/**
 	 * Process usage metrics from the AI SDK response.
@@ -147,6 +153,14 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 		return maxTokens ?? undefined
 	}
 
+	private getReasoningEffort(model: ReturnType<OpenAICompatibleHandler["getModel"]>): ModelInfo["reasoningEffort"] {
+		if (model.info.requiredReasoningEffort) {
+			return model.info.reasoningEffort
+		}
+
+		return model.reasoningEffort
+	}
+
 	/**
 	 * Create a message stream using the AI SDK.
 	 */
@@ -157,6 +171,7 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 	): ApiStream {
 		const model = this.getModel()
 		const languageModel = this.getLanguageModel()
+		const reasoningEffort = this.getReasoningEffort(model)
 
 		// Convert messages to AI SDK format
 		const aiSdkMessages = convertToAiSdkMessages(messages)
@@ -170,10 +185,16 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 			model: languageModel,
 			system: systemPrompt,
 			messages: aiSdkMessages,
-			temperature: model.temperature ?? this.config.temperature ?? 0,
+			temperature:
+				model.info.supportsTemperature === false
+					? undefined
+					: (model.temperature ?? this.config.temperature ?? 0),
 			maxOutputTokens: this.getMaxOutputTokens(),
 			tools: aiSdkTools,
 			toolChoice: this.mapToolChoice(metadata?.tool_choice),
+			...(reasoningEffort && {
+				providerOptions: { openaiCompatible: { reasoningEffort } },
+			}),
 		}
 
 		// Use streamText for streaming responses
@@ -198,13 +219,18 @@ export abstract class OpenAICompatibleHandler extends BaseProvider implements Si
 	 * Complete a prompt using the AI SDK generateText.
 	 */
 	async completePrompt(prompt: string): Promise<string> {
+		const model = this.getModel()
 		const languageModel = this.getLanguageModel()
+		const reasoningEffort = this.getReasoningEffort(model)
 
 		const { text } = await generateText({
 			model: languageModel,
 			prompt,
 			maxOutputTokens: this.getMaxOutputTokens(),
-			temperature: this.config.temperature ?? 0,
+			temperature: model.info.supportsTemperature === false ? undefined : (this.config.temperature ?? 0),
+			...(reasoningEffort && {
+				providerOptions: { openaiCompatible: { reasoningEffort } },
+			}),
 		})
 
 		return text

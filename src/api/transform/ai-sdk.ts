@@ -110,7 +110,11 @@ export function convertToAiSdkMessages(messages: Anthropic.Messages.MessageParam
 					} as ModelMessage)
 				}
 			} else if (message.role === "assistant") {
+				const messageWithReasoning = message as Anthropic.Messages.MessageParam & {
+					reasoning_content?: string
+				}
 				const textParts: string[] = []
+				const reasoningParts: string[] = []
 				const toolCalls: Array<{
 					type: "tool-call"
 					toolCallId: string
@@ -128,14 +132,27 @@ export function convertToAiSdkMessages(messages: Anthropic.Messages.MessageParam
 							toolName: part.name,
 							input: part.input,
 						})
+					} else if (
+						part &&
+						typeof part === "object" &&
+						(part as { type?: unknown }).type === "reasoning" &&
+						typeof (part as { text?: unknown }).text === "string"
+					) {
+						reasoningParts.push((part as unknown as { text: string }).text)
 					}
 				}
 
 				const content: Array<
 					| { type: "text"; text: string }
+					| { type: "reasoning"; text: string }
 					| { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
 				> = []
 
+				const reasoning = messageWithReasoning.reasoning_content || reasoningParts.join("")
+				if (reasoning) {
+					// @ai-sdk/openai-compatible serializes assistant reasoning parts as reasoning_content.
+					content.push({ type: "reasoning", text: reasoning })
+				}
 				if (textParts.length > 0) {
 					content.push({ type: "text", text: textParts.join("\n") })
 				}

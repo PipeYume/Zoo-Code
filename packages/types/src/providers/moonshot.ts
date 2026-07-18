@@ -66,6 +66,23 @@ export const moonshotModels = {
 		description:
 			"Kimi K2.5 is the latest generation of Moonshot AI's Kimi series, featuring improved reasoning capabilities and enhanced performance across diverse tasks.",
 	},
+	"kimi-k3": {
+		maxTokens: 131_072,
+		contextWindow: 1_048_576,
+		supportsImages: true,
+		supportsPromptCache: true,
+		supportsMaxTokens: true,
+		supportsReasoningEffort: ["max"],
+		requiredReasoningEffort: true,
+		reasoningEffort: "max",
+		preserveReasoning: true,
+		supportsTemperature: false,
+		inputPrice: 3,
+		outputPrice: 15,
+		cacheReadsPrice: 0.3,
+		description:
+			"Kimi K3 is Moonshot AI's multimodal reasoning model with a 1M-token context window and up to 128K output tokens.",
+	},
 } as const satisfies Record<string, ModelInfo>
 
 export const MOONSHOT_DEFAULT_TEMPERATURE = 0.6

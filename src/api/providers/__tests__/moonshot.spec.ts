@@ -24,6 +24,7 @@ vi.mock("@ai-sdk/openai-compatible", () => ({
 }))
 
 import type { Anthropic } from "@anthropic-ai/sdk"
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 
 import { moonshotDefaultModelId } from "@roo-code/types"
 
@@ -78,6 +79,28 @@ describe("MoonshotHandler", () => {
 	})
 
 	describe("getModel", () => {
+		it("returns Kimi K3 catalog metadata without changing the default model", () => {
+			const k3Handler = new MoonshotHandler({ ...mockOptions, apiModelId: "kimi-k3" })
+
+			expect(moonshotDefaultModelId).not.toBe("kimi-k3")
+			expect(k3Handler.getModel().info).toMatchObject({
+				maxTokens: 131_072,
+				contextWindow: 1_048_576,
+				supportsImages: true,
+				supportsPromptCache: true,
+				supportsMaxTokens: true,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+				preserveReasoning: true,
+				supportsTemperature: false,
+				inputPrice: 3,
+				outputPrice: 15,
+				cacheReadsPrice: 0.3,
+			})
+			expect("cacheWritesPrice" in k3Handler.getModel().info).toBe(false)
+		})
+
 		it("should return model info for valid model ID", () => {
 			const model = handler.getModel()
 			expect(model.id).toBe(mockOptions.apiModelId)
@@ -164,6 +187,112 @@ describe("MoonshotHandler", () => {
 			expect(textChunks[0].text).toBe("Test response")
 		})
 
+		it("omits temperature and sends required max reasoning for Kimi K3", async () => {
+			async function* mockFullStream() {
+				yield { type: "text-delta", text: "K3 response" }
+			}
+
+			mockStreamText.mockReturnValue({
+				fullStream: mockFullStream(),
+				usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, details: {}, raw: {} }),
+			})
+
+			const k3Handler = new MoonshotHandler({
+				...mockOptions,
+				apiModelId: "kimi-k3",
+				modelTemperature: 0.9,
+				reasoningEffort: "disable",
+				enableReasoningEffort: false,
+			})
+			for await (const _chunk of k3Handler.createMessage(systemPrompt, messages)) {
+				void _chunk
+			}
+
+			expect(mockStreamText).toHaveBeenCalledWith(
+				expect.objectContaining({
+					temperature: undefined,
+					maxOutputTokens: 131_072,
+					providerOptions: { openaiCompatible: { reasoningEffort: "max" } },
+				}),
+			)
+		})
+
+		it("serializes retained Kimi K3 reasoning through the installed AI SDK", async () => {
+			const actualAi = await vi.importActual<typeof import("ai")>("ai")
+			const actualOpenAICompatible =
+				await vi.importActual<typeof import("@ai-sdk/openai-compatible")>("@ai-sdk/openai-compatible")
+			vi.mocked(createOpenAICompatible).mockImplementationOnce(actualOpenAICompatible.createOpenAICompatible)
+			mockStreamText.mockImplementationOnce(actualAi.streamText)
+
+			let requestBody: Record<string, any> | undefined
+			const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+				requestBody = JSON.parse(String(init?.body))
+				return new Response(
+					'data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"kimi-k3","choices":[{"index":0,"delta":{"role":"assistant","content":"done"},"finish_reason":null}]}\n\ndata: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":0,"model":"kimi-k3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11}}\n\ndata: [DONE]\n\n',
+					{ status: 200, headers: { "content-type": "text/event-stream" } },
+				)
+			})
+			vi.stubGlobal("fetch", fetchMock)
+
+			try {
+				const k3Handler = new MoonshotHandler({
+					apiModelId: "kimi-k3",
+					moonshotApiKey: "test-key",
+					moonshotBaseUrl: "https://api.moonshot.ai/v1",
+					modelTemperature: 0.9,
+				})
+				const retainedMessages = [
+					{ role: "user", content: "Inspect the file" },
+					{
+						role: "assistant",
+						content: [
+							{ type: "reasoning", text: "I need the file contents first." },
+							{ type: "tool_use", id: "call_123", name: "read_file", input: { path: "a.ts" } },
+						],
+					},
+					{
+						role: "user",
+						content: [{ type: "tool_result", tool_use_id: "call_123", content: "export const a = 1" }],
+					},
+				] as Anthropic.Messages.MessageParam[]
+
+				try {
+					for await (const _chunk of k3Handler.createMessage("system", retainedMessages)) {
+						// Drain the stream so the installed SDK serializes the HTTP request.
+					}
+				} catch (error) {
+					// The synthetic SSE only needs to support request serialization.
+					expect((error as Error).name).toBe("AI_NoOutputGeneratedError")
+				}
+
+				expect(requestBody).toMatchObject({
+					model: "kimi-k3",
+					reasoning_effort: "max",
+					messages: [
+						{ role: "system", content: "system" },
+						{ role: "user", content: "Inspect the file" },
+						{
+							role: "assistant",
+							content: null,
+							reasoning_content: "I need the file contents first.",
+							tool_calls: [
+								{
+									id: "call_123",
+									type: "function",
+									function: { name: "read_file", arguments: JSON.stringify({ path: "a.ts" }) },
+								},
+							],
+						},
+						{ role: "tool", tool_call_id: "call_123", content: "export const a = 1" },
+					],
+				})
+				expect(requestBody).not.toHaveProperty("temperature")
+				expect(fetchMock).toHaveBeenCalledOnce()
+			} finally {
+				vi.unstubAllGlobals()
+			}
+		})
+
 		it("should include usage information", async () => {
 			async function* mockFullStream() {
 				yield { type: "text-delta", text: "Test response" }
@@ -235,6 +364,27 @@ describe("MoonshotHandler", () => {
 			expect(mockGenerateText).toHaveBeenCalledWith(
 				expect.objectContaining({
 					prompt: "Test prompt",
+				}),
+			)
+		})
+
+		it("omits temperature and sends required max reasoning for Kimi K3", async () => {
+			mockGenerateText.mockResolvedValue({ text: "K3 completion" })
+			const k3Handler = new MoonshotHandler({
+				...mockOptions,
+				apiModelId: "kimi-k3",
+				modelTemperature: 0.9,
+				reasoningEffort: "disable",
+				enableReasoningEffort: false,
+			})
+
+			await k3Handler.completePrompt("Test prompt")
+
+			expect(mockGenerateText).toHaveBeenCalledWith(
+				expect.objectContaining({
+					temperature: undefined,
+					maxOutputTokens: 131_072,
+					providerOptions: { openaiCompatible: { reasoningEffort: "max" } },
 				}),
 			)
 		})

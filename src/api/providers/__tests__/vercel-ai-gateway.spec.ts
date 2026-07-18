@@ -83,6 +83,21 @@ vitest.mock("../fetchers/modelCache", () => ({
 				cacheReadsPrice: 0.25,
 				description: "GPT-4o",
 			},
+			"moonshotai/kimi-k3": {
+				maxTokens: 131_072,
+				contextWindow: 1_000_000,
+				supportsImages: true,
+				supportsPromptCache: true,
+				supportsMaxTokens: true,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+				preserveReasoning: true,
+				supportsTemperature: false,
+				inputPrice: 3,
+				outputPrice: 15,
+				cacheReadsPrice: 0.3,
+			},
 		})
 	}),
 	getModelsFromCache: vitest.fn().mockReturnValue(undefined),
@@ -333,6 +348,77 @@ describe("VercelAiGatewayHandler", () => {
 			expect(call.model).toBe("anthropic/claude-sonnet-5")
 			expect(call.temperature).toBeUndefined()
 			expect(call.max_completion_tokens).toBe(128000)
+		})
+
+		it("uses Kimi K3 required reasoning without explicit cache breakpoints", async () => {
+			const { addCacheBreakpoints } = await import("../../transform/caching/vercel-ai-gateway")
+			const handler = new VercelAiGatewayHandler({
+				...mockOptions,
+				vercelAiGatewayModelId: "moonshotai/kimi-k3",
+				modelTemperature: 0.9,
+			})
+
+			await handler.createMessage("system", [{ role: "user", content: "Hello" }]).next()
+
+			const body = mockCreate.mock.calls[0][0]
+			expect(body.temperature).toBeUndefined()
+			expect(body.max_completion_tokens).toBe(131_072)
+			expect(body.reasoning_effort).toBe("max")
+			expect(addCacheBreakpoints).not.toHaveBeenCalled()
+		})
+
+		it("preserves Kimi K3 reasoning and tool calls in continuation requests", async () => {
+			const handler = new VercelAiGatewayHandler({
+				...mockOptions,
+				vercelAiGatewayModelId: "moonshotai/kimi-k3",
+			})
+			const messages = [
+				{ role: "user", content: "Inspect the file" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "reasoning", text: "I need the file contents first." },
+						{ type: "tool_use", id: "call_123", name: "read_file", input: { path: "a.ts" } },
+					],
+				},
+				{
+					role: "user",
+					content: [{ type: "tool_result", tool_use_id: "call_123", content: "export const a = 1" }],
+				},
+			] as Anthropic.Messages.MessageParam[]
+
+			await handler.createMessage("system", messages).next()
+
+			const assistant = mockCreate.mock.calls[0][0].messages[2]
+			expect(assistant).toMatchObject({
+				role: "assistant",
+				reasoning_content: "I need the file contents first.",
+				tool_calls: [
+					{
+						id: "call_123",
+						type: "function",
+						function: { name: "read_file", arguments: JSON.stringify({ path: "a.ts" }) },
+					},
+				],
+			})
+		})
+
+		it("does not force optional model default reasoning effort", async () => {
+			const handler = new VercelAiGatewayHandler(mockOptions)
+			vitest.spyOn(handler, "fetchModel").mockResolvedValue({
+				id: "optional-reasoning-model",
+				info: {
+					contextWindow: 100_000,
+					supportsPromptCache: false,
+					supportsReasoningEffort: ["low", "medium"],
+					reasoningEffort: "medium",
+					requiredReasoningEffort: false,
+				},
+			})
+
+			await handler.createMessage("system", [{ role: "user", content: "Hello" }]).next()
+
+			expect(mockCreate.mock.calls[0][0].reasoning_effort).toBeUndefined()
 		})
 
 		it("adds cache breakpoints for supported models", async () => {

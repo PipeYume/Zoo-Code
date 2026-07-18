@@ -17,6 +17,8 @@ import { t } from "../../i18n"
 import { ApiStream } from "../transform/stream"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { addCacheBreakpoints } from "../transform/caching/vercel-ai-gateway"
+import { getModelParams } from "../transform/model-params"
+import { extractReasoningFromDelta } from "./utils/extract-reasoning"
 
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 import { RouterProvider } from "./router-provider"
@@ -182,6 +184,17 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 		this.ensureAuthenticated()
 
 		const { id: modelId, info } = await this.fetchModel()
+		const reasoningEffort = info.requiredReasoningEffort
+			? info.reasoningEffort
+			: this.options.reasoningEffort !== undefined
+				? getModelParams({
+						format: "openai",
+						modelId,
+						model: info,
+						settings: this.options,
+						defaultTemperature: ZOO_GATEWAY_DEFAULT_TEMPERATURE,
+					}).reasoningEffort
+				: undefined
 
 		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
 			{ role: "system", content: systemPrompt },
@@ -206,15 +219,19 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 		const body: OpenAI.Chat.ChatCompletionCreateParams = {
 			model: modelId,
 			messages: openAiMessages,
-			temperature: this.supportsTemperature(modelId)
-				? (this.options.modelTemperature ?? ZOO_GATEWAY_DEFAULT_TEMPERATURE)
-				: undefined,
+			temperature:
+				info.supportsTemperature !== false && this.supportsTemperature(modelId)
+					? (this.options.modelTemperature ?? ZOO_GATEWAY_DEFAULT_TEMPERATURE)
+					: undefined,
 			max_completion_tokens: info.maxTokens,
 			stream: true,
 			stream_options: { include_usage: true },
 			tools: this.convertToolsForOpenAI(metadata?.tools),
 			tool_choice: metadata?.tool_choice,
 			parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+			...(reasoningEffort && {
+				reasoning_effort: reasoningEffort as OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"],
+			}),
 		}
 
 		try {
@@ -236,6 +253,11 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 						type: "text",
 						text: delta.content,
 					}
+				}
+
+				const reasoningText = extractReasoningFromDelta(delta)
+				if (reasoningText) {
+					yield { type: "reasoning", text: reasoningText }
 				}
 
 				// Emit raw tool call chunks - NativeToolCallParser handles state management
@@ -280,6 +302,17 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 		this.ensureAuthenticated()
 
 		const { id: modelId, info } = await this.fetchModel()
+		const reasoningEffort = info.requiredReasoningEffort
+			? info.reasoningEffort
+			: this.options.reasoningEffort !== undefined
+				? getModelParams({
+						format: "openai",
+						modelId,
+						model: info,
+						settings: this.options,
+						defaultTemperature: ZOO_GATEWAY_DEFAULT_TEMPERATURE,
+					}).reasoningEffort
+				: undefined
 
 		try {
 			const requestOptions: OpenAI.Chat.ChatCompletionCreateParams = {
@@ -288,11 +321,15 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 				stream: false,
 			}
 
-			if (this.supportsTemperature(modelId)) {
+			if (info.supportsTemperature !== false && this.supportsTemperature(modelId)) {
 				requestOptions.temperature = this.options.modelTemperature ?? ZOO_GATEWAY_DEFAULT_TEMPERATURE
 			}
 
 			requestOptions.max_completion_tokens = info.maxTokens
+			if (reasoningEffort) {
+				requestOptions.reasoning_effort =
+					reasoningEffort as OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"]
+			}
 
 			const response = await this.client.chat.completions.create(requestOptions)
 			return response.choices[0]?.message.content || ""

@@ -116,6 +116,28 @@ export const parseVercelAiGatewayModel = ({ id, model }: { id: string; model: Ve
 		description: model.description ?? model.name,
 	}
 
+	// Kimi K3 uses automatic server-side prompt caching, so support cannot be
+	// inferred from the presence of both cache-write and cache-read prices. The
+	// gateway payload also cannot fully express its required reasoning mode.
+	if (id === "moonshotai/kimi-k3") {
+		Object.assign(modelInfo, {
+			maxTokens: 131_072,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsMaxTokens: true,
+			supportsReasoningEffort: ["max"],
+			requiredReasoningEffort: true,
+			reasoningEffort: "max",
+			preserveReasoning: true,
+			supportsTemperature: false,
+			inputPrice: 3,
+			outputPrice: 15,
+			cacheReadsPrice: 0.3,
+		} satisfies Partial<ModelInfo>)
+		delete modelInfo.cacheWritesPrice
+	}
+
 	if (id === "anthropic/claude-fable-5") {
 		modelInfo.supportsTemperature = false
 	}

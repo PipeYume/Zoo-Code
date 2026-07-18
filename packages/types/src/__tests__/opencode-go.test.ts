@@ -23,6 +23,7 @@ describe("opencode-go registry", () => {
 		"glm-5.2",
 		"kimi-k2.5",
 		"kimi-k2.6",
+		"kimi-k3",
 		"mimo-v2.5",
 		"mimo-v2.5-pro",
 		"deepseek-v4-pro",
@@ -78,6 +79,25 @@ describe("opencode-go registry", () => {
 	})
 
 	describe("opencodeGoModels registry invariants", () => {
+		it("configures Kimi K3 with its required max reasoning and automatic caching metadata", () => {
+			expect(getOpencodeGoModelInfo("kimi-k3")).toMatchObject({
+				maxTokens: 131_072,
+				contextWindow: 1_000_000,
+				supportsImages: true,
+				supportsPromptCache: true,
+				supportsMaxTokens: true,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+				preserveReasoning: true,
+				supportsTemperature: false,
+				inputPrice: 3,
+				outputPrice: 15,
+				cacheReadsPrice: 0.3,
+			})
+			expect(getOpencodeGoModelInfo("kimi-k3")?.cacheWritesPrice).toBeUndefined()
+		})
+
 		it("every entry has a positive maxTokens and contextWindow", () => {
 			for (const [id, info] of Object.entries(opencodeGoModels)) {
 				expect(info.maxTokens).toBeGreaterThan(0)

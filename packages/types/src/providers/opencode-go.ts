@@ -130,6 +130,23 @@ export const opencodeGoModels: Record<string, ModelInfo> = {
 		description:
 			"Kimi K2.6 is Moonshot AI's native multimodal agentic MoE model with a 256k context window, built for long-horizon coding and tool use. Available via the Opencode Go plan.",
 	},
+	"kimi-k3": {
+		maxTokens: 131_072,
+		contextWindow: 1_000_000,
+		supportsImages: true,
+		supportsPromptCache: true,
+		supportsMaxTokens: true,
+		supportsReasoningEffort: ["max"],
+		requiredReasoningEffort: true,
+		reasoningEffort: "max",
+		preserveReasoning: true,
+		supportsTemperature: false,
+		inputPrice: 3,
+		outputPrice: 15,
+		cacheReadsPrice: 0.3,
+		description:
+			"Kimi K3 is Moonshot AI's multimodal reasoning model with a 1M-token context window and up to 128K output tokens. Available via the Opencode Go plan.",
+	},
 
 	// --- Xiaomi MiMo ---
 	"mimo-v2.5": {

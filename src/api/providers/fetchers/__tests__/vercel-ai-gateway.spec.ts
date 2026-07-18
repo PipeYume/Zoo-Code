@@ -237,6 +237,38 @@ describe("Vercel AI Gateway Fetchers", () => {
 			expect(result.supportsTemperature).toBe(false)
 		})
 
+		it("normalizes Kimi K3 capabilities that the live payload cannot express", () => {
+			const result = parseVercelAiGatewayModel({
+				id: "moonshotai/kimi-k3",
+				model: {
+					...baseModel,
+					id: "moonshotai/kimi-k3",
+					owned_by: "moonshotai",
+					name: "Kimi K3",
+					context_window: 128_000,
+					max_tokens: 8_000,
+					pricing: { input: "0.000001", output: "0.000002", input_cache_read: "0.0000001" },
+				},
+			})
+
+			expect(result).toMatchObject({
+				maxTokens: 131_072,
+				contextWindow: 1_000_000,
+				supportsImages: true,
+				supportsPromptCache: true,
+				supportsMaxTokens: true,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+				preserveReasoning: true,
+				supportsTemperature: false,
+				inputPrice: 3,
+				outputPrice: 15,
+				cacheReadsPrice: 0.3,
+			})
+			expect(result).not.toHaveProperty("cacheWritesPrice")
+		})
+
 		it("detects vision-only models", () => {
 			// claude 3.5 haiku in VERCEL_AI_GATEWAY_VISION_ONLY_MODELS
 			const visionModel = {

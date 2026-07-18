@@ -75,6 +75,27 @@ describe("Opencode Go Fetchers", () => {
 			})
 		})
 
+		it("enriches an incomplete Kimi K3 payload from the native registry", async () => {
+			mockedAxios.get.mockResolvedValue({ data: { data: [{ id: "kimi-k3" }] } })
+
+			const models = await getOpencodeGoModels("k")
+
+			expect(models["kimi-k3"]).toMatchObject({
+				contextWindow: 1_000_000,
+				maxTokens: 131_072,
+				supportsImages: true,
+				supportsPromptCache: true,
+				supportsMaxTokens: true,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+				preserveReasoning: true,
+				supportsTemperature: false,
+				cacheReadsPrice: 0.3,
+			})
+			expect(models["kimi-k3"].cacheWritesPrice).toBeUndefined()
+		})
+
 		it("falls back to default context/max tokens for an unknown model when metadata is absent", async () => {
 			mockedAxios.get.mockResolvedValue({ data: { data: [{ id: "some-unknown-model" }] } })
 

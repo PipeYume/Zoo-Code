@@ -32,6 +32,7 @@ vitest.mock("../fetchers/modelCache", () => ({
 			"glm-5.1": { ...opencodeGoModels["glm-5.1"] },
 			// Anthropic-format model used to exercise the /v1/messages path.
 			"qwen3.7-max": { ...opencodeGoModels["qwen3.7-max"] },
+			"kimi-k3": { ...opencodeGoModels["kimi-k3"] },
 		})
 	}),
 	getModelsFromCache: vitest.fn().mockReturnValue(undefined),
@@ -347,6 +348,39 @@ describe("OpencodeGoHandler", () => {
 			expect(callArgs.messages.filter((m) => m.role === "user")).toHaveLength(1)
 		})
 
+		it("sends valid Kimi K3 streaming parameters and preserves reasoning history", async () => {
+			const handler = new OpencodeGoHandler({
+				...mockOptions,
+				opencodeGoModelId: "kimi-k3",
+				modelTemperature: 0.9,
+				reasoningEffort: "disable",
+				enableReasoningEffort: false,
+			})
+			const messages = [
+				{
+					role: "assistant" as const,
+					content: [
+						{ type: "reasoning", text: "prior thought" },
+						{ type: "text" as const, text: "prior answer" },
+					] as any,
+				},
+				{ role: "user" as const, content: "continue" },
+			]
+
+			for await (const _chunk of handler.createMessage("sys", messages)) {
+				void _chunk
+			}
+
+			const body = mockCreate.mock.calls[0][0] as any
+			expect(body.model).toBe("kimi-k3")
+			expect(body.temperature).toBeUndefined()
+			expect(body.max_completion_tokens).toBe(131_072)
+			expect(body.reasoning_effort).toBe("max")
+			expect(body.messages).toContainEqual(
+				expect.objectContaining({ role: "assistant", reasoning_content: "prior thought" }),
+			)
+		})
+
 		it("emits a usage chunk with zeroed tokens when the stream reports no usage", async () => {
 			mockCreate.mockImplementationOnce(async () => ({
 				[Symbol.asyncIterator]: async function* () {
@@ -382,6 +416,24 @@ describe("OpencodeGoHandler", () => {
 	})
 
 	describe("completePrompt", () => {
+		it("omits temperature and sends max reasoning for Kimi K3", async () => {
+			mockCreate.mockResolvedValue({ choices: [{ message: { content: "the answer" } }] })
+			const handler = new OpencodeGoHandler({
+				...mockOptions,
+				opencodeGoModelId: "kimi-k3",
+				modelTemperature: 0.9,
+				reasoningEffort: "disable",
+				enableReasoningEffort: false,
+			})
+
+			await handler.completePrompt("ping")
+
+			const body = mockCreate.mock.calls[0][0] as any
+			expect(body.temperature).toBeUndefined()
+			expect(body.max_completion_tokens).toBe(131_072)
+			expect(body.reasoning_effort).toBe("max")
+		})
+
 		it("returns the message content for a non-streaming completion", async () => {
 			mockCreate.mockResolvedValue({ choices: [{ message: { content: "the answer" } }] })
 			const handler = new OpencodeGoHandler(mockOptions)

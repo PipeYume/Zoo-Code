@@ -133,13 +133,15 @@ export class OpencodeGoHandler extends RouterProvider implements SingleCompletio
 					settings: this.options,
 					defaultTemperature: OPENCODE_GO_DEFAULT_TEMPERATURE,
 				})
+		const reasoningEffort = info.requiredReasoningEffort ? info.reasoningEffort : params.reasoningEffort
+
 		return {
 			id,
 			info,
 			format: isAnthropic ? ("anthropic" as const) : ("openai" as const),
 			maxTokens: params.maxTokens,
 			temperature: params.temperature,
-			reasoningEffort: params.reasoningEffort,
+			reasoningEffort,
 		}
 	}
 
@@ -184,7 +186,8 @@ export class OpencodeGoHandler extends RouterProvider implements SingleCompletio
 		const body: OpenAI.Chat.ChatCompletionCreateParams = {
 			model: modelId,
 			messages: openAiMessages,
-			temperature: this.supportsTemperature(modelId) ? temperature : undefined,
+			temperature:
+				info.supportsTemperature !== false && this.supportsTemperature(modelId) ? temperature : undefined,
 			max_completion_tokens:
 				this.options.includeMaxTokens === true ? this.options.modelMaxTokens || maxTokens : maxTokens,
 			stream: true,
@@ -486,7 +489,7 @@ export class OpencodeGoHandler extends RouterProvider implements SingleCompletio
 	 * @throws Error with an Opencode Go-specific prefix if the request fails.
 	 */
 	async completePrompt(prompt: string): Promise<string> {
-		const { id: modelId, format, temperature, reasoningEffort, maxTokens } = await this.resolveModel()
+		const { id: modelId, info, format, temperature, reasoningEffort, maxTokens } = await this.resolveModel()
 
 		if (format === "anthropic") {
 			try {
@@ -500,7 +503,10 @@ export class OpencodeGoHandler extends RouterProvider implements SingleCompletio
 						this.options.includeMaxTokens === true
 							? this.options.modelMaxTokens || maxTokens || 16_384
 							: (maxTokens ?? 16_384),
-					temperature: this.supportsTemperature(modelId) ? (temperature ?? 1.0) : undefined,
+					temperature:
+						info.supportsTemperature !== false && this.supportsTemperature(modelId)
+							? (temperature ?? 1.0)
+							: undefined,
 					messages: [{ role: "user", content: prompt }],
 					stream: false,
 				})
@@ -522,7 +528,7 @@ export class OpencodeGoHandler extends RouterProvider implements SingleCompletio
 				stream: false,
 			}
 
-			if (this.supportsTemperature(modelId)) {
+			if (info.supportsTemperature !== false && this.supportsTemperature(modelId)) {
 				requestOptions.temperature = temperature
 			}
 

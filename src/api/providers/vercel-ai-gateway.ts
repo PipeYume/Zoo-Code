@@ -13,9 +13,11 @@ import { ApiHandlerOptions } from "../../shared/api"
 import { ApiStream } from "../transform/stream"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { addCacheBreakpoints } from "../transform/caching/vercel-ai-gateway"
+import { getModelParams } from "../transform/model-params"
 
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 import { RouterProvider } from "./router-provider"
+import { extractReasoningFromDelta } from "./utils/extract-reasoning"
 
 // Extend OpenAI's CompletionUsage to include Vercel AI Gateway specific fields
 interface VercelAiGatewayUsage extends OpenAI.CompletionUsage {
@@ -42,6 +44,17 @@ export class VercelAiGatewayHandler extends RouterProvider implements SingleComp
 		metadata?: ApiHandlerCreateMessageMetadata,
 	): ApiStream {
 		const { id: modelId, info } = await this.fetchModel()
+		const reasoningEffort = info.requiredReasoningEffort
+			? info.reasoningEffort
+			: this.options.reasoningEffort !== undefined
+				? getModelParams({
+						format: "openai",
+						modelId,
+						model: info,
+						settings: this.options,
+						defaultTemperature: VERCEL_AI_GATEWAY_DEFAULT_TEMPERATURE,
+					}).reasoningEffort
+				: undefined
 
 		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
 			{ role: "system", content: systemPrompt },
@@ -66,6 +79,9 @@ export class VercelAiGatewayHandler extends RouterProvider implements SingleComp
 			tools: this.convertToolsForOpenAI(metadata?.tools),
 			tool_choice: metadata?.tool_choice,
 			parallel_tool_calls: metadata?.parallelToolCalls ?? true,
+			...(reasoningEffort && {
+				reasoning_effort: reasoningEffort as OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"],
+			}),
 		}
 
 		const completion = await this.client.chat.completions.create(body)
@@ -88,6 +104,11 @@ export class VercelAiGatewayHandler extends RouterProvider implements SingleComp
 					type: "text",
 					text: delta.content,
 				}
+			}
+
+			const reasoningText = extractReasoningFromDelta(delta)
+			if (reasoningText) {
+				yield { type: "reasoning", text: reasoningText }
 			}
 
 			// Emit raw tool call chunks - NativeToolCallParser handles state management
@@ -119,6 +140,17 @@ export class VercelAiGatewayHandler extends RouterProvider implements SingleComp
 
 	async completePrompt(prompt: string): Promise<string> {
 		const { id: modelId, info } = await this.fetchModel()
+		const reasoningEffort = info.requiredReasoningEffort
+			? info.reasoningEffort
+			: this.options.reasoningEffort !== undefined
+				? getModelParams({
+						format: "openai",
+						modelId,
+						model: info,
+						settings: this.options,
+						defaultTemperature: VERCEL_AI_GATEWAY_DEFAULT_TEMPERATURE,
+					}).reasoningEffort
+				: undefined
 
 		try {
 			const requestOptions: OpenAI.Chat.ChatCompletionCreateParams = {
@@ -132,6 +164,10 @@ export class VercelAiGatewayHandler extends RouterProvider implements SingleComp
 			}
 
 			requestOptions.max_completion_tokens = info.maxTokens
+			if (reasoningEffort) {
+				requestOptions.reasoning_effort =
+					reasoningEffort as OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"]
+			}
 
 			const response = await this.client.chat.completions.create(requestOptions)
 			return response.choices[0]?.message.content || ""

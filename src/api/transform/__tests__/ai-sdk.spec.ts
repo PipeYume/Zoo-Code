@@ -162,6 +162,33 @@ describe("AI SDK conversion utilities", () => {
 			})
 		})
 
+		it("preserves assistant reasoning alongside a tool call", () => {
+			const messages = [
+				{
+					role: "assistant",
+					content: [
+						{ type: "reasoning", text: "I need the file contents first." },
+						{ type: "tool_use", id: "call_123", name: "read_file", input: { path: "test.ts" } },
+					],
+				},
+			] as Anthropic.Messages.MessageParam[]
+
+			expect(convertToAiSdkMessages(messages)).toEqual([
+				{
+					role: "assistant",
+					content: [
+						{ type: "reasoning", text: "I need the file contents first." },
+						{
+							type: "tool-call",
+							toolCallId: "call_123",
+							toolName: "read_file",
+							input: { path: "test.ts" },
+						},
+					],
+				},
+			])
+		})
+
 		it("uses unknown_tool for tool results without matching tool call", () => {
 			const messages: Anthropic.Messages.MessageParam[] = [
 				{
