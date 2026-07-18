@@ -123,7 +123,11 @@ export const getModelMaxOutputTokens = ({
 		(format === "openrouter" && modelId.startsWith("anthropic/"))
 
 	// For "Hybrid" reasoning models, discard the model's actual maxTokens for Anthropic contexts
+	// unless the user has explicitly configured an output token budget.
 	if (model.supportsReasoningBudget && isAnthropicContext) {
+		if (settings?.modelMaxTokens != null && settings.modelMaxTokens > 0) {
+			return model.maxTokens ? Math.min(settings.modelMaxTokens, model.maxTokens) : settings.modelMaxTokens
+		}
 		return ANTHROPIC_DEFAULT_MAX_TOKENS
 	}
 

@@ -82,6 +82,7 @@ describe("ThinkingBudget", () => {
 		const { container } = render(
 			<ThinkingBudget
 				{...defaultProps}
+				apiConfiguration={{ apiModelId: "gpt-4", apiProvider: "openai" }}
 				modelInfo={{
 					...mockModelInfo,
 					maxTokens: 16384,
@@ -483,6 +484,108 @@ describe("ThinkingBudget", () => {
 
 			expect(screen.queryByTestId("max-output-tokens")).not.toBeInTheDocument()
 			expect(screen.getByTestId("reasoning-effort")).toBeInTheDocument()
+		})
+	})
+
+	describe("Anthropic max output tokens override", () => {
+		it("should show max output tokens slider for Anthropic hybrid models when reasoning is disabled", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{ apiProvider: "anthropic", apiModelId: "claude-sonnet-4-5" }}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						maxTokens: 64000,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(screen.getByTestId("max-output-tokens")).toBeInTheDocument()
+			expect(screen.queryByTestId("reasoning-budget")).not.toBeInTheDocument()
+			const slider = screen.getByTestId("max-output-tokens").querySelector("input[type='range']")!
+			expect(slider).toHaveValue("8192")
+			expect(slider.getAttribute("max")).toBe("64000")
+		})
+
+		it("should show reasoning budget slider when reasoning is enabled for Anthropic hybrid models", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{
+						apiProvider: "anthropic",
+						apiModelId: "claude-sonnet-4-5",
+						enableReasoningEffort: true,
+					}}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						maxTokens: 64000,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(screen.queryByTestId("max-output-tokens")).not.toBeInTheDocument()
+			expect(screen.getByTestId("reasoning-budget")).toBeInTheDocument()
+		})
+
+		it("should show max output tokens slider for Anthropic binary reasoning models", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{ apiProvider: "anthropic", apiModelId: "claude-sonnet-5" }}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						supportsReasoningBinary: true,
+						maxTokens: 128000,
+						contextWindow: 1000000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(screen.getByTestId("max-output-tokens")).toBeInTheDocument()
+		})
+
+		it("should show max output tokens slider for OpenRouter Anthropic models when reasoning is disabled", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{
+						apiProvider: "openrouter",
+						apiModelId: "anthropic/claude-sonnet-4-20250514",
+					}}
+					modelInfo={{
+						supportsReasoningBudget: true,
+						maxTokens: 64000,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(screen.getByTestId("max-output-tokens")).toBeInTheDocument()
+			const slider = screen.getByTestId("max-output-tokens").querySelector("input[type='range']")!
+			expect(slider).toHaveValue("8192")
+			expect(slider.getAttribute("max")).toBe("64000")
+		})
+
+		it("should show max output tokens slider for non-reasoning Anthropic models", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{ apiProvider: "anthropic", apiModelId: "claude-3-5-sonnet-20241022" }}
+					modelInfo={{
+						maxTokens: 8192,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			expect(screen.getByTestId("max-output-tokens")).toBeInTheDocument()
 		})
 	})
 })
