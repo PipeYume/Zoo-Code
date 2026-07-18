@@ -606,6 +606,24 @@ describe("ThinkingBudget", () => {
 			expect(slider.getAttribute("min")).toBe("8192")
 		})
 
+		it("should keep a minimum of 1024 for non-reasoning Anthropic models with small maxTokens", () => {
+			render(
+				<ThinkingBudget
+					{...defaultProps}
+					apiConfiguration={{ apiProvider: "anthropic", apiModelId: "claude-3-haiku-20240307" }}
+					modelInfo={{
+						maxTokens: 4096,
+						contextWindow: 200000,
+						supportsPromptCache: true,
+					}}
+				/>,
+			)
+
+			const slider = screen.getByTestId("max-output-tokens").querySelector("input[type='range']")!
+			expect(slider.getAttribute("min")).toBe("1024")
+			expect(slider.getAttribute("max")).toBe("4096")
+		})
+
 		it("should clamp modelMaxTokens to 8192 when reasoning is enabled for an Anthropic hybrid model", () => {
 			const setApiConfigurationField = vi.fn()
 

@@ -232,8 +232,8 @@ export const ThinkingBudget = ({ apiConfiguration, setApiConfigurationField, mod
 	// Standalone max output tokens slider for models that advertise `supportsMaxTokens`
 	// (e.g. Z.ai GLM) but do not surface the reasoning-budget control.
 	// Anthropic hybrid reasoning requires a minimum output budget of 8192, so keep the
-	// standalone slider aligned with the reasoning-on branch's floor for Anthropic models.
-	const maxOutputTokensMin = isAnthropicModel ? 8192 : 1024
+	// standalone slider aligned with the reasoning-on branch's floor for those models.
+	const maxOutputTokensMin = isAnthropicModel && isReasoningBudgetSupported ? 8192 : 1024
 	const maxOutputTokensControl =
 		isMaxTokensConfigurable && modelInfo.maxTokens
 			? renderMaxTokensSlider(
