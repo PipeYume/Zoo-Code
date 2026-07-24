@@ -20,7 +20,7 @@ import { addCacheBreakpoints } from "../transform/caching/vercel-ai-gateway"
 import { getModelParams } from "../transform/model-params"
 import { extractReasoningFromDelta } from "./utils/extract-reasoning"
 
-import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
+import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata, CompletePromptOptions } from "../index"
 import { RouterProvider } from "./router-provider"
 
 function getApiErrorStatus(error: unknown): number | undefined {
@@ -298,7 +298,7 @@ export class ZooGatewayHandler extends RouterProvider implements SingleCompletio
 		}
 	}
 
-	async completePrompt(prompt: string): Promise<string> {
+	async completePrompt(prompt: string, options?: CompletePromptOptions): Promise<string> {
 		this.ensureAuthenticated()
 
 		const { id: modelId, info } = await this.fetchModel()
