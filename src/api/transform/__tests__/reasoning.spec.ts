@@ -547,6 +547,52 @@ describe("reasoning.ts", () => {
 			expect(result).toEqual({ reasoning_effort: "medium" })
 		})
 
+		it("should send the model's required effort even when the user disables reasoning", () => {
+			const requiredModel: ModelInfo = {
+				...baseModel,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+			}
+
+			const options = {
+				...baseOptions,
+				model: requiredModel,
+				reasoningEffort: "disable" as const,
+				settings: { reasoningEffort: "disable", enableReasoningEffort: false } as ProviderSettings,
+			}
+
+			const result = getOpenAiReasoning(options)
+
+			expect(result).toEqual({ reasoning_effort: "max" })
+		})
+
+		it("should send the model's required effort with default settings", () => {
+			const requiredModel: ModelInfo = {
+				...baseModel,
+				supportsReasoningEffort: ["max"],
+				requiredReasoningEffort: true,
+				reasoningEffort: "max",
+			}
+
+			const options = { ...baseOptions, model: requiredModel }
+
+			const result = getOpenAiReasoning(options)
+
+			expect(result).toEqual({ reasoning_effort: "max" })
+		})
+
+		it("should fall back to normal handling when requiredReasoningEffort has no model effort", () => {
+			const requiredWithoutEffort: ModelInfo = {
+				...baseModel,
+				requiredReasoningEffort: true,
+			}
+
+			const result = getOpenAiReasoning({ ...baseOptions, model: requiredWithoutEffort, settings: {} })
+
+			expect(result).toBeUndefined()
+		})
+
 		it("should return undefined when model has no reasoning effort capability", () => {
 			const result = getOpenAiReasoning(baseOptions)
 			expect(result).toBeUndefined()

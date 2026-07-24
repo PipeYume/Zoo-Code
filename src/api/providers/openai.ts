@@ -105,7 +105,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			if (deepseekReasoner) {
 				convertedMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
 			} else {
-				if (modelInfo.supportsPromptCache) {
+				if (modelInfo.supportsPromptCache && this.useExplicitCacheBreakpoints()) {
 					systemMessage = {
 						role: "system",
 						content: [
@@ -121,7 +121,7 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 				convertedMessages = [systemMessage, ...convertToOpenAiMessages(messages)]
 
-				if (modelInfo.supportsPromptCache) {
+				if (modelInfo.supportsPromptCache && this.useExplicitCacheBreakpoints()) {
 					// Note: the following logic is copied from openrouter:
 					// Add cache_control to the last two user messages
 					// (note: this works because we only ever add one user message at a time, but if we added multiple we'd need to mark the user message before the last assistant message)
@@ -230,6 +230,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 				messages: deepseekReasoner
 					? convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
 					: [systemMessage, ...convertToOpenAiMessages(messages)],
+				// Send reasoning params when the model resolves them (e.g. models that
+				// require reasoning effort), matching the streaming path.
+				...(reasoning && reasoning),
 				// Tools are always present (minimum ALWAYS_AVAILABLE_TOOLS)
 				tools: this.convertToolsForOpenAI(metadata?.tools),
 				tool_choice: metadata?.tool_choice,
@@ -273,6 +276,16 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 		}
 	}
 
+	/**
+	 * Whether to attach explicit Anthropic-style cache_control breakpoints to
+	 * requests. Providers whose prompt caching is automatic (e.g. Moonshot)
+	 * override this to skip breakpoints their OpenAI-compatible endpoints do
+	 * not support.
+	 */
+	protected useExplicitCacheBreakpoints(): boolean {
+		return true
+	}
+
 	protected processUsageMetrics(usage: any, _modelInfo?: ModelInfo): ApiStreamUsageChunk {
 		return {
 			type: "usage",
@@ -305,6 +318,9 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			const requestOptions: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
 				model: model.id,
 				messages: [{ role: "user", content: prompt }],
+				// Send reasoning params when the model resolves them (e.g. models that
+				// require reasoning effort), matching the streaming path.
+				...(model.reasoning && model.reasoning),
 			}
 
 			// Add max_tokens if needed

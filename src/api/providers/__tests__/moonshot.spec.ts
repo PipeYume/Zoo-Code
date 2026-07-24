@@ -1,5 +1,4 @@
 import type { Anthropic } from "@anthropic-ai/sdk"
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 
 import { moonshotDefaultModelId } from "@roo-code/types"
 
@@ -168,14 +167,20 @@ describe("MoonshotHandler", () => {
 		})
 
 		it("omits temperature and sends required max reasoning for Kimi K3", async () => {
-			async function* mockFullStream() {
-				yield { type: "text-delta", text: "K3 response" }
+			async function* mockStream() {
+				yield {
+					choices: [{ delta: { content: "K3 response" }, finish_reason: null }],
+					usage: null,
+				}
 			}
 
-			mockStreamText.mockReturnValue({
-				fullStream: mockFullStream(),
-				usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, details: {}, raw: {} }),
-			})
+			const mockClient = {
+				chat: {
+					completions: {
+						create: vi.fn().mockResolvedValue(mockStream()),
+					},
+				},
+			}
 
 			const k3Handler = new MoonshotHandler({
 				...mockOptions,
@@ -184,26 +189,57 @@ describe("MoonshotHandler", () => {
 				reasoningEffort: "disable",
 				enableReasoningEffort: false,
 			})
+			;(k3Handler as any).client = mockClient
+
 			for await (const _chunk of k3Handler.createMessage(systemPrompt, messages)) {
 				void _chunk
 			}
 
-			expect(mockStreamText).toHaveBeenCalledWith(
-				expect.objectContaining({
-					temperature: undefined,
-					maxOutputTokens: 131_072,
-					providerOptions: { openaiCompatible: { reasoningEffort: "max" } },
-				}),
-			)
+			const [requestOptions] = mockClient.chat.completions.create.mock.calls[0]
+			expect(requestOptions).toMatchObject({
+				model: "kimi-k3",
+				reasoning_effort: "max",
+				max_tokens: 131_072,
+			})
+			expect(requestOptions).not.toHaveProperty("temperature")
 		})
 
-		it("serializes retained Kimi K3 reasoning through the installed AI SDK", async () => {
-			const actualAi = await vi.importActual<typeof import("ai")>("ai")
-			const actualOpenAICompatible =
-				await vi.importActual<typeof import("@ai-sdk/openai-compatible")>("@ai-sdk/openai-compatible")
-			vi.mocked(createOpenAICompatible).mockImplementationOnce(actualOpenAICompatible.createOpenAICompatible)
-			mockStreamText.mockImplementationOnce(actualAi.streamText)
+		it("sends required max reasoning for Kimi K3 when streaming is disabled", async () => {
+			const mockClient = {
+				chat: {
+					completions: {
+						create: vi.fn().mockResolvedValue({
+							choices: [{ message: { content: "K3 response" } }],
+							usage: { prompt_tokens: 1, completion_tokens: 1 },
+						}),
+					},
+				},
+			}
 
+			const k3Handler = new MoonshotHandler({
+				...mockOptions,
+				apiModelId: "kimi-k3",
+				modelTemperature: 0.9,
+				reasoningEffort: "disable",
+				enableReasoningEffort: false,
+				openAiStreamingEnabled: false,
+			})
+			;(k3Handler as any).client = mockClient
+
+			for await (const _chunk of k3Handler.createMessage(systemPrompt, messages)) {
+				void _chunk
+			}
+
+			const [requestOptions] = mockClient.chat.completions.create.mock.calls[0]
+			expect(requestOptions).toMatchObject({
+				model: "kimi-k3",
+				reasoning_effort: "max",
+				max_tokens: 131_072,
+			})
+			expect(requestOptions).not.toHaveProperty("temperature")
+		})
+
+		it("serializes retained Kimi K3 reasoning through the installed OpenAI SDK", async () => {
 			let requestBody: Record<string, any> | undefined
 			const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
 				requestBody = JSON.parse(String(init?.body))
@@ -236,24 +272,20 @@ describe("MoonshotHandler", () => {
 					},
 				] as Anthropic.Messages.MessageParam[]
 
-				try {
-					for await (const _chunk of k3Handler.createMessage("system", retainedMessages)) {
-						// Drain the stream so the installed SDK serializes the HTTP request.
-					}
-				} catch (error) {
-					// The synthetic SSE only needs to support request serialization.
-					expect((error as Error).name).toBe("AI_NoOutputGeneratedError")
+				for await (const _chunk of k3Handler.createMessage("system", retainedMessages)) {
+					void _chunk
 				}
 
 				expect(requestBody).toMatchObject({
 					model: "kimi-k3",
 					reasoning_effort: "max",
+					max_tokens: 131_072,
 					messages: [
 						{ role: "system", content: "system" },
 						{ role: "user", content: "Inspect the file" },
 						{
 							role: "assistant",
-							content: null,
+							content: "",
 							reasoning_content: "I need the file contents first.",
 							tool_calls: [
 								{
@@ -365,7 +397,16 @@ describe("MoonshotHandler", () => {
 		})
 
 		it("omits temperature and sends required max reasoning for Kimi K3", async () => {
-			mockGenerateText.mockResolvedValue({ text: "K3 completion" })
+			const mockClient = {
+				chat: {
+					completions: {
+						create: vi.fn().mockResolvedValue({
+							choices: [{ message: { content: "K3 completion" } }],
+						}),
+					},
+				},
+			}
+
 			const k3Handler = new MoonshotHandler({
 				...mockOptions,
 				apiModelId: "kimi-k3",
@@ -373,16 +414,18 @@ describe("MoonshotHandler", () => {
 				reasoningEffort: "disable",
 				enableReasoningEffort: false,
 			})
+			;(k3Handler as any).client = mockClient
 
-			await k3Handler.completePrompt("Test prompt")
+			const result = await k3Handler.completePrompt("Test prompt")
 
-			expect(mockGenerateText).toHaveBeenCalledWith(
-				expect.objectContaining({
-					temperature: undefined,
-					maxOutputTokens: 131_072,
-					providerOptions: { openaiCompatible: { reasoningEffort: "max" } },
-				}),
-			)
+			expect(result).toBe("K3 completion")
+			const [requestOptions] = mockClient.chat.completions.create.mock.calls[0]
+			expect(requestOptions).toMatchObject({
+				model: "kimi-k3",
+				reasoning_effort: "max",
+				max_tokens: 131_072,
+			})
+			expect(requestOptions).not.toHaveProperty("temperature")
 		})
 	})
 

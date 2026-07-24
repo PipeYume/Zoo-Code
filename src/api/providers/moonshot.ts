@@ -73,6 +73,14 @@ export class MoonshotHandler extends OpenAiHandler {
 	}
 
 	/**
+	 * Moonshot caches prompts automatically; explicit Anthropic-style
+	 * cache_control breakpoints are not part of its OpenAI-compatible API.
+	 */
+	protected override useExplicitCacheBreakpoints(): boolean {
+		return false
+	}
+
+	/**
 	 * Override to always include max_tokens for Moonshot (not max_completion_tokens).
 	 * Moonshot requires max_tokens parameter to be sent.
 	 */

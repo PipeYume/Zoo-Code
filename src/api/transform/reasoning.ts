@@ -129,6 +129,15 @@ export const getOpenAiReasoning = ({
 	reasoningEffort,
 	settings,
 }: GetModelReasoningOptions): OpenAiReasoningParams | undefined => {
+	// Models that require reasoning effort always send the model's effort,
+	// regardless of user toggles (mirrors the required-effort handling in
+	// getRooReasoning and the gateway providers).
+	if (model.requiredReasoningEffort && model.reasoningEffort) {
+		return {
+			reasoning_effort: model.reasoningEffort as OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"],
+		}
+	}
+
 	if (!shouldUseReasoningEffort({ model, settings })) return undefined
 	if (reasoningEffort === "disable" || !reasoningEffort) return undefined
 
