@@ -38,7 +38,7 @@ Bạn có thể xem hướng dẫn nhanh để chuyển từ Roo Code sang Zoo C
 ## Điểm mới trong v3.72.0
 
 - **Provider Moonshot và Kimi Code** — khám phá động các model Moonshot hoặc đăng nhập Kimi Code qua luồng thiết bị OAuth.
-- **Hỗ trợ model mới nhất** — dùng Claude Opus 5 trên nhiều provider, cùng với Kimi K3, Gemini 3.6 Flash và MiniMax-M3.
+- **Hỗ trợ model mới nhất** — dùng Claude Opus 5 trên tất cả provider, cùng với Kimi K3, Gemini 3.6 Flash và MiniMax-M3.
 - **Workflow tác vụ con được cải thiện** — từ bỏ gọn gàng các tác vụ con bị gián đoạn, với cơ chế vô hiệu hóa lịch sử an toàn hơn và phạm vi kiểm thử tiếp tục tốt hơn.
 - **Mở rộng lập chỉ mục codebase** — lập chỉ mục file Dart và file văn bản thuần.
 - **Độ tin cậy của provider** — sửa lỗi GPT-5.6 Luna với ChatGPT OAuth, reasoning content của LiteLLM và đầu vào hình ảnh DeepSeek V4.

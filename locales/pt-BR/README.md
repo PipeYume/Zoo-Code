@@ -39,7 +39,7 @@ Você encontra um guia rápido para migrar do Roo Code para o Zoo Code no [guia 
 ## Novidades na v3.72.0
 
 - **Providers Moonshot e Kimi Code** — descubra dinamicamente os modelos Moonshot ou entre no Kimi Code pelo fluxo de dispositivo OAuth.
-- **Suporte aos modelos mais recentes** — use Claude Opus 5 em vários providers, além de Kimi K3, Gemini 3.6 Flash e MiniMax-M3.
+- **Suporte aos modelos mais recentes** — use Claude Opus 5 em todos os providers, além de Kimi K3, Gemini 3.6 Flash e MiniMax-M3.
 - **Workflows de subtarefas aprimorados** — abandone subtarefas interrompidas de forma limpa, com invalidação mais segura do histórico e melhor cobertura de retomada.
 - **Indexação ampliada da base de código** — indexe arquivos Dart e de texto simples.
 - **Confiabilidade dos providers** — correções para GPT-5.6 Luna com ChatGPT OAuth, reasoning content do LiteLLM e entrada de imagens do DeepSeek V4.
