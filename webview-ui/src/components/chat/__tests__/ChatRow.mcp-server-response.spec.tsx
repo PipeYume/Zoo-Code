@@ -87,4 +87,20 @@ describe("ChatRow - mcp_server_response", () => {
 
 		expect(screen.queryByRole("img")).toBeNull()
 	})
+
+	it("renders attached images for say types that use the default renderer", () => {
+		const message: any = {
+			type: "say",
+			say: "command_output",
+			ts: Date.now(),
+			partial: false,
+			text: "Some output",
+			images: ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"],
+		}
+
+		renderChatRow(message)
+
+		const img = screen.getByRole("img")
+		expect(img).toHaveAttribute("src", "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ")
+	})
 })
