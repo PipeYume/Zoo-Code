@@ -120,10 +120,18 @@ interface ModelToolCustomizationResult {
 	aliasRenames: Map<string, string>
 }
 
+type ModelToolCustomization = Pick<ModelInfo, "includedTools" | "excludedTools">
+
+interface NativeToolFilterSettings {
+	todoListEnabled?: boolean
+	disabledTools?: string[]
+	modelInfo?: ModelToolCustomization
+}
+
 export function applyModelToolCustomization(
 	allowedTools: Set<string>,
 	modeConfig: ModeConfig,
-	modelInfo?: ModelInfo,
+	modelInfo?: ModelToolCustomization,
 ): ModelToolCustomizationResult {
 	if (!modelInfo) {
 		return { allowedTools, aliasRenames: new Map() }
@@ -202,7 +210,7 @@ export function filterNativeToolsForMode(
 	customModes: ModeConfig[] | undefined,
 	experiments: Record<string, boolean> | undefined,
 	codeIndexManager?: CodeIndexManager,
-	settings?: Record<string, any>,
+	settings?: NativeToolFilterSettings,
 	mcpHub?: McpHub,
 	allowedMcpServers?: string[],
 ): OpenAI.Chat.ChatCompletionTool[] {
@@ -235,7 +243,7 @@ export function filterNativeToolsForMode(
 	)
 
 	// Apply model-specific tool customization
-	const modelInfo = settings?.modelInfo as ModelInfo | undefined
+	const modelInfo = settings?.modelInfo
 	const { allowedTools: customizedTools, aliasRenames } = applyModelToolCustomization(
 		allowedToolNames,
 		modeConfig,
