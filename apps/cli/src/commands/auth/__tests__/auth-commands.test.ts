@@ -52,6 +52,19 @@ describe("auth commands", () => {
 		expect(consoleLog.mock.calls.flat().join("\n")).toContain("/tmp/roo/cli-credentials.json")
 	})
 
+	it("uses the public zoo command when an optional token is expiring", async () => {
+		vi.mocked(loadToken).mockResolvedValue("header.payload.signature")
+		vi.mocked(loadCredentials).mockResolvedValue(null)
+		vi.mocked(isTokenValid).mockReturnValue(true)
+		vi.mocked(isTokenExpired).mockReturnValue(true)
+		vi.mocked(getTokenExpirationDate).mockReturnValue(new Date(Date.now() + 60_000))
+		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {})
+
+		await status()
+
+		expect(consoleLog.mock.calls.flat().join("\n")).toContain("zoo auth logout")
+	})
+
 	it("removes stored Roo auth tokens", async () => {
 		vi.mocked(hasToken).mockResolvedValue(true)
 		const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {})

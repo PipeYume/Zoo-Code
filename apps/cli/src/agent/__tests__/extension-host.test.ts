@@ -291,6 +291,21 @@ describe("ExtensionHost", () => {
 				expect(payload.type).toBe("updateSettings")
 				expect(payload.updatedSettings?.terminalShellIntegrationDisabled).toBe(true)
 			})
+
+			it("observes initialization rejection immediately while preserving it for callers", async () => {
+				const host = createTestHost()
+				const failure = new Error("initialization failed")
+				host.on("webviewMessage", () => Promise.reject(failure))
+				const unhandled = vi.fn()
+				process.on("unhandledRejection", unhandled)
+
+				host.markWebviewReady()
+				await new Promise((resolve) => setImmediate(resolve))
+
+				expect(unhandled).not.toHaveBeenCalled()
+				await expect(getPrivate<Promise<void>>(host, "initializationPromise")).rejects.toBe(failure)
+				process.off("unhandledRejection", unhandled)
+			})
 		})
 	})
 
@@ -773,7 +788,7 @@ describe("ExtensionHost", () => {
 			const host = createTestHost({ autonomous: true })
 			attachApi(host)
 			host.markWebviewReady()
-			const taskPromise = host.runTask("ask something")
+			const taskAssertion = expect(host.runTask("ask something")).rejects.toMatchObject({ state: "needs_input" })
 			const dispatcher = getPrivate<{ handleAsk: (message: ClineMessage) => Promise<unknown> }>(
 				host,
 				"askDispatcher",
@@ -786,7 +801,73 @@ describe("ExtensionHost", () => {
 				text: JSON.stringify({ question: "Need a human?" }),
 			} as ClineMessage)
 
-			await expect(taskPromise).rejects.toMatchObject({ state: "needs_input" })
+			await taskAssertion
+		})
+
+		it("retains input-required failures that arrive before a task starts", async () => {
+			const host = createTestHost({ autonomous: true })
+			attachApi(host)
+			host.markWebviewReady()
+			const dispatcher = getPrivate<{ handleAsk: (message: ClineMessage) => Promise<unknown> }>(
+				host,
+				"askDispatcher",
+			)
+
+			await expect(
+				dispatcher.handleAsk({
+					ts: 2,
+					type: "ask",
+					ask: "followup",
+					text: JSON.stringify({ question: "Need a human before start?" }),
+				} as ClineMessage),
+			).resolves.toMatchObject({ handled: true })
+			await expect(host.runTask("start later")).rejects.toMatchObject({ state: "needs_input" })
+		})
+
+		it("fails immediately when the autonomous extension API is unavailable", async () => {
+			const host = createTestHost({ autonomous: true })
+			host.markWebviewReady()
+
+			await expect(host.runTask("cannot start")).rejects.toThrow("Extension API is unavailable")
+		})
+
+		it("maps retry-delayed provider messages to provider_failed", async () => {
+			const host = createTestHost({ autonomous: true })
+			attachApi(host)
+			host.markWebviewReady()
+			const taskAssertion = expect(host.runTask("provider fails")).rejects.toMatchObject({
+				state: "provider_failed",
+				message: "rate limited",
+			})
+			const client = getPrivate<ExtensionClient>(host, "client")
+
+			client.getEmitter().emit("message", {
+				ts: 3,
+				type: "say",
+				say: "api_req_retry_delayed",
+				text: "rate limited\nretrying",
+			} as ClineMessage)
+
+			await taskAssertion
+		})
+
+		it("does not invent a root ID for an ordinary task", async () => {
+			const host = createTestHost()
+			host.markWebviewReady()
+			const messages: WebviewMessage[] = []
+			host.on("webviewMessage", (message) => messages.push(message as WebviewMessage))
+			const taskPromise = host.runTask("ordinary task")
+			await new Promise((resolve) => setImmediate(resolve))
+
+			expect(messages.find((message) => message.type === "newTask")).not.toHaveProperty("taskId")
+			expect(host.getRootTaskId()).toBeUndefined()
+			const client = getPrivate<ExtensionClient>(host, "client")
+			client.getEmitter().emit("taskCompleted", {
+				success: true,
+				stateInfo: client.getAgentState(),
+			})
+			await taskPromise
+			expect(host.getLastTaskResult()?.rootTaskId).toBeUndefined()
 		})
 	})
 

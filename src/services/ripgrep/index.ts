@@ -106,15 +106,14 @@ export function ripgrepCandidatePaths(vscodeAppRoot: string): readonly string[] 
 	]
 }
 
-/** Resolve @vscode/ripgrep >=1.18, which ships rg in a platform-specific optional package. */
+/** Resolve @vscode/ripgrep >=1.18 through its supported wrapper export. */
 export function resolvePlatformRipgrepPath(vscodeAppRoot: string): string | undefined {
 	try {
 		const wrapperManifest = path.join(vscodeAppRoot, "node_modules", "@vscode", "ripgrep", "package.json")
 		if (!fs.existsSync(wrapperManifest)) return undefined
 		const requireFromApp = createRequire(path.join(vscodeAppRoot, "package.json"))
-		const wrapperEntry = requireFromApp.resolve("@vscode/ripgrep")
-		const requireFromWrapper = createRequire(wrapperEntry)
-		return requireFromWrapper.resolve(`@vscode/ripgrep-${process.platform}-${process.arch}/bin/${binName}`)
+		const wrapper = requireFromApp("@vscode/ripgrep") as { rgPath?: unknown }
+		return typeof wrapper.rgPath === "string" ? wrapper.rgPath : undefined
 	} catch {
 		return undefined
 	}

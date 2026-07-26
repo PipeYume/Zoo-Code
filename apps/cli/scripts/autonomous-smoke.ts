@@ -63,6 +63,7 @@ async function main(): Promise<void> {
 	const workspace = path.join(root, "workspace")
 	const home = path.join(root, "home")
 	const globalSettings = path.join(home, ".vscode-mock", "global-storage", "settings")
+	let server: ReturnType<typeof createServer> | undefined
 
 	try {
 		await mkdir(path.join(workspace, ".roo", "rules-orchestrator"), { recursive: true })
@@ -87,8 +88,9 @@ async function main(): Promise<void> {
 			modeInitial: 0,
 			modeAfterSwitch: 0,
 		}
+		const fixtureFailures: string[] = []
 		const observedHangs = new Map<string, () => void>()
-		const server = createServer(async (request, response) => {
+		server = createServer(async (request, response) => {
 			if (!request.url?.endsWith("/chat/completions")) {
 				response.writeHead(200, { "content-type": "application/json" })
 				response.end(JSON.stringify({ data: [] }))
@@ -167,16 +169,21 @@ async function main(): Promise<void> {
 			}
 			if (body.includes("PROCESS_DELEGATION_SMOKE")) {
 				requestCounts.delegationInitial++
-				for (const marker of [
+				const missing = [
 					"PROJECT_ORCHESTRATOR_OVERRIDE",
 					"PROJECT_MODE_RULE",
 					"PROJECT_AGENTS_INSTRUCTION",
 					"GLOBAL_PORTABLE_RULE",
-				]) {
-					if (!body.includes(marker)) throw new Error(`provider request did not include ${marker}`)
-				}
-				if (body.includes("GLOBAL_ORCHESTRATOR_SHOULD_LOSE")) {
-					throw new Error("project orchestrator did not override the global mode")
+				].filter((marker) => !body.includes(marker))
+				if (missing.length > 0 || body.includes("GLOBAL_ORCHESTRATOR_SHOULD_LOSE")) {
+					fixtureFailures.push(
+						missing.length > 0
+							? `provider request did not include ${missing.join(", ")}`
+							: "project orchestrator did not override the global mode",
+					)
+					response.writeHead(400)
+					response.end("fixture precondition failed")
+					return
 				}
 				sendTool(response, {
 					name: "new_task",
@@ -246,6 +253,7 @@ async function main(): Promise<void> {
 		) {
 			throw new Error(`unexpected delegation sequence: ${JSON.stringify(requestCounts)}`)
 		}
+		if (fixtureFailures.length > 0) throw new Error(fixtureFailures.join("; "))
 		if (completed.content !== "SMOKE_ROOT_RESULT") throw new Error("child completion exited the root run")
 		const rootTaskId = completed.rootTaskId as string
 		const tasksPath = path.join(home, ".vscode-mock", "global-storage", "tasks")
@@ -331,11 +339,16 @@ async function main(): Promise<void> {
 		process.kill(forceCancellationRun.pid, "SIGINT")
 		process.kill(forceCancellationRun.pid, "SIGINT")
 		const forceResult = await forceCancellationRun
-		if (forceResult.signal !== "SIGINT") throw new Error("second SIGINT did not force process termination")
+		if (forceResult.signal !== "SIGINT" && forceResult.exitCode !== 130) {
+			throw new Error(
+				`repeated SIGINT neither forced nor completed cooperative termination: signal=${forceResult.signal} exit=${forceResult.exitCode}`,
+			)
+		}
 
-		server.close()
 		process.stdout.write("autonomous process smoke passed\n")
 	} finally {
+		server?.closeAllConnections?.()
+		if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
 		await rm(root, { recursive: true, force: true })
 	}
 }

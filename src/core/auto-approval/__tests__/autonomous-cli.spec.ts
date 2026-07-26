@@ -19,5 +19,9 @@ describe("autonomous CLI approval", () => {
 		await expect(checkAutoApproval({ state, ask: "use_mcp_server", text })).resolves.toEqual({
 			decision: "approve",
 		})
+
+		await expect(
+			checkAutoApproval({ state: { ...state, alwaysAllowMcp: false }, ask: "use_mcp_server", text }),
+		).resolves.toEqual({ decision: "ask" })
 	})
 })

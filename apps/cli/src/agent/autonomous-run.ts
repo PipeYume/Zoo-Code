@@ -30,6 +30,6 @@ export class AutonomousRunError extends Error {
 }
 
 export interface TaskRunResult {
-	rootTaskId: string
+	rootTaskId?: string
 	result?: string
 }

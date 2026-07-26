@@ -156,6 +156,7 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 	private initializationPromise: Promise<void> = Promise.resolve()
 	private lastTaskResult: TaskRunResult | undefined
 	private rootTaskId: string | undefined
+	private pendingAutonomousError: AutonomousRunError | undefined
 
 	// ==========================================================================
 	// Managers - These do all the heavy lifting
@@ -218,6 +219,11 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 			},
 			debug: options.debug, // Enable debug logging in the client.
 		})
+		if (options.autonomous) {
+			// Node throws when an "error" event has no listener. Keep this listener
+			// for the host lifetime; task-scoped listeners still reject active runs.
+			this.client.on("error", () => {})
+		}
 
 		// Initialize output manager.
 		this.outputManager = new OutputManager({ disabled: options.disableOutput })
@@ -241,12 +247,9 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 			onInputRequired: options.autonomous
 				? (ask, text) => {
 						const state = ask === "api_req_failed" ? "provider_failed" : "needs_input"
-						this.client
-							.getEmitter()
-							.emit(
-								"error",
-								new AutonomousRunError(state, `${ask}: ${text || "human input is required"}`),
-							)
+						const error = new AutonomousRunError(state, `${ask}: ${text || "human input is required"}`)
+						this.pendingAutonomousError = error
+						this.client.getEmitter().emit("error", error)
 					}
 				: undefined,
 		})
@@ -493,10 +496,12 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 		setRuntimeConfigValues("zoo-code", this.initialSettings as Record<string, unknown>)
 		// Serialize initial settings and launch. In particular, webviewDidLaunch
 		// loads project custom modes before activate() allows the first task.
-		this.initializationPromise = (async () => {
+		const initialization = (async () => {
 			await this.dispatchToExtension({ type: "updateSettings", updatedSettings: this.initialSettings })
 			await this.dispatchToExtension({ type: "webviewDidLaunch" })
 		})()
+		initialization.catch(() => undefined)
+		this.initializationPromise = initialization
 	}
 
 	public isInInitialSetup(): boolean {
@@ -533,7 +538,7 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 	// Task Management
 	// ==========================================================================
 
-	private waitForTaskCompletion(rootTaskId: string): Promise<TaskRunResult> {
+	private waitForTaskCompletion(rootTaskId: string | undefined): Promise<TaskRunResult> {
 		if (!this.options.autonomous) {
 			return new Promise((resolve, reject) => {
 				const completeHandler = (event: TaskCompletedEvent) => {
@@ -551,6 +556,14 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 				this.client.once("taskCompleted", completeHandler)
 				this.client.once("error", errorHandler)
 			})
+		}
+		if (this.pendingAutonomousError) {
+			const error = this.pendingAutonomousError
+			this.pendingAutonomousError = undefined
+			return Promise.reject(error)
+		}
+		if (!rootTaskId) {
+			return Promise.reject(new Error("Autonomous root task ID is unavailable"))
 		}
 
 		const api = this.extensionAPI
@@ -593,6 +606,7 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 			}
 
 			const errorHandler = (error: Error) => {
+				if (error === this.pendingAutonomousError) this.pendingAutonomousError = undefined
 				cleanup()
 				reject(error)
 			}
@@ -640,9 +654,10 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 		configuration?: RooCodeSettings,
 		images?: string[],
 	): Promise<void> {
-		const rootTaskId = taskId ?? (this.options.autonomous ? randomUUID() : "unknown")
+		const rootTaskId = taskId ?? (this.options.autonomous ? randomUUID() : undefined)
 		this.rootTaskId = rootTaskId
 		const completion = this.waitForTaskCompletion(rootTaskId)
+		completion.catch(() => undefined)
 		await this.sendToExtension({
 			type: "newTask",
 			text: prompt,
@@ -656,6 +671,7 @@ export class ExtensionHost extends EventEmitter implements ExtensionHostInterfac
 	public async resumeTask(taskId: string): Promise<void> {
 		this.rootTaskId = taskId
 		const completion = this.waitForTaskCompletion(taskId)
+		completion.catch(() => undefined)
 		await this.sendToExtension({ type: "showTaskWithId", text: taskId })
 		this.lastTaskResult = await completion
 	}
