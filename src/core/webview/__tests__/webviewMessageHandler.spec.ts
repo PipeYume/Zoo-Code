@@ -1134,6 +1134,23 @@ describe("webviewMessageHandler - destructiveCommandGuardEnabled", () => {
 		)
 	})
 
+	it("disables the setting when DCG is unavailable for the current platform", async () => {
+		vi.mocked(ensureDcgInstalled).mockResolvedValue(undefined)
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "updateSettings",
+			updatedSettings: { destructiveCommandGuardEnabled: true },
+		})
+
+		expect(mockClineProvider.contextProxy.setValue).toHaveBeenCalledWith("destructiveCommandGuardEnabled", false)
+		expect(t).toHaveBeenCalledWith("common:errors.destructive_command_guard_enable_failed", {
+			error: "common:errors.destructiveCommandGuard.unavailable",
+		})
+		expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+			"common:errors.destructive_command_guard_enable_failed",
+		)
+	})
+
 	it("reports non-Error installation failures", async () => {
 		vi.mocked(ensureDcgInstalled).mockRejectedValue("download unavailable")
 

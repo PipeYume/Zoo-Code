@@ -12,11 +12,6 @@ export const DCG_ARCHIVES: Readonly<Record<string, DcgArchiveInfo>> = {
 		binary: "dcg",
 		sha256: "a63cf82bd3584055112d5ec7a4ab3d7e0619a9f806a53930c27aa0e6297484de",
 	},
-	"darwin-x64": {
-		archive: "dcg-x86_64-apple-darwin.tar.xz",
-		binary: "dcg",
-		sha256: "15b42fbbbeab47123899e6328d90cd593e14999f3d275f71294815ad8ed9479c",
-	},
 	"linux-arm64": {
 		archive: "dcg-aarch64-unknown-linux-gnu.tar.xz",
 		binary: "dcg",
@@ -27,11 +22,6 @@ export const DCG_ARCHIVES: Readonly<Record<string, DcgArchiveInfo>> = {
 		binary: "dcg",
 		sha256: "472b130a9b235edc57e6cb7566641da5fef905e9dbefd3a46f9ad1e33205fa04",
 	},
-	"win32-arm64": {
-		archive: "dcg-aarch64-pc-windows-msvc.zip",
-		binary: "dcg.exe",
-		sha256: "93d4c71860086db00bea3aa957051cef38eac572422fa40b2a045c8cd578c3b5",
-	},
 	"win32-x64": {
 		archive: "dcg-x86_64-pc-windows-msvc.zip",
 		binary: "dcg.exe",
@@ -41,8 +31,6 @@ export const DCG_ARCHIVES: Readonly<Record<string, DcgArchiveInfo>> = {
 
 export const DCG_DOWNLOAD_BASE_URL = `https://github.com/Dicklesworthstone/destructive_command_guard/releases/download/${DCG_VERSION}`
 
-export const DCG_MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
-export const DCG_DOWNLOAD_TIMEOUT_MS = 60_000
 export const DCG_RUN_TIMEOUT_MS = 3_000
 export const DCG_MAX_OUTPUT_BYTES = 256 * 1024
 

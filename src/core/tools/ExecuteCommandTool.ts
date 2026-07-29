@@ -142,6 +142,9 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 				// Resolve through the managed installer on use so an extension update
 				// automatically installs the newly pinned and verified DCG version.
 				const binaryPath = await ensureDcgInstalled(provider.context.globalStorageUri.fsPath)
+				if (!binaryPath) {
+					throw new Error(t("common:errors.destructiveCommandGuard.unavailable"))
+				}
 				const workingDirectory = customCwd
 					? path.isAbsolute(customCwd)
 						? customCwd

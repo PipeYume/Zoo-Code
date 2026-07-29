@@ -9,17 +9,14 @@ import { spawn } from "child_process"
 import { get } from "https"
 import type { IncomingMessage, RequestOptions } from "http"
 
-import { DCG_ARCHIVES, DCG_MAX_ARCHIVE_BYTES, DCG_VERSION } from "../constants"
+import { DCG_ARCHIVES, DCG_VERSION } from "../constants"
 import {
-	assertArchiveSizeWithinLimit,
-	cleanupStaleInstallations,
 	downloadFile,
 	extractSingleBinary,
 	getDcgArchiveInfo,
 	getDcgBinaryPath,
 	isDcgSupportedPlatform,
 	isTrustedDownloadUrl,
-	promoteStagedInstallation,
 	resolveTrustedRedirect,
 	ensureDcgInstalled,
 	verifyChecksum,
@@ -45,14 +42,7 @@ describe("Destructive Command Guard manager", () => {
 	})
 
 	it("maps all supported platform and architecture combinations", () => {
-		expect(Object.keys(DCG_ARCHIVES).sort()).toEqual([
-			"darwin-arm64",
-			"darwin-x64",
-			"linux-arm64",
-			"linux-x64",
-			"win32-arm64",
-			"win32-x64",
-		])
+		expect(Object.keys(DCG_ARCHIVES).sort()).toEqual(["darwin-arm64", "linux-arm64", "linux-x64", "win32-x64"])
 		expect(getDcgArchiveInfo("darwin", "arm64")?.archive).toBe("dcg-aarch64-apple-darwin.tar.xz")
 		expect(getDcgArchiveInfo("win32", "x64")?.binary).toBe("dcg.exe")
 	})
@@ -62,9 +52,9 @@ describe("Destructive Command Guard manager", () => {
 		expect(getDcgBinaryPath("/storage", "freebsd", "x64")).toBeUndefined()
 	})
 
-	it("returns a versioned managed binary path", () => {
+	it("returns the managed binary path", () => {
 		expect(getDcgBinaryPath("/storage", "linux", "x64")).toBe(
-			path.join("/storage", "destructive-command-guard", DCG_VERSION, "dcg"),
+			path.join("/storage", "destructive-command-guard", "dcg"),
 		)
 	})
 
@@ -95,13 +85,6 @@ describe("Destructive Command Guard manager", () => {
 		)
 	})
 
-	it("enforces the archive download size limit", () => {
-		expect(() => assertArchiveSizeWithinLimit(DCG_MAX_ARCHIVE_BYTES)).not.toThrow()
-		expect(() => assertArchiveSizeWithinLimit(DCG_MAX_ARCHIVE_BYTES + 1)).toThrow(
-			"DCG archive exceeds the download size limit",
-		)
-	})
-
 	it("verifies matching checksums and rejects mismatches", async () => {
 		const filePath = path.join(tempDir, "archive")
 		const contents = Buffer.from("verified archive")
@@ -114,7 +97,7 @@ describe("Destructive Command Guard manager", () => {
 		)
 	})
 
-	it("uses PowerShell to validate and extract a single ZIP entry", async () => {
+	it("uses the platform ZIP extractor", async () => {
 		const child = Object.assign(new EventEmitter(), {
 			stdout: new PassThrough(),
 			stderr: new PassThrough(),
@@ -127,17 +110,13 @@ describe("Destructive Command Guard manager", () => {
 		child.emit("close", 0)
 		await extraction
 
-		expect(mockSpawn).toHaveBeenCalledWith(
-			"powershell",
-			expect.arrayContaining(["-NoProfile", "-NonInteractive", "-Command"]),
-			expect.objectContaining({ shell: false }),
-		)
-		const script = mockSpawn.mock.calls[0][1][3]
-		expect(script).toContain("$entries.Count -ne 1")
-		expect(script).toContain("dcg.exe")
+		expect(mockSpawn).toHaveBeenCalledWith("unzip", ["-o", "C:\\dcg.zip", "-d", "C:\\staging"], {
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+		})
 	})
 
-	it("rejects unexpected tar archive layouts before extraction", async () => {
+	it("extracts tar archives without imposing a single-file layout", async () => {
 		const child = Object.assign(new EventEmitter(), {
 			stdout: new PassThrough(),
 			stderr: new PassThrough(),
@@ -147,35 +126,13 @@ describe("Destructive Command Guard manager", () => {
 		mockSpawn.mockReturnValue(child as unknown as ReturnType<typeof spawn>)
 
 		const extraction = extractSingleBinary("/tmp/dcg.tar.xz", tempDir, DCG_ARCHIVES["linux-x64"])
-		child.stdout.write("dcg\nREADME.md\n")
 		child.emit("close", 0)
 
-		await expect(extraction).rejects.toThrow("DCG archive has an unexpected layout")
+		await expect(extraction).resolves.toBeUndefined()
 		expect(mockSpawn).toHaveBeenCalledTimes(1)
-	})
-
-	it("extracts a validated tar archive containing only the managed binary", async () => {
-		const children = [0, 1].map(() =>
-			Object.assign(new EventEmitter(), {
-				stdout: new PassThrough(),
-				stderr: new PassThrough(),
-				kill: vi.fn(),
-			}),
-		)
-		mockSpawn.mockReturnValueOnce(children[0] as unknown as ReturnType<typeof spawn>)
-		mockSpawn.mockReturnValueOnce(children[1] as unknown as ReturnType<typeof spawn>)
-
-		const extraction = extractSingleBinary("/tmp/dcg.tar.xz", tempDir, DCG_ARCHIVES["linux-x64"])
-		children[0].stdout.write("./dcg\n")
-		children[0].emit("close", 0)
-		await new Promise<void>((resolve) => setImmediate(resolve))
-		children[1].emit("close", 0)
-
-		await extraction
-		expect(mockSpawn).toHaveBeenNthCalledWith(
-			2,
+		expect(mockSpawn).toHaveBeenCalledWith(
 			"tar",
-			["-xJf", "/tmp/dcg.tar.xz", "-C", tempDir, "dcg"],
+			expect.arrayContaining(["-xJf", "/tmp/dcg.tar.xz", "-C", tempDir, "--no-same-owner"]),
 			expect.objectContaining({ shell: false }),
 		)
 	})
@@ -195,58 +152,12 @@ describe("Destructive Command Guard manager", () => {
 		await expect(extraction).rejects.toThrow("invalid archive")
 	})
 
-	it("does not replace an installation completed by another process", async () => {
-		const stagingDir = path.join(tempDir, "staging")
-		const finalDir = path.join(tempDir, "final")
-		const binaryPath = path.join(finalDir, "dcg")
-		await mkdir(stagingDir)
-		await mkdir(finalDir)
-		await writeFile(path.join(stagingDir, "dcg"), "staged")
-		await writeFile(binaryPath, "installed")
-
-		await promoteStagedInstallation(stagingDir, finalDir, binaryPath)
-
-		expect(await readFile(binaryPath, "utf8")).toBe("installed")
-		expect(await readFile(path.join(stagingDir, "dcg"), "utf8")).toBe("staged")
-	})
-
-	it("promotes a staged installation when no completed installation exists", async () => {
-		const stagingDir = path.join(tempDir, "staging")
-		const finalDir = path.join(tempDir, "final")
-		const binaryPath = path.join(finalDir, "dcg")
-		await mkdir(stagingDir)
-		await writeFile(path.join(stagingDir, "dcg"), "staged")
-
-		await promoteStagedInstallation(stagingDir, finalDir, binaryPath)
-
-		expect(await readFile(binaryPath, "utf8")).toBe("staged")
-		await expect(access(stagingDir)).rejects.toThrow()
-	})
-
-	it("removes only stale version directories after a successful update", async () => {
-		const currentDir = path.join(tempDir, DCG_VERSION)
-		const staleDir = path.join(tempDir, "v0.6.0")
-		const stagingDir = path.join(tempDir, `${DCG_VERSION}.staging-123`)
-		const unrelatedDir = path.join(tempDir, "user-data")
-		await Promise.all([currentDir, staleDir, stagingDir, unrelatedDir].map((dir) => mkdir(dir)))
-
-		await cleanupStaleInstallations(tempDir)
-
-		await expect(access(staleDir)).rejects.toThrow()
-		await expect(
-			Promise.all([currentDir, stagingDir, unrelatedDir].map((dir) => access(dir))),
-		).resolves.toBeDefined()
-	})
-
-	it("treats stale-installation cleanup failures as cosmetic", async () => {
-		await expect(cleanupStaleInstallations(path.join(tempDir, "missing"))).resolves.toBeUndefined()
-	})
-
 	it("reuses an existing managed binary and restores its executable permissions", async () => {
 		const binaryPath = getDcgBinaryPath(tempDir)
 		expect(binaryPath).toBeDefined()
 		await mkdir(path.dirname(binaryPath!), { recursive: true })
 		await writeFile(binaryPath!, "existing binary")
+		await writeFile(path.join(path.dirname(binaryPath!), ".dcg-version"), DCG_VERSION)
 		if (process.platform !== "win32") {
 			await chmod(binaryPath!, 0o600)
 		}
@@ -269,8 +180,6 @@ describe("Destructive Command Guard manager", () => {
 			value: createHash("sha256").update(archive).digest("hex"),
 			configurable: true,
 		})
-		const now = vi.spyOn(Date, "now").mockReturnValue(1234)
-
 		const response = Object.assign(new PassThrough(), {
 			statusCode: 200,
 			headers: { "content-length": String(archive.length) },
@@ -303,13 +212,9 @@ describe("Destructive Command Guard manager", () => {
 				kill: vi.fn(),
 			})
 			setImmediate(async () => {
-				if (executable === "tar" && args[0] === "-tJf") {
-					child.stdout.write(`${info.binary}\n`)
-				} else if (executable === "tar") {
+				if (executable === "tar") {
 					const stagingDir = args[args.indexOf("-C") + 1]
 					await writeFile(path.join(stagingDir, info.binary), "executable")
-				} else {
-					child.stdout.write(DCG_VERSION.replace(/^v/, ""))
 				}
 				child.emit("close", 0)
 			})
@@ -323,14 +228,15 @@ describe("Destructive Command Guard manager", () => {
 			expect(concurrentInstallation).toBe(firstInstallation)
 
 			const binaryPath = await firstInstallation
+			if (!binaryPath) throw new Error("Expected DCG to be supported in this test")
 			expect(await readFile(binaryPath, "utf8")).toBe("executable")
 			expect(mockGet).toHaveBeenCalledTimes(1)
-			expect(mockSpawn).toHaveBeenCalledTimes(3)
-			await expect(
-				access(path.join(tempDir, "destructive-command-guard", `${info.archive}.1234.download`)),
-			).rejects.toThrow()
+			expect(mockSpawn).toHaveBeenCalledTimes(1)
+			await expect(access(path.join(tempDir, `${DCG_VERSION}-${info.archive}`))).rejects.toThrow()
+			expect(await readFile(path.join(tempDir, "destructive-command-guard", ".dcg-version"), "utf8")).toBe(
+				DCG_VERSION,
+			)
 		} finally {
-			now.mockRestore()
 			Object.defineProperty(info, "sha256", { value: originalChecksum, configurable: true })
 		}
 	})

@@ -308,6 +308,30 @@ describe("executeCommandTool", () => {
 			expect(executeCommandModule.executeCommandInTerminal).not.toHaveBeenCalled()
 		})
 
+		it("fails closed when DCG is unavailable for the current platform", async () => {
+			const provider = await mockCline.providerRef.deref()
+			provider.context = { globalStorageUri: { fsPath: "/test/storage" } }
+			provider.getState.mockResolvedValue({
+				destructiveCommandGuardEnabled: true,
+				terminalShellIntegrationDisabled: true,
+			})
+			mockEnsureDcgInstalled.mockResolvedValue(undefined)
+
+			await executeCommandTool.handle(mockCline as unknown as Task, mockToolUse, {
+				askApproval: mockAskApproval as unknown as AskApproval,
+				handleError: mockHandleError as unknown as HandleError,
+				pushToolResult: mockPushToolResult as unknown as PushToolResult,
+			})
+
+			expect(mockHandleError).toHaveBeenCalledWith(
+				"executing command",
+				expect.objectContaining({ message: "errors.destructiveCommandGuard.unavailable" }),
+			)
+			expect(mockRunDcg).not.toHaveBeenCalled()
+			expect(mockAskApproval).not.toHaveBeenCalled()
+			expect(executeCommandModule.executeCommandInTerminal).not.toHaveBeenCalled()
+		})
+
 		it("should handle missing command parameter", async () => {
 			// Setup
 			mockToolUse.params.command = undefined
