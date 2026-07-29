@@ -36,11 +36,13 @@ interface CommandExecutionProps {
 	text?: string
 	icon?: JSX.Element | null
 	title?: JSX.Element | null
+	isDenied?: boolean
 }
 
-export const CommandExecution = ({ executionId, text, icon, title }: CommandExecutionProps) => {
+export const CommandExecution = ({ executionId, text, icon, title, isDenied = false }: CommandExecutionProps) => {
 	const {
 		terminalShellIntegrationDisabled = false,
+		alwaysAllowCommandsExceptDenied = false,
 		allowedCommands = [],
 		deniedCommands = [],
 		setAllowedCommands,
@@ -245,7 +247,7 @@ export const CommandExecution = ({ executionId, text, icon, title }: CommandExec
 					<CodeBlock source={command} language="shell" />
 					<OutputContainer isExpanded={isExpanded} output={output} />
 				</div>
-				{command && command.trim() && (
+				{command && command.trim() && !alwaysAllowCommandsExceptDenied && !isDenied && (
 					<CommandPatternSelector
 						patterns={commandPatterns}
 						allowedCommands={allowedCommands}
