@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "실행",
 			"description": "승인 없이 자동으로 허용된 터미널 명령 실행",
+			"allowAllExceptDenied": {
+				"label": "거부된 명령을 제외한 모든 명령 자동 승인",
+				"description": "거부된 명령 접두사와 일치하지 않는 모든 명령을 자동 승인합니다. 이 설정이 활성화된 동안에는 허용된 명령 목록이 무시됩니다. 형식이 잘못된 명령과 위험한 치환은 계속 검토가 필요합니다."
+			},
 			"allowedCommands": "허용된 자동 실행 명령",
 			"allowedCommandsDescription": "\"실행 작업 항상 승인\"이 활성화되었을 때 자동 실행될 수 있는 명령 접두사. 모든 명령을 허용하려면 * 추가(주의해서 사용)",
 			"deniedCommands": "거부된 명령",

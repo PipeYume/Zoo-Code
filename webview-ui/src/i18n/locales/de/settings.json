@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "Ausführen",
 			"description": "Erlaubte Terminal-Befehle automatisch ohne Genehmigung ausführen",
+			"allowAllExceptDenied": {
+				"label": "Alle Befehle außer verweigerten automatisch genehmigen",
+				"description": "Genehmigt automatisch jeden Befehl, der mit keinem Präfix eines verweigerten Befehls übereinstimmt. Die Liste erlaubter Befehle wird ignoriert, solange diese Einstellung aktiviert ist. Fehlerhafte Befehle und gefährliche Ersetzungen müssen weiterhin geprüft werden."
+			},
 			"allowedCommands": "Erlaubte Auto-Ausführungsbefehle",
 			"allowedCommandsDescription": "Befehlspräfixe, die automatisch ausgeführt werden können, wenn 'Ausführungsoperationen immer genehmigen' aktiviert ist. Fügen Sie * hinzu, um alle Befehle zu erlauben (mit Vorsicht verwenden).",
 			"deniedCommands": "Verweigerte Befehle",

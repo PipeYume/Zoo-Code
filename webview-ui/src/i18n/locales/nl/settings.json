@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "Uitvoeren",
 			"description": "Automatisch toegestane terminalcommando's uitvoeren zonder goedkeuring",
+			"allowAllExceptDenied": {
+				"label": "Alle commando's behalve geweigerde automatisch goedkeuren",
+				"description": "Keurt elk commando automatisch goed dat niet overeenkomt met het voorvoegsel van een geweigerd commando. De lijst met toegestane commando's wordt genegeerd zolang deze instelling is ingeschakeld. Onjuist gevormde commando's en gevaarlijke vervangingen moeten nog steeds worden beoordeeld."
+			},
 			"allowedCommands": "Toegestane automatisch uit te voeren commando's",
 			"allowedCommandsDescription": "Commando-prefixen die automatisch kunnen worden uitgevoerd als 'Altijd goedkeuren voor uitvoeren' is ingeschakeld. Voeg * toe om alle commando's toe te staan (gebruik met voorzichtigheid).",
 			"deniedCommands": "Geweigerde commando's",

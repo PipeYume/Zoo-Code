@@ -33,6 +33,7 @@ export type AutoApprovalStateOptions =
 	| "mcpServers" // For `alwaysAllowMcp`.
 	| "allowedCommands" // For `alwaysAllowExecute`.
 	| "deniedCommands"
+	| "alwaysAllowCommandsExceptDenied"
 
 export type CheckAutoApprovalResult =
 	| { decision: "approve" }
@@ -117,7 +118,12 @@ export async function checkAutoApproval({
 		}
 
 		if (state.alwaysAllowExecute === true) {
-			const decision = getCommandDecision(text, state.allowedCommands || [], state.deniedCommands || [])
+			const decision = getCommandDecision(
+				text,
+				state.allowedCommands || [],
+				state.deniedCommands || [],
+				state.alwaysAllowCommandsExceptDenied === true,
+			)
 
 			if (decision === "auto_approve") {
 				return { decision: "approve" }

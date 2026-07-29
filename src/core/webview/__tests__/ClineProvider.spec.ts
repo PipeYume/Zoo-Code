@@ -1011,6 +1011,15 @@ describe("ClineProvider", () => {
 		expect(state).toHaveProperty("writeDelayMs")
 	})
 
+	test("getStateToPostToWebview returns the saved allow-all-except-denied setting", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+		await provider.contextProxy.setValue("alwaysAllowCommandsExceptDenied", true)
+
+		const state = await provider.getStateToPostToWebview()
+
+		expect(state.alwaysAllowCommandsExceptDenied).toBe(true)
+	})
+
 	test("language is set to VSCode language", async () => {
 		// Mock VSCode language as Spanish
 		;(vscode.env as any).language = "pt-BR"

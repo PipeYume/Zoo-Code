@@ -329,6 +329,10 @@
 		"execute": {
 			"label": "Exécuter",
 			"description": "Exécuter automatiquement les commandes de terminal autorisées sans nécessiter d'approbation",
+			"allowAllExceptDenied": {
+				"label": "Approuver automatiquement toutes les commandes sauf celles refusées",
+				"description": "Approuve automatiquement toute commande qui ne correspond pas au préfixe d'une commande refusée. La liste des commandes autorisées est ignorée tant que ce paramètre est activé. Les commandes mal formées et les substitutions dangereuses nécessitent toujours une vérification."
+			},
 			"allowedCommands": "Commandes auto-exécutables autorisées",
 			"allowedCommandsDescription": "Préfixes de commandes qui peuvent être auto-exécutés lorsque \"Toujours approuver les opérations d'exécution\" est activé. Ajoutez * pour autoriser toutes les commandes (à utiliser avec précaution).",
 			"deniedCommands": "Commandes refusées",

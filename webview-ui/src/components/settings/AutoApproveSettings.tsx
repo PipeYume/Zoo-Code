@@ -28,6 +28,7 @@ type AutoApproveSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	alwaysAllowModeSwitch?: boolean
 	alwaysAllowSubtasks?: boolean
 	alwaysAllowExecute?: boolean
+	alwaysAllowCommandsExceptDenied?: boolean
 	alwaysAllowFollowupQuestions?: boolean
 	followupAutoApproveTimeoutMs?: number
 	allowedCommands?: string[]
@@ -44,6 +45,7 @@ type AutoApproveSettingsProps = HTMLAttributes<HTMLDivElement> & {
 		| "alwaysAllowModeSwitch"
 		| "alwaysAllowSubtasks"
 		| "alwaysAllowExecute"
+		| "alwaysAllowCommandsExceptDenied"
 		| "alwaysAllowFollowupQuestions"
 		| "followupAutoApproveTimeoutMs"
 		| "allowedCommands"
@@ -63,6 +65,7 @@ export const AutoApproveSettings = ({
 	alwaysAllowModeSwitch,
 	alwaysAllowSubtasks,
 	alwaysAllowExecute,
+	alwaysAllowCommandsExceptDenied,
 	alwaysAllowFollowupQuestions,
 	followupAutoApproveTimeoutMs = 60000,
 	allowedCommands,
@@ -276,53 +279,78 @@ export const AutoApproveSettings = ({
 						</div>
 
 						<SearchableSetting
-							settingId="auto-approve-allowed-commands"
+							settingId="auto-approve-all-except-denied"
 							section="autoApprove"
-							label={t("settings:autoApprove.execute.allowedCommands")}>
-							<label className="block font-medium mb-1" data-testid="allowed-commands-heading">
-								{t("settings:autoApprove.execute.allowedCommands")}
-							</label>
+							label={t("settings:autoApprove.execute.allowAllExceptDenied.label")}>
+							<VSCodeCheckbox
+								checked={alwaysAllowCommandsExceptDenied}
+								onChange={(e: any) =>
+									setCachedStateField("alwaysAllowCommandsExceptDenied", e.target.checked)
+								}
+								data-testid="always-allow-commands-except-denied-checkbox">
+								<span className="font-medium">
+									{t("settings:autoApprove.execute.allowAllExceptDenied.label")}
+								</span>
+							</VSCodeCheckbox>
 							<div className="text-vscode-descriptionForeground text-sm mt-1">
-								{t("settings:autoApprove.execute.allowedCommandsDescription")}
+								{t("settings:autoApprove.execute.allowAllExceptDenied.description")}
 							</div>
 						</SearchableSetting>
 
-						<div className="flex gap-2">
-							<Input
-								value={commandInput}
-								onChange={(e: any) => setCommandInput(e.target.value)}
-								onKeyDown={(e: any) => {
-									if (e.key === "Enter") {
-										e.preventDefault()
-										handleAddCommand()
-									}
-								}}
-								placeholder={t("settings:autoApprove.execute.commandPlaceholder")}
-								className="grow"
-								data-testid="command-input"
-							/>
-							<Button className="h-8" onClick={handleAddCommand} data-testid="add-command-button">
-								{t("settings:autoApprove.execute.addButton")}
-							</Button>
-						</div>
-
-						<div className="flex flex-wrap gap-2">
-							{(allowedCommands ?? []).map((cmd, index) => (
-								<Button
-									key={index}
-									variant="secondary"
-									data-testid={`remove-command-${index}`}
-									onClick={() => {
-										const newCommands = (allowedCommands ?? []).filter((_, i) => i !== index)
-										setCachedStateField("allowedCommands", newCommands)
-									}}>
-									<div className="flex flex-row items-center gap-1">
-										<div>{cmd}</div>
-										<X className="text-foreground scale-75" />
+						{!alwaysAllowCommandsExceptDenied && (
+							<>
+								<SearchableSetting
+									settingId="auto-approve-allowed-commands"
+									section="autoApprove"
+									label={t("settings:autoApprove.execute.allowedCommands")}>
+									<label className="block font-medium mb-1" data-testid="allowed-commands-heading">
+										{t("settings:autoApprove.execute.allowedCommands")}
+									</label>
+									<div className="text-vscode-descriptionForeground text-sm mt-1">
+										{t("settings:autoApprove.execute.allowedCommandsDescription")}
 									</div>
-								</Button>
-							))}
-						</div>
+								</SearchableSetting>
+
+								<div className="flex gap-2">
+									<Input
+										value={commandInput}
+										onChange={(e: any) => setCommandInput(e.target.value)}
+										onKeyDown={(e: any) => {
+											if (e.key === "Enter") {
+												e.preventDefault()
+												handleAddCommand()
+											}
+										}}
+										placeholder={t("settings:autoApprove.execute.commandPlaceholder")}
+										className="grow"
+										data-testid="command-input"
+									/>
+									<Button className="h-8" onClick={handleAddCommand} data-testid="add-command-button">
+										{t("settings:autoApprove.execute.addButton")}
+									</Button>
+								</div>
+
+								<div className="flex flex-wrap gap-2">
+									{(allowedCommands ?? []).map((cmd, index) => (
+										<Button
+											key={index}
+											variant="secondary"
+											data-testid={`remove-command-${index}`}
+											onClick={() => {
+												const newCommands = (allowedCommands ?? []).filter(
+													(_, i) => i !== index,
+												)
+												setCachedStateField("allowedCommands", newCommands)
+											}}>
+											<div className="flex flex-row items-center gap-1">
+												<div>{cmd}</div>
+												<X className="text-foreground scale-75" />
+											</div>
+										</Button>
+									))}
+								</div>
+							</>
+						)}
 
 						{/* Denied Commands Section */}
 						<SearchableSetting

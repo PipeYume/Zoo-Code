@@ -136,6 +136,7 @@ export const globalSettingsSchema = z.object({
 	alwaysAllowModeSwitch: z.boolean().optional(),
 	alwaysAllowSubtasks: z.boolean().optional(),
 	alwaysAllowExecute: z.boolean().optional(),
+	alwaysAllowCommandsExceptDenied: z.boolean().optional(),
 	alwaysAllowFollowupQuestions: z.boolean().optional(),
 	followupAutoApproveTimeoutMs: z.number().optional(),
 	allowedCommands: z.array(z.string()).optional(),

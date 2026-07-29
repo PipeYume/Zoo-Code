@@ -97,4 +97,20 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expect(setCachedStateField).toHaveBeenCalledWith("deniedCommands", [])
 		expectNoImmediateUpdateSettings()
 	})
+
+	it("buffers the allow-all-except-denied setting without persisting before Save", () => {
+		const { setCachedStateField } = renderSettings()
+
+		fireEvent.click(screen.getByTestId("always-allow-commands-except-denied-checkbox"))
+
+		expect(setCachedStateField).toHaveBeenCalledWith("alwaysAllowCommandsExceptDenied", true)
+		expectNoImmediateUpdateSettings()
+	})
+
+	it("hides the allowed command list when allow-all-except-denied is enabled", () => {
+		renderSettings({ alwaysAllowCommandsExceptDenied: true })
+
+		expect(screen.queryByTestId("allowed-commands-heading")).not.toBeInTheDocument()
+		expect(screen.getByTestId("denied-commands-heading")).toBeInTheDocument()
+	})
 })

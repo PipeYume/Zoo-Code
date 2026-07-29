@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "执行",
 			"description": "自动执行白名单中的命令而无需批准",
+			"allowAllExceptDenied": {
+				"label": "自动批准除拒绝命令之外的所有命令",
+				"description": "自动批准所有不匹配拒绝命令前缀的命令。启用此设置时，将忽略允许命令列表。格式错误的命令和危险的替换仍需审核。"
+			},
 			"allowedCommands": "命令白名单",
 			"allowedCommandsDescription": "当\"自动批准命令行操作\"启用时可以自动执行的命令前缀。添加 * 以允许所有命令（谨慎使用）。",
 			"deniedCommands": "拒绝的命令",

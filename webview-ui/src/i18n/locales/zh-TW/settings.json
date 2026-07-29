@@ -353,6 +353,10 @@
 		"execute": {
 			"label": "執行命令",
 			"description": "無需核准即可自動執行允許的終端機命令",
+			"allowAllExceptDenied": {
+				"label": "自動核准拒絕命令以外的所有命令",
+				"description": "自動核准所有不符合拒絕命令前綴的命令。啟用此設定時，允許的命令清單將被忽略。格式錯誤的命令和危險的替換仍需審查。"
+			},
 			"allowedCommands": "允許自動執行的命令",
 			"allowedCommandsDescription": "啟用「始終核准執行」時，可自動執行的命令前綴。新增 * 可允許所有命令（請謹慎使用）。",
 			"deniedCommands": "拒絕的命令",

@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "Thực thi",
 			"description": "Tự động thực thi các lệnh terminal được phép mà không cần phê duyệt",
+			"allowAllExceptDenied": {
+				"label": "Tự động phê duyệt mọi lệnh ngoại trừ các lệnh bị từ chối",
+				"description": "Tự động phê duyệt mọi lệnh không khớp với tiền tố của lệnh bị từ chối. Danh sách lệnh được phép sẽ bị bỏ qua khi cài đặt này được bật. Các lệnh sai định dạng và phép thay thế nguy hiểm vẫn cần được xem xét."
+			},
 			"allowedCommands": "Các lệnh tự động thực thi được phép",
 			"allowedCommandsDescription": "Tiền tố lệnh có thể được tự động thực thi khi \"Luôn phê duyệt các hoạt động thực thi\" được bật. Thêm * để cho phép tất cả các lệnh (sử dụng cẩn thận).",
 			"deniedCommands": "Lệnh bị từ chối",

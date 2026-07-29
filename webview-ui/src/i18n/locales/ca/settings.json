@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "Executar",
 			"description": "Executar automàticament comandes de terminal permeses sense requerir aprovació",
+			"allowAllExceptDenied": {
+				"label": "Aprova automàticament totes les comandes excepte les denegades",
+				"description": "Aprova automàticament qualsevol comanda que no coincideixi amb el prefix d'una comanda denegada. La llista de comandes permeses s'ignora mentre aquesta opció està activada. Les comandes malformades i les substitucions perilloses continuen requerint revisió."
+			},
 			"allowedCommands": "Comandes d'auto-execució permeses",
 			"allowedCommandsDescription": "Prefixos de comandes que poden ser executats automàticament quan \"Aprovar sempre operacions d'execució\" està habilitat. Afegeix * per permetre totes les comandes (usar amb precaució).",
 			"deniedCommands": "Comandes denegades",

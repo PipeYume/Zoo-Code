@@ -328,6 +328,10 @@
 		"execute": {
 			"label": "Ejecutar",
 			"description": "Ejecutar automáticamente comandos de terminal permitidos sin requerir aprobación",
+			"allowAllExceptDenied": {
+				"label": "Autoaprobar todos los comandos excepto los denegados",
+				"description": "Aprueba automáticamente cualquier comando que no coincida con el prefijo de un comando denegado. La lista de comandos permitidos se ignora mientras esta opción esté habilitada. Los comandos con formato incorrecto y las sustituciones peligrosas aún requieren revisión."
+			},
 			"allowedCommands": "Comandos de auto-ejecución permitidos",
 			"allowedCommandsDescription": "Prefijos de comandos que pueden ser ejecutados automáticamente cuando \"Aprobar siempre operaciones de ejecución\" está habilitado. Añade * para permitir todos los comandos (usar con precaución).",
 			"deniedCommands": "Comandos denegados",
