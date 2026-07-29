@@ -15,14 +15,13 @@ describe("Destructive Command Guard auto-approval precedence", () => {
 		alwaysAllowFollowupQuestions: false,
 		allowedCommands: ["echo"],
 		deniedCommands: ["rm"],
-		alwaysAllowCommandsExceptDenied: false,
 		destructiveCommandGuardEnabled: true,
 		mcpServers: [],
 	}
 
-	it("ignores Zoo's deny list while DCG is enabled", async () => {
+	it("auto-approves commands allowed by DCG without consulting Zoo's deny list", async () => {
 		expect(await checkAutoApproval({ state: baseState, ask: "command", text: "rm file" })).toEqual({
-			decision: "ask",
+			decision: "approve",
 		})
 	})
 
@@ -32,9 +31,33 @@ describe("Destructive Command Guard auto-approval precedence", () => {
 		).toEqual({ decision: "ask" })
 	})
 
-	it("retains ordinary allowlist auto-approval for DCG-allowed commands", async () => {
-		expect(await checkAutoApproval({ state: baseState, ask: "command", text: "echo safe" })).toEqual({
+	it("auto-approves DCG-allowed commands without consulting Zoo's allowlist", async () => {
+		expect(await checkAutoApproval({ state: baseState, ask: "command", text: "unlisted-command" })).toEqual({
 			decision: "approve",
+		})
+	})
+
+	it("keeps ordinary allowlist auto-approval when DCG is disabled", async () => {
+		const state = { ...baseState, destructiveCommandGuardEnabled: false }
+
+		expect(await checkAutoApproval({ state, ask: "command", text: "echo safe" })).toEqual({
+			decision: "approve",
+		})
+	})
+
+	it("keeps ordinary denylist behavior when DCG is disabled", async () => {
+		const state = { ...baseState, destructiveCommandGuardEnabled: false }
+
+		expect(await checkAutoApproval({ state, ask: "command", text: "rm file" })).toEqual({
+			decision: "deny",
+		})
+	})
+
+	it("keeps ordinary prompts for unlisted commands when DCG is disabled", async () => {
+		const state = { ...baseState, destructiveCommandGuardEnabled: false }
+
+		expect(await checkAutoApproval({ state, ask: "command", text: "unlisted-command" })).toEqual({
+			decision: "ask",
 		})
 	})
 })

@@ -217,8 +217,7 @@ export type CommandDecision = "auto_approve" | "auto_deny" | "ask_user" | "malfo
  * **Decision Logic:**
  * 1. **Dangerous Substitution Protection**: Commands with dangerous parameter expansions are never auto-approved
  * 2. **Command Parsing**: Split command chains (&&, ||, ;, |, &) into individual commands
- * 3. **Individual Validation**: For each sub-command, either apply the longest prefix match rule or, when
- *    `allowAllExceptDenied` is enabled, approve it unless it matches the denylist
+ * 3. **Individual Validation**: For each sub-command, apply longest prefix match rule
  * 4. **Aggregation**: Combine decisions using "any denial blocks all" principle
  *
  * **Return Values:**
@@ -253,14 +252,12 @@ export type CommandDecision = "auto_approve" | "auto_deny" | "ask_user" | "malfo
  * @param command - The full command string to validate
  * @param allowedCommands - List of allowed command prefixes
  * @param deniedCommands - Optional list of denied command prefixes
- * @param allowAllExceptDenied - Auto-approve commands without a denylist match, ignoring the allowlist
  * @returns Decision indicating whether to approve, deny, or ask user
  */
 export function getCommandDecision(
 	command: string,
 	allowedCommands: string[],
 	deniedCommands?: string[],
-	allowAllExceptDenied = false,
 ): CommandDecision {
 	if (!command?.trim()) {
 		return "auto_approve"
@@ -284,10 +281,6 @@ export function getCommandDecision(
 	const decisions: CommandDecision[] = subCommands.map((cmd) => {
 		// Remove simple PowerShell-like redirections (e.g. 2>&1) before checking
 		const cmdWithoutRedirection = cmd.replace(/\d*>&\d*/, "").trim()
-
-		if (allowAllExceptDenied) {
-			return findLongestPrefixMatch(cmdWithoutRedirection, deniedCommands || []) ? "auto_deny" : "auto_approve"
-		}
 
 		return getSingleCommandDecision(cmdWithoutRedirection, allowedCommands, deniedCommands)
 	})

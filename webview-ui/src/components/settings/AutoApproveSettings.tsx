@@ -28,7 +28,6 @@ type AutoApproveSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	alwaysAllowModeSwitch?: boolean
 	alwaysAllowSubtasks?: boolean
 	alwaysAllowExecute?: boolean
-	alwaysAllowCommandsExceptDenied?: boolean
 	destructiveCommandGuardEnabled?: boolean
 	alwaysAllowFollowupQuestions?: boolean
 	followupAutoApproveTimeoutMs?: number
@@ -46,7 +45,6 @@ type AutoApproveSettingsProps = HTMLAttributes<HTMLDivElement> & {
 		| "alwaysAllowModeSwitch"
 		| "alwaysAllowSubtasks"
 		| "alwaysAllowExecute"
-		| "alwaysAllowCommandsExceptDenied"
 		| "destructiveCommandGuardEnabled"
 		| "alwaysAllowFollowupQuestions"
 		| "followupAutoApproveTimeoutMs"
@@ -67,7 +65,6 @@ export const AutoApproveSettings = ({
 	alwaysAllowModeSwitch,
 	alwaysAllowSubtasks,
 	alwaysAllowExecute,
-	alwaysAllowCommandsExceptDenied,
 	destructiveCommandGuardEnabled,
 	alwaysAllowFollowupQuestions,
 	followupAutoApproveTimeoutMs = 60000,
@@ -283,25 +280,6 @@ export const AutoApproveSettings = ({
 						</div>
 
 						<SearchableSetting
-							settingId="auto-approve-all-except-denied"
-							section="autoApprove"
-							label={t("settings:autoApprove.execute.allowAllExceptDenied.label")}>
-							<VSCodeCheckbox
-								checked={alwaysAllowCommandsExceptDenied}
-								onChange={(e: any) =>
-									setCachedStateField("alwaysAllowCommandsExceptDenied", e.target.checked)
-								}
-								data-testid="always-allow-commands-except-denied-checkbox">
-								<span className="font-medium">
-									{t("settings:autoApprove.execute.allowAllExceptDenied.label")}
-								</span>
-							</VSCodeCheckbox>
-							<div className="text-vscode-descriptionForeground text-sm mt-1">
-								{t("settings:autoApprove.execute.allowAllExceptDenied.description")}
-							</div>
-						</SearchableSetting>
-
-						<SearchableSetting
 							settingId="auto-approve-destructive-command-guard"
 							section="autoApprove"
 							label={t("settings:autoApprove.execute.destructiveCommandGuard.label")}>
@@ -320,7 +298,7 @@ export const AutoApproveSettings = ({
 							</div>
 						</SearchableSetting>
 
-						{!alwaysAllowCommandsExceptDenied && (
+						{!destructiveCommandGuardEnabled && (
 							<>
 								<SearchableSetting
 									settingId="auto-approve-allowed-commands"
@@ -372,67 +350,62 @@ export const AutoApproveSettings = ({
 										</Button>
 									))}
 								</div>
+
+								{/* Denied Commands Section */}
+								<SearchableSetting
+									settingId="auto-approve-denied-commands"
+									section="autoApprove"
+									label={t("settings:autoApprove.execute.deniedCommands")}
+									className="mt-6">
+									<label className="block font-medium mb-1" data-testid="denied-commands-heading">
+										{t("settings:autoApprove.execute.deniedCommands")}
+									</label>
+									<div className="text-vscode-descriptionForeground text-sm mt-1">
+										{t("settings:autoApprove.execute.deniedCommandsDescription")}
+									</div>
+								</SearchableSetting>
+
+								<div className="flex gap-2">
+									<Input
+										value={deniedCommandInput}
+										onChange={(e: any) => setDeniedCommandInput(e.target.value)}
+										onKeyDown={(e: any) => {
+											if (e.key === "Enter") {
+												e.preventDefault()
+												handleAddDeniedCommand()
+											}
+										}}
+										placeholder={t("settings:autoApprove.execute.deniedCommandPlaceholder")}
+										className="grow"
+										data-testid="denied-command-input"
+									/>
+									<Button
+										className="h-8"
+										onClick={handleAddDeniedCommand}
+										data-testid="add-denied-command-button">
+										{t("settings:autoApprove.execute.addButton")}
+									</Button>
+								</div>
+
+								<div className="flex flex-wrap gap-2">
+									{(deniedCommands ?? []).map((cmd, index) => (
+										<Button
+											key={index}
+											variant="secondary"
+											data-testid={`remove-denied-command-${index}`}
+											onClick={() => {
+												const newCommands = (deniedCommands ?? []).filter((_, i) => i !== index)
+												setCachedStateField("deniedCommands", newCommands)
+											}}>
+											<div className="flex flex-row items-center gap-1">
+												<div>{cmd}</div>
+												<X className="text-foreground scale-75" />
+											</div>
+										</Button>
+									))}
+								</div>
 							</>
 						)}
-
-						{/* Denied Commands Section */}
-						<div className={destructiveCommandGuardEnabled ? "opacity-50 pointer-events-none" : undefined}>
-							<SearchableSetting
-								settingId="auto-approve-denied-commands"
-								section="autoApprove"
-								label={t("settings:autoApprove.execute.deniedCommands")}
-								className="mt-6">
-								<label className="block font-medium mb-1" data-testid="denied-commands-heading">
-									{t("settings:autoApprove.execute.deniedCommands")}
-								</label>
-								<div className="text-vscode-descriptionForeground text-sm mt-1">
-									{t("settings:autoApprove.execute.deniedCommandsDescription")}
-								</div>
-							</SearchableSetting>
-
-							<div className="flex gap-2">
-								<Input
-									disabled={destructiveCommandGuardEnabled}
-									value={deniedCommandInput}
-									onChange={(e: any) => setDeniedCommandInput(e.target.value)}
-									onKeyDown={(e: any) => {
-										if (e.key === "Enter") {
-											e.preventDefault()
-											handleAddDeniedCommand()
-										}
-									}}
-									placeholder={t("settings:autoApprove.execute.deniedCommandPlaceholder")}
-									className="grow"
-									data-testid="denied-command-input"
-								/>
-								<Button
-									disabled={destructiveCommandGuardEnabled}
-									className="h-8"
-									onClick={handleAddDeniedCommand}
-									data-testid="add-denied-command-button">
-									{t("settings:autoApprove.execute.addButton")}
-								</Button>
-							</div>
-
-							<div className="flex flex-wrap gap-2">
-								{(deniedCommands ?? []).map((cmd, index) => (
-									<Button
-										disabled={destructiveCommandGuardEnabled}
-										key={index}
-										variant="secondary"
-										data-testid={`remove-denied-command-${index}`}
-										onClick={() => {
-											const newCommands = (deniedCommands ?? []).filter((_, i) => i !== index)
-											setCachedStateField("deniedCommands", newCommands)
-										}}>
-										<div className="flex flex-row items-center gap-1">
-											<div>{cmd}</div>
-											<X className="text-foreground scale-75" />
-										</div>
-									</Button>
-								))}
-							</div>
-						</div>
 					</div>
 				)}
 			</Section>

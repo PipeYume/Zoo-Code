@@ -353,13 +353,9 @@
 		"execute": {
 			"label": "執行命令",
 			"description": "無需核准即可自動執行允許的終端機命令",
-			"allowAllExceptDenied": {
-				"label": "自動核准拒絕命令以外的所有命令",
-				"description": "自動核准所有不符合拒絕命令前綴的命令。啟用此設定時，允許的命令清單將被忽略。格式錯誤的命令和危險的替換仍需審查。"
-			},
 			"destructiveCommandGuard": {
 				"label": "啟用破壞性命令防護",
-				"description": "下載並使用適用於此平台的 Destructive Command Guard（DCG）。被 DCG 阻擋的命令需要你核准後才能執行。啟用後，Zoo 的拒絕命令清單將停用。關閉此選項時，已下載的執行檔會保留。"
+				"description": "下載並使用適用於此平台的 Destructive Command Guard（DCG）。DCG 允許的命令會自動執行。被 DCG 阻擋的命令需要你核准後才能執行。啟用後，Zoo 的命令清單將停用。關閉此選項時，已下載的執行檔會保留。"
 			},
 			"allowedCommands": "允許自動執行的命令",
 			"allowedCommandsDescription": "啟用「始終核准執行」時，可自動執行的命令前綴。新增 * 可允許所有命令（請謹慎使用）。",

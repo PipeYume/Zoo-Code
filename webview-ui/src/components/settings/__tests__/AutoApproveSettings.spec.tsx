@@ -98,22 +98,6 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expectNoImmediateUpdateSettings()
 	})
 
-	it("buffers the allow-all-except-denied setting without persisting before Save", () => {
-		const { setCachedStateField } = renderSettings()
-
-		fireEvent.click(screen.getByTestId("always-allow-commands-except-denied-checkbox"))
-
-		expect(setCachedStateField).toHaveBeenCalledWith("alwaysAllowCommandsExceptDenied", true)
-		expectNoImmediateUpdateSettings()
-	})
-
-	it("hides the allowed command list when allow-all-except-denied is enabled", () => {
-		renderSettings({ alwaysAllowCommandsExceptDenied: true })
-
-		expect(screen.queryByTestId("allowed-commands-heading")).not.toBeInTheDocument()
-		expect(screen.getByTestId("denied-commands-heading")).toBeInTheDocument()
-	})
-
 	it("buffers the destructive command guard setting", () => {
 		const { setCachedStateField } = renderSettings()
 
@@ -123,11 +107,16 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expectNoImmediateUpdateSettings()
 	})
 
-	it("disables the denied commands editor while destructive command guard is enabled", () => {
+	it("renders destructive command guard disabled by default", () => {
+		renderSettings()
+
+		expect(screen.getByTestId("destructive-command-guard-checkbox")).not.toBeChecked()
+	})
+
+	it("hides Zoo command list editors while destructive command guard is enabled", () => {
 		renderSettings({ destructiveCommandGuardEnabled: true, deniedCommands: ["rm -rf"] })
 
-		expect(screen.getByTestId("denied-command-input")).toBeDisabled()
-		expect(screen.getByTestId("add-denied-command-button")).toBeDisabled()
-		expect(screen.getByTestId("remove-denied-command-0")).toBeDisabled()
+		expect(screen.queryByTestId("allowed-commands-heading")).not.toBeInTheDocument()
+		expect(screen.queryByTestId("denied-commands-heading")).not.toBeInTheDocument()
 	})
 })

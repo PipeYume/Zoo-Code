@@ -328,13 +328,9 @@
 		"execute": {
 			"label": "Executar",
 			"description": "Executar automaticamente comandos de terminal permitidos sem exigir aprovação",
-			"allowAllExceptDenied": {
-				"label": "Aprovar automaticamente todos os comandos, exceto os negados",
-				"description": "Aprova automaticamente qualquer comando que não corresponda ao prefixo de um comando negado. A lista de comandos permitidos é ignorada enquanto esta configuração estiver ativada. Comandos malformados e substituições perigosas ainda exigem revisão."
-			},
 			"destructiveCommandGuard": {
 				"label": "Ativar a proteção contra comandos destrutivos",
-				"description": "Baixa e usa o Destructive Command Guard (DCG) para esta plataforma. Comandos bloqueados pelo DCG precisarão da sua aprovação. A lista de comandos negados do Zoo fica desativada enquanto esta opção estiver ativa. O executável baixado é mantido se você desativá-la."
+				"description": "Baixa e usa o Destructive Command Guard (DCG) para esta plataforma. Comandos permitidos pelo DCG são executados automaticamente. Comandos bloqueados pelo DCG precisam da sua aprovação. As listas de comandos do Zoo ficam desativadas enquanto esta opção estiver ativa. O executável baixado é mantido se você desativá-la."
 			},
 			"allowedCommands": "Comandos de auto-execução permitidos",
 			"allowedCommandsDescription": "Prefixos de comando que podem ser auto-executados quando \"Aprovar sempre operações de execução\" está ativado. Adicione * para permitir todos os comandos (use com cautela).",

@@ -36,28 +36,6 @@ describe("getCommandDecision", () => {
 		const result = getCommandDecision(command, ["*"])
 		expect(result).toBe("auto_approve")
 	})
-
-	describe("allow all except denied mode", () => {
-		it("auto-approves a command that is not in the allowlist or denylist", () => {
-			expect(getCommandDecision("unknown command", [], ["rm"], true)).toBe("auto_approve")
-		})
-
-		it("auto-denies a command matching the denylist even if a longer allowlist entry matches", () => {
-			expect(getCommandDecision("rm --dry-run file", ["rm --dry-run"], ["rm"], true)).toBe("auto_deny")
-		})
-
-		it("auto-denies a command chain when any sub-command matches the denylist", () => {
-			expect(getCommandDecision("git status && rm file", [], ["rm"], true)).toBe("auto_deny")
-		})
-
-		it("preserves dangerous substitution protection", () => {
-			expect(getCommandDecision('echo "${var@P}"', [], [], true)).toBe("ask_user")
-		})
-
-		it("preserves malformed command protection", () => {
-			expect(getCommandDecision("sh -c 'echo a", [], [], true)).toBe("malformed_command")
-		})
-	})
 })
 
 describe("containsDangerousSubstitution — node -e one-liner false positive regression", () => {

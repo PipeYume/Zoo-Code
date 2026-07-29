@@ -1011,15 +1011,6 @@ describe("ClineProvider", () => {
 		expect(state).toHaveProperty("writeDelayMs")
 	})
 
-	test("getStateToPostToWebview returns the saved allow-all-except-denied setting", async () => {
-		await provider.resolveWebviewView(mockWebviewView)
-		await provider.contextProxy.setValue("alwaysAllowCommandsExceptDenied", true)
-
-		const state = await provider.getStateToPostToWebview()
-
-		expect(state.alwaysAllowCommandsExceptDenied).toBe(true)
-	})
-
 	test("getStateToPostToWebview returns the saved destructive command guard setting", async () => {
 		await provider.resolveWebviewView(mockWebviewView)
 		await provider.contextProxy.setValue("destructiveCommandGuardEnabled", true)
@@ -1027,6 +1018,14 @@ describe("ClineProvider", () => {
 		const state = await provider.getStateToPostToWebview()
 
 		expect(state.destructiveCommandGuardEnabled).toBe(true)
+	})
+
+	test("getStateToPostToWebview disables destructive command guard by default", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+
+		const state = await provider.getStateToPostToWebview()
+
+		expect(state.destructiveCommandGuardEnabled).toBe(false)
 	})
 
 	test("language is set to VSCode language", async () => {

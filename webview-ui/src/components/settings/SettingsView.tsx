@@ -162,7 +162,6 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		allowedMaxCost,
 		language,
 		alwaysAllowExecute,
-		alwaysAllowCommandsExceptDenied,
 		destructiveCommandGuardEnabled,
 		alwaysAllowMcp,
 		alwaysAllowModeSwitch,
@@ -389,7 +388,6 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					alwaysAllowWriteOutsideWorkspace: alwaysAllowWriteOutsideWorkspace ?? undefined,
 					alwaysAllowWriteProtected: alwaysAllowWriteProtected ?? undefined,
 					alwaysAllowExecute: alwaysAllowExecute ?? undefined,
-					alwaysAllowCommandsExceptDenied: alwaysAllowCommandsExceptDenied ?? false,
 					destructiveCommandGuardEnabled: destructiveCommandGuardEnabled ?? false,
 					alwaysAllowMcp,
 					alwaysAllowModeSwitch,
@@ -818,7 +816,6 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								alwaysAllowModeSwitch={alwaysAllowModeSwitch}
 								alwaysAllowSubtasks={alwaysAllowSubtasks}
 								alwaysAllowExecute={alwaysAllowExecute}
-								alwaysAllowCommandsExceptDenied={alwaysAllowCommandsExceptDenied}
 								destructiveCommandGuardEnabled={destructiveCommandGuardEnabled}
 								alwaysAllowFollowupQuestions={alwaysAllowFollowupQuestions}
 								followupAutoApproveTimeoutMs={followupAutoApproveTimeoutMs}

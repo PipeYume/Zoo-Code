@@ -33,7 +33,6 @@ export type AutoApprovalStateOptions =
 	| "mcpServers" // For `alwaysAllowMcp`.
 	| "allowedCommands" // For `alwaysAllowExecute`.
 	| "deniedCommands"
-	| "alwaysAllowCommandsExceptDenied"
 	| "destructiveCommandGuardEnabled"
 
 export type CheckAutoApprovalResult =
@@ -121,15 +120,15 @@ export async function checkAutoApproval({
 			return { decision: "ask" }
 		}
 
-		// DCG only changes commands that its policy blocks. Commands that pass
-		// continue through Zoo's existing allowlist/permission flow.
 		if (state.alwaysAllowExecute === true) {
-			const decision = getCommandDecision(
-				text,
-				state.allowedCommands || [],
-				state.destructiveCommandGuardEnabled === true ? [] : state.deniedCommands || [],
-				state.alwaysAllowCommandsExceptDenied === true,
-			)
+			// Execute commands immediately when DCG allows them. ExecuteCommandTool
+			// marks commands blocked by DCG as protected before reaching this check,
+			// which keeps the explicit user approval prompt for those commands.
+			if (state.destructiveCommandGuardEnabled === true) {
+				return { decision: "approve" }
+			}
+
+			const decision = getCommandDecision(text, state.allowedCommands || [], state.deniedCommands || [])
 
 			if (decision === "auto_approve") {
 				return { decision: "approve" }

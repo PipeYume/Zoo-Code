@@ -110,21 +110,6 @@ describe("CommandExecution", () => {
 		expect(selector).toHaveTextContent("npm install express")
 	})
 
-	it("should hide the command pattern selector when all commands are auto-approved except denied commands", () => {
-		const state = {
-			...mockExtensionState,
-			alwaysAllowCommandsExceptDenied: true,
-		}
-
-		render(
-			<ExtensionStateContext.Provider value={state as any}>
-				<CommandExecution executionId="test-1" text="npm install express" />
-			</ExtensionStateContext.Provider>,
-		)
-
-		expect(screen.queryByTestId("command-pattern-selector")).not.toBeInTheDocument()
-	})
-
 	it("should hide the command pattern selector for a denied command", () => {
 		render(
 			<ExtensionStateWrapper>

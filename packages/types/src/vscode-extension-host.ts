@@ -274,7 +274,6 @@ export type ExtensionState = Pick<
 	| "alwaysAllowSubtasks"
 	| "alwaysAllowFollowupQuestions"
 	| "alwaysAllowExecute"
-	| "alwaysAllowCommandsExceptDenied"
 	| "destructiveCommandGuardEnabled"
 	| "followupAutoApproveTimeoutMs"
 	| "allowedCommands"
