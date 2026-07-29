@@ -44,6 +44,7 @@ vi.mock("../CommandPatternSelector", () => ({
 // Mock ExtensionStateContext
 const mockExtensionState = {
 	terminalShellIntegrationDisabled: false,
+	destructiveCommandGuardEnabled: false,
 	allowedCommands: ["npm"],
 	deniedCommands: ["rm"],
 	setAllowedCommands: vi.fn(),
@@ -108,6 +109,22 @@ describe("CommandExecution", () => {
 		// Check that the command is shown in the pattern selector
 		const selector = screen.getByTestId("command-pattern-selector")
 		expect(selector).toHaveTextContent("npm install express")
+	})
+
+	it("should hide the command pattern selector while destructive command guard is enabled", () => {
+		const state = {
+			...mockExtensionState,
+			destructiveCommandGuardEnabled: true,
+		}
+
+		render(
+			<ExtensionStateContext.Provider value={state as any}>
+				<CommandExecution executionId="test-1" text="npm install express" />
+			</ExtensionStateContext.Provider>,
+		)
+
+		expect(screen.getByTestId("code-block")).toHaveTextContent("npm install express")
+		expect(screen.queryByTestId("command-pattern-selector")).not.toBeInTheDocument()
 	})
 
 	it("should hide the command pattern selector for a denied command", () => {
