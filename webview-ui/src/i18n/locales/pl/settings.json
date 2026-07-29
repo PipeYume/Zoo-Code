@@ -332,6 +332,10 @@
 				"label": "Automatycznie zatwierdzaj wszystkie polecenia poza odrzuconymi",
 				"description": "Automatycznie zatwierdza każde polecenie, które nie pasuje do prefiksu odrzuconego polecenia. Lista dozwolonych poleceń jest ignorowana, gdy to ustawienie jest włączone. Nieprawidłowo sformułowane polecenia i niebezpieczne podstawienia nadal wymagają sprawdzenia."
 			},
+			"destructiveCommandGuard": {
+				"label": "Włącz ochronę przed destrukcyjnymi poleceniami",
+				"description": "Pobiera i używa Destructive Command Guard (DCG) dla tej platformy. Polecenia zablokowane przez DCG będą wymagały twojej zgody. Lista odrzuconych poleceń Zoo jest wyłączona, gdy ta opcja jest aktywna. Pobrany plik wykonywalny pozostaje na dysku po wyłączeniu opcji."
+			},
 			"allowedCommands": "Dozwolone polecenia auto-wykonania",
 			"allowedCommandsDescription": "Prefiksy poleceń, które mogą być automatycznie wykonywane, gdy \"Zawsze zatwierdzaj operacje wykonania\" jest włączone. Dodaj * aby zezwolić na wszystkie polecenia (używaj z ostrożnością).",
 			"deniedCommands": "Odrzucone polecenia",

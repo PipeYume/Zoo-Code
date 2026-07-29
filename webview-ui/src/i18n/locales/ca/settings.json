@@ -332,6 +332,10 @@
 				"label": "Aprova automàticament totes les comandes excepte les denegades",
 				"description": "Aprova automàticament qualsevol comanda que no coincideixi amb el prefix d'una comanda denegada. La llista de comandes permeses s'ignora mentre aquesta opció està activada. Les comandes malformades i les substitucions perilloses continuen requerint revisió."
 			},
+			"destructiveCommandGuard": {
+				"label": "Activa la protecció contra ordres destructives",
+				"description": "Baixa i utilitza Destructive Command Guard (DCG) per a aquesta plataforma. Les ordres bloquejades per DCG requeriran la teva aprovació. La llista d'ordres denegades de Zoo es desactiva mentre aquesta opció està activa. L'executable baixat es conserva si la desactives."
+			},
 			"allowedCommands": "Comandes d'auto-execució permeses",
 			"allowedCommandsDescription": "Prefixos de comandes que poden ser executats automàticament quan \"Aprovar sempre operacions d'execució\" està habilitat. Afegeix * per permetre totes les comandes (usar amb precaució).",
 			"deniedCommands": "Comandes denegades",

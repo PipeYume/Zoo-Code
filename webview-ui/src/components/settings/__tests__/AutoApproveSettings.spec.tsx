@@ -113,4 +113,21 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expect(screen.queryByTestId("allowed-commands-heading")).not.toBeInTheDocument()
 		expect(screen.getByTestId("denied-commands-heading")).toBeInTheDocument()
 	})
+
+	it("buffers the destructive command guard setting", () => {
+		const { setCachedStateField } = renderSettings()
+
+		fireEvent.click(screen.getByTestId("destructive-command-guard-checkbox"))
+
+		expect(setCachedStateField).toHaveBeenCalledWith("destructiveCommandGuardEnabled", true)
+		expectNoImmediateUpdateSettings()
+	})
+
+	it("disables the denied commands editor while destructive command guard is enabled", () => {
+		renderSettings({ destructiveCommandGuardEnabled: true, deniedCommands: ["rm -rf"] })
+
+		expect(screen.getByTestId("denied-command-input")).toBeDisabled()
+		expect(screen.getByTestId("add-denied-command-button")).toBeDisabled()
+		expect(screen.getByTestId("remove-denied-command-0")).toBeDisabled()
+	})
 })

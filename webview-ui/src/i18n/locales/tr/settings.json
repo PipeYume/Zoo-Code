@@ -332,6 +332,10 @@
 				"label": "Reddedilenler dışındaki tüm komutları otomatik onayla",
 				"description": "Reddedilen bir komut önekiyle eşleşmeyen tüm komutları otomatik olarak onaylar. Bu ayar etkinken izin verilen komutlar listesi yok sayılır. Hatalı biçimlendirilmiş komutlar ve tehlikeli değiştirmeler yine de inceleme gerektirir."
 			},
+			"destructiveCommandGuard": {
+				"label": "Yıkıcı komut korumasını etkinleştir",
+				"description": "Bu platform için Destructive Command Guard'ı (DCG) indirir ve kullanır. DCG tarafından engellenen komutlar onayını gerektirir. Bu seçenek etkinken Zoo'nun reddedilen komutlar listesi devre dışı bırakılır. Seçeneği kapatsan da indirilen çalıştırılabilir dosya korunur."
+			},
 			"allowedCommands": "İzin Verilen Otomatik Yürütme Komutları",
 			"allowedCommandsDescription": "\"Yürütme işlemlerini her zaman onayla\" etkinleştirildiğinde otomatik olarak yürütülebilen komut önekleri. Tüm komutlara izin vermek için * ekleyin (dikkatli kullanın).",
 			"deniedCommands": "Reddedilen komutlar",

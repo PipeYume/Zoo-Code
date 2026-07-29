@@ -332,6 +332,10 @@
 				"label": "Approva automaticamente tutti i comandi tranne quelli negati",
 				"description": "Approva automaticamente qualsiasi comando che non corrisponde al prefisso di un comando negato. L'elenco dei comandi consentiti viene ignorato mentre questa impostazione è attiva. I comandi non validi e le sostituzioni pericolose richiedono comunque una revisione."
 			},
+			"destructiveCommandGuard": {
+				"label": "Abilita la protezione dai comandi distruttivi",
+				"description": "Scarica e usa Destructive Command Guard (DCG) per questa piattaforma. I comandi bloccati da DCG richiederanno la tua approvazione. L'elenco dei comandi negati di Zoo viene disabilitato mentre questa opzione è attiva. L'eseguibile scaricato viene conservato se la disattivi."
+			},
 			"allowedCommands": "Comandi di auto-esecuzione consentiti",
 			"allowedCommandsDescription": "Prefissi di comando che possono essere auto-eseguiti quando \"Approva sempre operazioni di esecuzione\" è abilitato. Aggiungi * per consentire tutti i comandi (usare con cautela).",
 			"deniedCommands": "Comandi negati",

@@ -34,6 +34,7 @@ export type AutoApprovalStateOptions =
 	| "allowedCommands" // For `alwaysAllowExecute`.
 	| "deniedCommands"
 	| "alwaysAllowCommandsExceptDenied"
+	| "destructiveCommandGuardEnabled"
 
 export type CheckAutoApprovalResult =
 	| { decision: "approve" }
@@ -116,12 +117,17 @@ export async function checkAutoApproval({
 		if (!text) {
 			return { decision: "ask" }
 		}
+		if (isProtected) {
+			return { decision: "ask" }
+		}
 
+		// DCG only changes commands that its policy blocks. Commands that pass
+		// continue through Zoo's existing allowlist/permission flow.
 		if (state.alwaysAllowExecute === true) {
 			const decision = getCommandDecision(
 				text,
 				state.allowedCommands || [],
-				state.deniedCommands || [],
+				state.destructiveCommandGuardEnabled === true ? [] : state.deniedCommands || [],
 				state.alwaysAllowCommandsExceptDenied === true,
 			)
 

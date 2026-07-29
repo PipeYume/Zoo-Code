@@ -1020,6 +1020,15 @@ describe("ClineProvider", () => {
 		expect(state.alwaysAllowCommandsExceptDenied).toBe(true)
 	})
 
+	test("getStateToPostToWebview returns the saved destructive command guard setting", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+		await provider.contextProxy.setValue("destructiveCommandGuardEnabled", true)
+
+		const state = await provider.getStateToPostToWebview()
+
+		expect(state.destructiveCommandGuardEnabled).toBe(true)
+	})
+
 	test("language is set to VSCode language", async () => {
 		// Mock VSCode language as Spanish
 		;(vscode.env as any).language = "pt-BR"

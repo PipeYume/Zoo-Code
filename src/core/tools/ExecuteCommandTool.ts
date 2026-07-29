@@ -115,16 +115,42 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 				return
 			}
 
-			const didApprove = await askApproval("command", canonicalCommand)
+			const provider = await task.providerRef.deref()
+			const providerState = await provider?.getState()
+			let dcgBlocked = false
+			if (providerState?.destructiveCommandGuardEnabled === true) {
+				const { getDcgBinaryPath, runDcg } = await import("../../services/destructive-command-guard")
+				const binaryPath = provider ? getDcgBinaryPath(provider.context.globalStorageUri.fsPath) : undefined
+				if (!binaryPath) {
+					throw new Error("Destructive Command Guard is enabled but is not available for this platform")
+				}
+				const workingDirectory = customCwd
+					? path.isAbsolute(customCwd)
+						? customCwd
+						: path.resolve(task.cwd, customCwd)
+					: task.cwd
+				const dcgResult = await runDcg(binaryPath, canonicalCommand, workingDirectory)
+				dcgBlocked = dcgResult.decision === "deny"
+				if (dcgResult.decision === "deny") {
+					await task.say(
+						"text",
+						`Destructive Command Guard blocked this command${dcgResult.reason ? `: ${dcgResult.reason}` : "."}${dcgResult.ruleId ? ` (Rule: ${dcgResult.ruleId})` : ""}`,
+					)
+				}
+			}
+
+			// A DCG block is intentionally presented as Zoo's normal command approval
+			// prompt. Passing isProtected bypasses command auto-approval so the user
+			// must explicitly choose whether to execute it.
+			const didApprove = dcgBlocked
+				? await askApproval("command", canonicalCommand, undefined, true)
+				: await askApproval("command", canonicalCommand)
 
 			if (!didApprove) {
 				return
 			}
 
 			const executionId = task.lastMessageTs?.toString() ?? Date.now().toString()
-			const provider = await task.providerRef.deref()
-			const providerState = await provider?.getState()
-
 			const { terminalShellIntegrationDisabled = true } = providerState ?? {}
 
 			// Get command execution timeout from VSCode configuration (in seconds)
