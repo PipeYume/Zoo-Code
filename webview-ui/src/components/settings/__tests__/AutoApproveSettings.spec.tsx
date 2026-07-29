@@ -67,6 +67,16 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expectNoImmediateUpdateSettings()
 	})
 
+	it("buffers an allowed command submitted with Enter", () => {
+		const { setCachedStateField } = renderSettings()
+
+		const input = screen.getByTestId("command-input")
+		fireEvent.change(input, { target: { value: "pnpm test" } })
+		fireEvent.keyDown(input, { key: "Enter" })
+
+		expect(setCachedStateField).toHaveBeenCalledWith("allowedCommands", ["pnpm test"])
+	})
+
 	// Case 2: allowedCommands remove
 	it("buffers a removed allowed command without persisting before Save", () => {
 		const { setCachedStateField } = renderSettings({ allowedCommands: ["npm test"] })
@@ -86,6 +96,16 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 
 		expect(setCachedStateField).toHaveBeenCalledWith("deniedCommands", ["rm -rf"])
 		expectNoImmediateUpdateSettings()
+	})
+
+	it("buffers a denied command submitted with Enter", () => {
+		const { setCachedStateField } = renderSettings()
+
+		const input = screen.getByTestId("denied-command-input")
+		fireEvent.change(input, { target: { value: "sudo rm" } })
+		fireEvent.keyDown(input, { key: "Enter" })
+
+		expect(setCachedStateField).toHaveBeenCalledWith("deniedCommands", ["sudo rm"])
 	})
 
 	// Case 3b: deniedCommands remove
