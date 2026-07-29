@@ -45,6 +45,14 @@ vitest.mock("../../../integrations/terminal/TerminalRegistry", () => ({
 vitest.mock("../../task/Task")
 vitest.mock("../../prompts/responses")
 
+const mockRunDcg = vitest.fn()
+const mockGetDcgBinaryPath = vitest.fn()
+
+vitest.mock("../../../services/destructive-command-guard", () => ({
+	runDcg: mockRunDcg,
+	getDcgBinaryPath: mockGetDcgBinaryPath,
+}))
+
 // Import the module
 import * as executeCommandModule from "../ExecuteCommandTool"
 const { executeCommandTool } = executeCommandModule
@@ -96,6 +104,8 @@ describe("executeCommandTool", () => {
 		mockAskApproval = vitest.fn().mockResolvedValue(true)
 		mockHandleError = vitest.fn().mockResolvedValue(undefined)
 		mockPushToolResult = vitest.fn()
+		mockRunDcg.mockResolvedValue({ decision: "allow" })
+		mockGetDcgBinaryPath.mockReturnValue("/test/storage/dcg")
 
 		// Setup vscode config mock
 		const mockConfig = {
@@ -199,6 +209,46 @@ describe("executeCommandTool", () => {
 	})
 
 	describe("Error handling", () => {
+		it.each([
+			[undefined, undefined, "executeCommand.destructiveCommandGuard.blocked"],
+			["matches a destructive pattern", undefined, "executeCommand.destructiveCommandGuard.blockedWithReason"],
+			[undefined, "recursive-delete", "executeCommand.destructiveCommandGuard.blockedWithRule"],
+			[
+				"matches a destructive pattern",
+				"recursive-delete",
+				"executeCommand.destructiveCommandGuard.blockedWithReasonAndRule",
+			],
+		])("selects the localized DCG block message for reason %s and rule %s", (reason, ruleId, expected) => {
+			expect(executeCommandModule.formatDcgBlockedMessage(reason, ruleId)).toBe(expected)
+		})
+
+		it("shows a DCG block message as an error before requesting explicit approval", async () => {
+			const provider = await mockCline.providerRef.deref()
+			provider.context = { globalStorageUri: { fsPath: "/test/storage" } }
+			provider.getState.mockResolvedValue({
+				destructiveCommandGuardEnabled: true,
+				terminalShellIntegrationDisabled: true,
+			})
+			mockRunDcg.mockResolvedValue({
+				decision: "deny",
+				reason: "matches a destructive pattern",
+				ruleId: "recursive-delete",
+			})
+			mockAskApproval.mockResolvedValue(false)
+
+			await executeCommandTool.handle(mockCline as unknown as Task, mockToolUse, {
+				askApproval: mockAskApproval as unknown as AskApproval,
+				handleError: mockHandleError as unknown as HandleError,
+				pushToolResult: mockPushToolResult as unknown as PushToolResult,
+			})
+
+			expect(mockCline.say).toHaveBeenCalledWith(
+				"error",
+				"executeCommand.destructiveCommandGuard.blockedWithReasonAndRule",
+			)
+			expect(mockAskApproval).toHaveBeenCalledWith("command", "echo test", undefined, true)
+		})
+
 		it("should handle missing command parameter", async () => {
 			// Setup
 			mockToolUse.params.command = undefined

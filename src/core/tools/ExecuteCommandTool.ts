@@ -60,6 +60,22 @@ interface ExecuteCommandParams {
 	timeout?: number | null
 }
 
+export function formatDcgBlockedMessage(reason?: string, ruleId?: string): string {
+	if (reason && ruleId) {
+		return t("tools:executeCommand.destructiveCommandGuard.blockedWithReasonAndRule", { reason, ruleId })
+	}
+
+	if (reason) {
+		return t("tools:executeCommand.destructiveCommandGuard.blockedWithReason", { reason })
+	}
+
+	if (ruleId) {
+		return t("tools:executeCommand.destructiveCommandGuard.blockedWithRule", { ruleId })
+	}
+
+	return t("tools:executeCommand.destructiveCommandGuard.blocked")
+}
+
 export function resolveAgentTimeoutMs(timeoutSeconds: number | null | undefined): number {
 	const requestedAgentTimeout = typeof timeoutSeconds === "number" && timeoutSeconds > 0 ? timeoutSeconds * 1000 : 0
 
@@ -132,10 +148,7 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 				const dcgResult = await runDcg(binaryPath, canonicalCommand, workingDirectory)
 				dcgBlocked = dcgResult.decision === "deny"
 				if (dcgResult.decision === "deny") {
-					await task.say(
-						"text",
-						`Destructive Command Guard blocked this command${dcgResult.reason ? `: ${dcgResult.reason}` : "."}${dcgResult.ruleId ? ` (Rule: ${dcgResult.ruleId})` : ""}`,
-					)
+					await task.say("error", formatDcgBlockedMessage(dcgResult.reason, dcgResult.ruleId))
 				}
 			}
 

@@ -688,7 +688,9 @@ export const webviewMessageHandler = async (
 					} catch (error) {
 						message.updatedSettings.destructiveCommandGuardEnabled = false
 						vscode.window.showErrorMessage(
-							`Unable to enable Destructive Command Guard: ${error instanceof Error ? error.message : String(error)}`,
+							t("common:errors.destructive_command_guard_enable_failed", {
+								error: error instanceof Error ? error.message : String(error),
+							}),
 						)
 					}
 				}
