@@ -161,6 +161,13 @@ function scheduleTask(scheduler: TaskScheduler, task: Task, source: string): voi
 		.catch((error) => console.error(`[${source}] taskScheduler.schedule failed:`, error))
 }
 
+/** Run `task` using a permit already reserved via `TaskScheduler.tryReserve()`. */
+function runReservedTask(scheduler: TaskScheduler, release: () => void, task: Task, source: string): void {
+	void scheduler
+		.runWithReservation(release, task, () => task.run())
+		.catch((error) => console.error(`[${source}] taskScheduler.runWithReservation failed:`, error))
+}
+
 export class ClineProvider
 	extends EventEmitter<TaskProviderEvents>
 	implements vscode.WebviewViewProvider, TelemetryPropertiesProvider, TaskProviderLike
@@ -562,13 +569,17 @@ export class ClineProvider
 
 	// Removes and destroys the top Cline instance (the current finished task),
 	// activating the previous one (resuming the parent task).
-	async removeClineFromStack() {
+	//
+	// Pass `taskId` to evict a specific task regardless of focus (e.g. rollback
+	// cleanup of a just-created child after focus has already moved elsewhere).
+	// Defaults to the current task, preserving prior behavior.
+	async removeClineFromStack(taskId?: string) {
 		if (this.taskRegistry.length === 0) {
 			return
 		}
 
-		// Remove the focused Cline instance from the stack.
-		let task = this.taskRegistry.current
+		const targetId = taskId ?? this.taskRegistry.current?.taskId
+		let task = targetId ? this.taskRegistry.getById(targetId) : undefined
 		if (task) {
 			task = this.taskRegistry.remove(task.taskId)
 		}
@@ -694,6 +705,17 @@ export class ClineProvider
 
 	public getCurrentTaskStack(): string[] {
 		return this.taskRegistry.taskIds
+	}
+
+	public setTaskSchedulerMaxConcurrency(maxConcurrency: number): void {
+		if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
+			throw new Error(`maxConcurrency must be a positive integer, got ${maxConcurrency}`)
+		}
+		if (this.taskRegistry.length > 0) {
+			throw new Error("Cannot change task scheduler concurrency while tasks are active")
+		}
+		this.taskScheduler.cancelQueued()
+		this.taskScheduler = new TaskScheduler(maxConcurrency)
 	}
 
 	// Pending Edit Operations Management
@@ -3168,6 +3190,11 @@ export class ClineProvider
 		return this.taskRegistry.current
 	}
 
+	/** All tasks concurrently active in the registry (parent(s) plus any fanned-out children). */
+	public getRunningTasks(): Task[] {
+		return this.taskRegistry.getRunning()
+	}
+
 	private logWebviewHiddenDiagnostics(): void {
 		const task = this.getCurrentTask()
 		if (!task || task.abort || task.abandoned) {
@@ -3636,10 +3663,11 @@ export class ClineProvider
 	/**
 	 * Delegate parent task and open child task.
 	 *
-	 * - Enforce single-open invariant
+	 * - Enforce single-open invariant, unless fan-out (maxConcurrency > 1 with a
+	 *   free permit) keeps the parent running alongside the child
 	 * - Persist parent delegation metadata
 	 * - Emit TaskDelegated (task-level; API forwards to provider/bridge)
-	 * - Create child as sole active and switch mode to child's mode
+	 * - Create and focus child, preserving parent reference for lineage, and switch mode to child's mode
 	 */
 	public async delegateParentAndOpenChild(params: {
 		parentTaskId: string
@@ -3695,11 +3723,28 @@ export class ClineProvider
 			)
 		}
 
-		// 3) Enforce single-open invariant by closing/disposing the parent first
-		//    This ensures we never have >1 tasks open at any time during delegation.
+		// 3) Enforce single-open invariant by closing/disposing the parent first —
+		//    unless fan-out is enabled (maxConcurrency > 1) AND a permit can be
+		//    reserved for the child right now, in which case the parent stays
+		//    active on the registry and runs concurrently with the child. This
+		//    path is only reachable via explicit TaskScheduler configuration; at
+		//    the default maxConcurrency=1 it can never be taken.
+		//
+		//    The permit is reserved here — not just checked via `available > 0` —
+		//    because several awaits follow before the child actually starts
+		//    running (mode switch, task creation, history persistence). Checking
+		//    availability without reserving would leave a window where another
+		//    delegation could consume the last permit, leaving the parent live
+		//    but the child queued rather than concurrent. childReservedRelease is
+		//    handed to the scheduler in step 6 instead of it acquiring its own.
 		//    Await abort completion to ensure clean disposal and prevent unhandled rejections.
+		const childReservedRelease =
+			this.taskScheduler.maxConcurrency > 1 ? await this.taskScheduler.tryReserve() : undefined
+		const fanOut = childReservedRelease !== undefined
 		try {
-			await this.removeClineFromStack()
+			if (!fanOut) {
+				await this.removeClineFromStack()
+			}
 		} catch (error) {
 			this.log(
 				`[delegateParentAndOpenChild] Error during parent disposal (non-fatal): ${
@@ -3713,8 +3758,17 @@ export class ClineProvider
 		//    This ensures the child's system prompt and configuration are based on the correct mode.
 		//    The mode switch must happen before createTask() because the Task constructor
 		//    initializes its mode from provider.getState() during initializeTaskMode().
+		//    In fan-out, the parent is still `getCurrentTask()` at this point (it hasn't been
+		//    removed and the child doesn't exist yet) — pass `null` so handleModeSwitch applies
+		//    the global mode/API-config side effects for the child's benefit without stomping
+		//    the still-running parent's own `_taskMode`.
+		const requestedMode = mode as Mode
 		try {
-			await this.handleModeSwitch(mode as any)
+			if (fanOut) {
+				await this.handleModeSwitch(requestedMode, null)
+			} else {
+				await this.handleModeSwitch(requestedMode)
+			}
 		} catch (e) {
 			this.log(
 				`[delegateParentAndOpenChild] handleModeSwitch failed for mode '${mode}': ${
@@ -3723,7 +3777,9 @@ export class ClineProvider
 			)
 		}
 
-		// 4) Create child as sole active (parent reference preserved for lineage)
+		// 4) Create and focus child, preserving parent reference for lineage.
+		// In the non-fan-out path the parent was already removed above, so the
+		// child is the sole active task; in fan-out both remain active.
 		// Pass initialStatus: "active" to ensure the child task's historyItem is created
 		// with status from the start, avoiding race conditions where the task might
 		// call attempt_completion before status is persisted separately.
@@ -3739,6 +3795,11 @@ export class ClineProvider
 			initialStatus: "active",
 			startTask: false,
 		})
+
+		// createTask() -> addClineToStack() -> taskRegistry.push() already focuses
+		// the child. In the fan-out case the parent remains in the registry
+		// alongside it instead of being evicted, so both are now tracked with the
+		// child focused.
 
 		// 5) Persist parent delegation metadata BEFORE the child starts writing.
 		//    atomicReadAndUpdate reads from the in-memory cache and writes back within a
@@ -3802,10 +3863,11 @@ export class ClineProvider
 				}`,
 			)
 			try {
-				// Only pop the stack if the child we just created is still on top.
-				// A concurrent delegation could have pushed another child since we created ours.
-				if (this.getCurrentTask()?.taskId === child.taskId) {
-					await this.removeClineFromStack()
+				// Evict the child by id regardless of current focus — in fan-out (or if a
+				// concurrent delegation shifted focus), the child we just created may no
+				// longer be `current`, but it must still be removed from the registry.
+				if (this.taskRegistry.getById(child.taskId)) {
+					await this.removeClineFromStack(child.taskId)
 				}
 			} catch (cleanupError) {
 				this.log(
@@ -3823,21 +3885,37 @@ export class ClineProvider
 					}`,
 				)
 			}
-			try {
-				const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
-				await this.createTaskWithHistoryItem(parentHistory)
-			} catch (rollbackError) {
-				this.log(
-					`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback: ${
-						(rollbackError as Error)?.message ?? String(rollbackError)
-					}`,
-				)
+			// In the fan-out case the parent was never removed from the registry
+			// (it kept running throughout), so it must not be re-created here —
+			// doing so would push a duplicate parent Task instance. If the child was
+			// still focused, removeClineFromStack() above already re-focused the
+			// registry onto the parent (TaskRegistry.remove only reassigns focus
+			// when the removed task was current).
+			if (!fanOut) {
+				try {
+					const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
+					await this.createTaskWithHistoryItem(parentHistory)
+				} catch (rollbackError) {
+					this.log(
+						`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback: ${
+							(rollbackError as Error)?.message ?? String(rollbackError)
+						}`,
+					)
+				}
+			} else {
+				// The child never reached step 6, so the reserved permit must be
+				// released here or it leaks for the lifetime of the scheduler.
+				childReservedRelease?.()
 			}
 			throw err
 		}
 
 		// 6) Start the child task now that parent metadata is safely persisted.
-		scheduleTask(this.taskScheduler, child, "delegateParentAndOpenChild")
+		if (childReservedRelease) {
+			runReservedTask(this.taskScheduler, childReservedRelease, child, "delegateParentAndOpenChild")
+		} else {
+			scheduleTask(this.taskScheduler, child, "delegateParentAndOpenChild")
+		}
 
 		// 7) Emit TaskDelegated (provider-level)
 		try {

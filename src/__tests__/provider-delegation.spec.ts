@@ -369,6 +369,9 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			isViewLaunched: false,
 			recentTasksCache: undefined,
 			taskHistoryStore,
+			// Rollback looks up the just-created child by id to decide whether it
+			// still needs evicting, independent of current focus.
+			taskRegistry: { getById: vi.fn((id: string) => (id === "child-1" ? child : undefined)) },
 		} as unknown as ClineProvider
 
 		await expect(
@@ -381,8 +384,11 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 		).rejects.toThrow(persistError)
 
 		expect(childRun).not.toHaveBeenCalled()
+		// 1st call (step 3): closes the parent to enforce the single-open invariant.
 		expect(removeClineFromStack).toHaveBeenNthCalledWith(1)
-		expect(removeClineFromStack).toHaveBeenNthCalledWith(2)
+		// 2nd call (rollback): evicts the just-created child by id, regardless of
+		// current focus — see Story 3.2b fan-out rollback fix.
+		expect(removeClineFromStack).toHaveBeenNthCalledWith(2, "child-1")
 		expect(deleteTaskWithId).toHaveBeenCalledWith("child-1", false)
 		expect(createTaskWithHistoryItem).toHaveBeenCalledWith(parentHistoryItem)
 	})

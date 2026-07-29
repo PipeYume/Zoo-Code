@@ -20,6 +20,8 @@ import {
 	SUBTASK_API_HANG_RESUME_MESSAGE,
 	SUBTASK_CHILD_FOLLOWUP_ANSWER,
 	SUBTASK_FAST_CHILD_RESULT,
+	SUBTASK_FANOUT_PARENT_FOLLOWUP,
+	SUBTASK_FANOUT_PARENT_PROMPT,
 	SUBTASK_FAST_PARENT_PROMPT,
 	SUBTASK_INTERRUPT_CHILD_FOLLOWUP_ANSWER,
 	SUBTASK_INTERRUPT_PARENT_PROMPT,
@@ -171,6 +173,64 @@ suite("Roo Code Subtasks", function () {
 				await api.clearCurrentTask()
 			}
 			await sleep(1_500)
+		}
+	})
+
+	test("fan-out keeps parent executing while child request is in flight", async () => {
+		const api = globalThis.api
+		const asks: Record<string, ClineMessage[]> = {}
+
+		const messageHandler = ({ taskId, message }: { taskId: string; message: ClineMessage }) => {
+			if (message.type === "ask") {
+				asks[taskId] = asks[taskId] || []
+				asks[taskId].push(message)
+			}
+		}
+
+		api.on(RooCodeEventName.Message, messageHandler)
+
+		try {
+			api.setTaskSchedulerMaxConcurrency(2)
+
+			const parentTaskId = await api.startNewTask({
+				configuration: {
+					mode: "ask",
+					alwaysAllowModeSwitch: true,
+					alwaysAllowSubtasks: true,
+					autoApprovalEnabled: true,
+					enableCheckpoints: false,
+				},
+				text: SUBTASK_FANOUT_PARENT_PROMPT,
+			})
+
+			let childTaskId: string | undefined
+			await waitFor(() => {
+				const stack = api.getCurrentTaskStack()
+				const current = stack.at(-1)
+				if (current && current !== parentTaskId) {
+					childTaskId = current
+					return stack.includes(parentTaskId)
+				}
+				return false
+			})
+
+			await waitFor(() =>
+				(asks[parentTaskId] ?? []).some(
+					({ ask, text }) => ask === "followup" && text?.includes(SUBTASK_FANOUT_PARENT_FOLLOWUP),
+				),
+			)
+
+			const stack = api.getCurrentTaskStack()
+			assert.ok(stack.includes(parentTaskId), "Fan-out parent should remain in the live task stack")
+			assert.ok(stack.includes(childTaskId!), "Fan-out child should remain in the live task stack")
+			assert.strictEqual(stack.at(-1), childTaskId, "Child should remain the focused task while parent runs")
+		} finally {
+			api.off(RooCodeEventName.Message, messageHandler)
+			while (api.getCurrentTaskStack().length > 0) {
+				await api.clearCurrentTask()
+			}
+			api.setTaskSchedulerMaxConcurrency(1)
+			await waitFor(() => api.getCurrentTaskStack().length === 0).catch(() => {})
 		}
 	})
 
