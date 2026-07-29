@@ -135,11 +135,13 @@ export class ExecuteCommandTool extends BaseTool<"execute_command"> {
 			const providerState = await provider?.getState()
 			let dcgBlocked = false
 			if (providerState?.destructiveCommandGuardEnabled === true) {
-				const { getDcgBinaryPath, runDcg } = await import("../../services/destructive-command-guard")
-				const binaryPath = provider ? getDcgBinaryPath(provider.context.globalStorageUri.fsPath) : undefined
-				if (!binaryPath) {
-					throw new Error("Destructive Command Guard is enabled but is not available for this platform")
+				const { ensureDcgInstalled, runDcg } = await import("../../services/destructive-command-guard")
+				if (!provider) {
+					throw new Error(t("common:errors.destructiveCommandGuard.unavailable"))
 				}
+				// Resolve through the managed installer on use so an extension update
+				// automatically installs the newly pinned and verified DCG version.
+				const binaryPath = await ensureDcgInstalled(provider.context.globalStorageUri.fsPath)
 				const workingDirectory = customCwd
 					? path.isAbsolute(customCwd)
 						? customCwd

@@ -37,6 +37,12 @@ describe("Destructive Command Guard auto-approval precedence", () => {
 		})
 	})
 
+	it("does not auto-approve via DCG when execute auto-approval is off", async () => {
+		const state = { ...baseState, alwaysAllowExecute: false }
+
+		expect(await checkAutoApproval({ state, ask: "command", text: "echo safe" })).toEqual({ decision: "ask" })
+	})
+
 	it("keeps ordinary allowlist auto-approval when DCG is disabled", async () => {
 		const state = { ...baseState, destructiveCommandGuardEnabled: false }
 

@@ -16,6 +16,7 @@ import {
 } from "./constants"
 
 const installationPromises = new Map<string, Promise<string>>()
+const VERSION_DIRECTORY_PATTERN = /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 
 export function getDcgArchiveInfo(platform = process.platform, arch = process.arch): DcgArchiveInfo | undefined {
 	return DCG_ARCHIVES[`${platform}-${arch}`]
@@ -34,7 +35,7 @@ export function getDcgBinaryPath(
 	return info ? path.join(storageDir, "destructive-command-guard", DCG_VERSION, info.binary) : undefined
 }
 
-function isTrustedDownloadUrl(url: string): boolean {
+export function isTrustedDownloadUrl(url: string): boolean {
 	try {
 		const parsed = new URL(url)
 		return (
@@ -48,7 +49,26 @@ function isTrustedDownloadUrl(url: string): boolean {
 	}
 }
 
-function downloadFile(url: string, destination: string, redirectsRemaining = 5): Promise<void> {
+export function resolveTrustedRedirect(url: string, location: string | undefined, redirectsRemaining: number): string {
+	if (redirectsRemaining <= 0 || !location) {
+		throw new Error("Too many DCG download redirects")
+	}
+
+	const nextUrl = new URL(location, url).toString()
+	if (!isTrustedDownloadUrl(nextUrl)) {
+		throw new Error("DCG download redirected to an untrusted host")
+	}
+
+	return nextUrl
+}
+
+export function assertArchiveSizeWithinLimit(size: number): void {
+	if (size > DCG_MAX_ARCHIVE_BYTES) {
+		throw new Error("DCG archive exceeds the download size limit")
+	}
+}
+
+export function downloadFile(url: string, destination: string, redirectsRemaining = 5): Promise<void> {
 	return new Promise((resolve, reject) => {
 		if (!isTrustedDownloadUrl(url)) {
 			reject(new Error("DCG download redirected to an untrusted host"))
@@ -59,11 +79,13 @@ function downloadFile(url: string, destination: string, redirectsRemaining = 5):
 			const status = response.statusCode ?? 0
 			if ([301, 302, 303, 307, 308].includes(status)) {
 				response.resume()
-				if (redirectsRemaining <= 0 || !response.headers.location) {
-					reject(new Error("Too many DCG download redirects"))
+				let nextUrl: string
+				try {
+					nextUrl = resolveTrustedRedirect(url, response.headers.location, redirectsRemaining)
+				} catch (error) {
+					reject(error)
 					return
 				}
-				const nextUrl = new URL(response.headers.location, url).toString()
 				downloadFile(nextUrl, destination, redirectsRemaining - 1).then(resolve, reject)
 				return
 			}
@@ -75,9 +97,11 @@ function downloadFile(url: string, destination: string, redirectsRemaining = 5):
 			}
 
 			const declaredSize = Number(response.headers["content-length"] ?? 0)
-			if (declaredSize > DCG_MAX_ARCHIVE_BYTES) {
+			try {
+				assertArchiveSizeWithinLimit(declaredSize)
+			} catch (error) {
 				response.resume()
-				reject(new Error("DCG archive exceeds the download size limit"))
+				reject(error)
 				return
 			}
 
@@ -85,8 +109,10 @@ function downloadFile(url: string, destination: string, redirectsRemaining = 5):
 			const output = createWriteStream(destination, { flags: "wx", mode: 0o600 })
 			response.on("data", (chunk: Buffer) => {
 				received += chunk.length
-				if (received > DCG_MAX_ARCHIVE_BYTES) {
-					request.destroy(new Error("DCG archive exceeds the download size limit"))
+				try {
+					assertArchiveSizeWithinLimit(received)
+				} catch (error) {
+					request.destroy(error as Error)
 				}
 			})
 			response.pipe(output)
@@ -99,7 +125,7 @@ function downloadFile(url: string, destination: string, redirectsRemaining = 5):
 	})
 }
 
-async function verifyChecksum(filePath: string, expected: string): Promise<void> {
+export async function verifyChecksum(filePath: string, expected: string): Promise<void> {
 	const hash = createHash("sha256")
 	await new Promise<void>((resolve, reject) => {
 		const input = createReadStream(filePath)
@@ -142,9 +168,36 @@ function runProcess(
 	})
 }
 
-async function extractSingleBinary(archivePath: string, stagingDir: string, info: DcgArchiveInfo): Promise<void> {
-	const listingArgs = info.archive.endsWith(".zip") ? ["-tf", archivePath] : ["-tJf", archivePath]
-	const listing = await runProcess("tar", listingArgs)
+function escapePowerShellLiteral(value: string): string {
+	return value.replace(/'/g, "''")
+}
+
+async function extractZipSingleBinary(archivePath: string, stagingDir: string, info: DcgArchiveInfo): Promise<void> {
+	const script = [
+		"$ErrorActionPreference = 'Stop'",
+		"Add-Type -AssemblyName System.IO.Compression.FileSystem",
+		`$archive = [System.IO.Compression.ZipFile]::OpenRead('${escapePowerShellLiteral(archivePath)}')`,
+		"try {",
+		"  $entries = @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) })",
+		`  if ($entries.Count -ne 1 -or $entries[0].FullName -ne '${escapePowerShellLiteral(info.binary)}') { throw 'DCG archive has an unexpected layout' }`,
+		`  [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], '${escapePowerShellLiteral(path.join(stagingDir, info.binary))}', $false)`,
+		"} finally { $archive.Dispose() }",
+	].join("; ")
+
+	await runProcess("powershell", ["-NoProfile", "-NonInteractive", "-Command", script])
+}
+
+export async function extractSingleBinary(
+	archivePath: string,
+	stagingDir: string,
+	info: DcgArchiveInfo,
+): Promise<void> {
+	if (info.archive.endsWith(".zip")) {
+		await extractZipSingleBinary(archivePath, stagingDir, info)
+		return
+	}
+
+	const listing = await runProcess("tar", ["-tJf", archivePath])
 	const entries = listing.stdout
 		.split(/\r?\n/)
 		.map((entry) => entry.trim().replace(/^\.\//, ""))
@@ -153,10 +206,46 @@ async function extractSingleBinary(archivePath: string, stagingDir: string, info
 		throw new Error("DCG archive has an unexpected layout")
 	}
 
-	const extractArgs = info.archive.endsWith(".zip")
-		? ["-xf", archivePath, "-C", stagingDir, info.binary]
-		: ["-xJf", archivePath, "-C", stagingDir, info.binary]
-	await runProcess("tar", extractArgs)
+	await runProcess("tar", ["-xJf", archivePath, "-C", stagingDir, info.binary])
+}
+
+export async function promoteStagedInstallation(
+	stagingDir: string,
+	finalDir: string,
+	binaryPath: string,
+): Promise<void> {
+	try {
+		await fs.access(binaryPath)
+		return
+	} catch {
+		// No other process completed this installation while this one was staged.
+	}
+
+	await fs.rm(finalDir, { recursive: true, force: true })
+	await fs.rename(stagingDir, finalDir)
+}
+
+/**
+ * Best-effort removal of prior version directories after the current version
+ * has been verified and promoted. Unrelated files and staging directories are
+ * deliberately preserved so cleanup cannot interfere with another installer.
+ */
+export async function cleanupStaleInstallations(installRoot: string): Promise<void> {
+	try {
+		const entries = await fs.readdir(installRoot, { withFileTypes: true })
+		await Promise.all(
+			entries
+				.filter(
+					(entry) =>
+						entry.isDirectory() && entry.name !== DCG_VERSION && VERSION_DIRECTORY_PATTERN.test(entry.name),
+				)
+				.map((entry) =>
+					fs.rm(path.join(installRoot, entry.name), { recursive: true, force: true }).catch(() => {}),
+				),
+		)
+	} catch {
+		// Cleanup is cosmetic and must never invalidate a successful installation.
+	}
 }
 
 async function installDcg(storageDir: string): Promise<string> {
@@ -170,6 +259,9 @@ async function installDcg(storageDir: string): Promise<string> {
 	const binaryPath = path.join(finalDir, info.binary)
 	try {
 		await fs.access(binaryPath)
+		if (process.platform !== "win32") {
+			await fs.chmod(binaryPath, 0o755)
+		}
 		return binaryPath
 	} catch {
 		// First install, or the managed executable was removed.
@@ -192,8 +284,8 @@ async function installDcg(storageDir: string): Promise<string> {
 		if (!`${version.stdout}\n${version.stderr}`.includes(DCG_VERSION.replace(/^v/, ""))) {
 			throw new Error("Downloaded DCG executable reported an unexpected version")
 		}
-		await fs.rm(finalDir, { recursive: true, force: true })
-		await fs.rename(stagingDir, finalDir)
+		await promoteStagedInstallation(stagingDir, finalDir, binaryPath)
+		await cleanupStaleInstallations(installRoot)
 		return binaryPath
 	} finally {
 		await fs.rm(archivePath, { force: true }).catch(() => {})

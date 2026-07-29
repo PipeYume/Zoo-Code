@@ -293,8 +293,12 @@ export const ChatRowContent = ({
 			case "command":
 				if (message.autoApprovalDecision === "deny") {
 					return [
-						<OctagonX className="size-4 text-vscode-errorForeground" aria-label="Denied command icon" />,
-						<span className="font-bold text-vscode-errorForeground">
+						<OctagonX
+							key="denied-icon"
+							className="size-4 text-vscode-errorForeground"
+							aria-label="Denied command icon"
+						/>,
+						<span key="denied-title" className="font-bold text-vscode-errorForeground">
 							{t("chat:commandExecution.denied")}
 						</span>,
 					]

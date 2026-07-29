@@ -109,8 +109,8 @@ export const CommandExecution = ({ executionId, text, icon, title, isDenied = fa
 	}
 
 	const handleDenyPatternChange = (pattern: string) => {
-		const isDenied = deniedCommands.includes(pattern)
-		const newDenied = isDenied ? deniedCommands.filter((p) => p !== pattern) : [...deniedCommands, pattern]
+		const isPatternDenied = deniedCommands.includes(pattern)
+		const newDenied = isPatternDenied ? deniedCommands.filter((p) => p !== pattern) : [...deniedCommands, pattern]
 		const newAllowed = allowedCommands.filter((p) => p !== pattern)
 
 		setAllowedCommands(newAllowed)

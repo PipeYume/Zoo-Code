@@ -1,10 +1,10 @@
 export const DCG_VERSION = "v0.7.7"
 
-export type DcgArchiveInfo = {
+export type DcgArchiveInfo = Readonly<{
 	archive: string
 	binary: "dcg" | "dcg.exe"
 	sha256: string
-}
+}>
 
 export const DCG_ARCHIVES: Readonly<Record<string, DcgArchiveInfo>> = {
 	"darwin-arm64": {
@@ -37,7 +37,7 @@ export const DCG_ARCHIVES: Readonly<Record<string, DcgArchiveInfo>> = {
 		binary: "dcg.exe",
 		sha256: "435127410eabc53e772be4f5c668a875b45fbaf806654b577c2d975bd0e38964",
 	},
-}
+} as const
 
 export const DCG_DOWNLOAD_BASE_URL = `https://github.com/Dicklesworthstone/destructive_command_guard/releases/download/${DCG_VERSION}`
 

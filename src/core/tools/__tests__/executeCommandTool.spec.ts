@@ -46,11 +46,11 @@ vitest.mock("../../task/Task")
 vitest.mock("../../prompts/responses")
 
 const mockRunDcg = vitest.fn()
-const mockGetDcgBinaryPath = vitest.fn()
+const mockEnsureDcgInstalled = vitest.fn()
 
 vitest.mock("../../../services/destructive-command-guard", () => ({
 	runDcg: mockRunDcg,
-	getDcgBinaryPath: mockGetDcgBinaryPath,
+	ensureDcgInstalled: mockEnsureDcgInstalled,
 }))
 
 // Import the module
@@ -105,7 +105,7 @@ describe("executeCommandTool", () => {
 		mockHandleError = vitest.fn().mockResolvedValue(undefined)
 		mockPushToolResult = vitest.fn()
 		mockRunDcg.mockResolvedValue({ decision: "allow" })
-		mockGetDcgBinaryPath.mockReturnValue("/test/storage/dcg")
+		mockEnsureDcgInstalled.mockResolvedValue("/test/storage/dcg")
 
 		// Setup vscode config mock
 		const mockConfig = {
@@ -247,6 +247,65 @@ describe("executeCommandTool", () => {
 				"executeCommand.destructiveCommandGuard.blockedWithReasonAndRule",
 			)
 			expect(mockAskApproval).toHaveBeenCalledWith("command", "echo test", undefined, true)
+		})
+
+		it("requests normal approval when DCG allows the command", async () => {
+			const provider = await mockCline.providerRef.deref()
+			provider.context = { globalStorageUri: { fsPath: "/test/storage" } }
+			provider.getState.mockResolvedValue({
+				destructiveCommandGuardEnabled: true,
+				terminalShellIntegrationDisabled: true,
+			})
+			mockRunDcg.mockResolvedValue({ decision: "allow" })
+
+			await executeCommandTool.handle(mockCline as unknown as Task, mockToolUse, {
+				askApproval: mockAskApproval as unknown as AskApproval,
+				handleError: mockHandleError as unknown as HandleError,
+				pushToolResult: mockPushToolResult as unknown as PushToolResult,
+			})
+
+			expect(mockAskApproval).toHaveBeenCalledWith("command", "echo test")
+		})
+
+		it("installs or updates DCG before evaluating an enabled command", async () => {
+			const provider = await mockCline.providerRef.deref()
+			provider.context = { globalStorageUri: { fsPath: "/test/storage" } }
+			provider.getState.mockResolvedValue({
+				destructiveCommandGuardEnabled: true,
+				terminalShellIntegrationDisabled: true,
+			})
+			await executeCommandTool.handle(mockCline as unknown as Task, mockToolUse, {
+				askApproval: mockAskApproval as unknown as AskApproval,
+				handleError: mockHandleError as unknown as HandleError,
+				pushToolResult: mockPushToolResult as unknown as PushToolResult,
+			})
+
+			expect(mockEnsureDcgInstalled).toHaveBeenCalledWith("/test/storage")
+			expect(mockRunDcg).toHaveBeenCalledWith("/test/storage/dcg", "echo test", "/test/workspace")
+		})
+
+		it("fails closed when the DCG install or update fails", async () => {
+			const provider = await mockCline.providerRef.deref()
+			provider.context = { globalStorageUri: { fsPath: "/test/storage" } }
+			provider.getState.mockResolvedValue({
+				destructiveCommandGuardEnabled: true,
+				terminalShellIntegrationDisabled: true,
+			})
+			mockEnsureDcgInstalled.mockRejectedValue(new Error("download failed"))
+
+			await executeCommandTool.handle(mockCline as unknown as Task, mockToolUse, {
+				askApproval: mockAskApproval as unknown as AskApproval,
+				handleError: mockHandleError as unknown as HandleError,
+				pushToolResult: mockPushToolResult as unknown as PushToolResult,
+			})
+
+			expect(mockHandleError).toHaveBeenCalledWith(
+				"executing command",
+				expect.objectContaining({ message: "download failed" }),
+			)
+			expect(mockRunDcg).not.toHaveBeenCalled()
+			expect(mockAskApproval).not.toHaveBeenCalled()
+			expect(executeCommandModule.executeCommandInTerminal).not.toHaveBeenCalled()
 		})
 
 		it("should handle missing command parameter", async () => {
