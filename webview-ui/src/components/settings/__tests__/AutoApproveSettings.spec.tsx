@@ -113,6 +113,21 @@ describe("AutoApproveSettings - Save/Discard contract", () => {
 		expect(screen.getByTestId("destructive-command-guard-checkbox")).not.toBeChecked()
 	})
 
+	it("renders destructive command guard enabled from cached settings", () => {
+		renderSettings({ destructiveCommandGuardEnabled: true })
+
+		expect(screen.getByTestId("destructive-command-guard-checkbox")).toBeChecked()
+	})
+
+	it("buffers disabling destructive command guard", () => {
+		const { setCachedStateField } = renderSettings({ destructiveCommandGuardEnabled: true })
+
+		fireEvent.click(screen.getByTestId("destructive-command-guard-checkbox"))
+
+		expect(setCachedStateField).toHaveBeenCalledWith("destructiveCommandGuardEnabled", false)
+		expectNoImmediateUpdateSettings()
+	})
+
 	it("hides Zoo command list editors while destructive command guard is enabled", () => {
 		renderSettings({ destructiveCommandGuardEnabled: true, deniedCommands: ["rm -rf"] })
 
