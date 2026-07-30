@@ -261,6 +261,19 @@ suite("Roo Code Subtasks", function () {
 			assert.ok(stack.includes(parentTaskId), "Fan-out parent should remain in the live task stack")
 			assert.ok(stack.includes(childTaskId!), "Fan-out child should remain in the live task stack")
 			assert.strictEqual(stack.at(-1), childTaskId, "Child should remain the focused task while parent runs")
+
+			const parentHistory = await api.getTaskHistoryItem(parentTaskId)
+			assert.strictEqual(parentHistory?.status, "delegated", "Fan-out parent history should stay delegated")
+			assert.strictEqual(
+				parentHistory?.awaitingChildId,
+				childTaskId,
+				"Fan-out parent history should point at the running child",
+			)
+			assert.strictEqual(
+				parentHistory?.delegatedToId,
+				childTaskId,
+				"Fan-out parent history should record the delegated child",
+			)
 		} finally {
 			api.off(RooCodeEventName.Message, messageHandler)
 			while (api.getCurrentTaskStack().length > 0) {
