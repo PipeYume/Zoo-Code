@@ -147,7 +147,7 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		void scheduler.schedule(makeParent({ taskId: "occupant-2" }), () => new Promise<void>(() => {}))
 		// Poll the deterministic signal instead of assuming a fixed microtask
 		// depth for sem.acquire() to settle.
-		while (scheduler.available > 0) {
+		for (let i = 0; i < 10 && scheduler.available > 0; i++) {
 			await Promise.resolve()
 		}
 
@@ -263,12 +263,16 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 			createTaskWithHistoryItem,
 		})
 
-		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
+		try {
+			await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
 
-		expect(createTaskWithHistoryItem).toHaveBeenCalledTimes(2)
-		expect(showErrorMessage).toHaveBeenCalledWith(
-			"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
-		)
+			expect(createTaskWithHistoryItem).toHaveBeenCalledTimes(2)
+			expect(showErrorMessage).toHaveBeenCalledWith(
+				"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
+			)
+		} finally {
+			showErrorMessage.mockRestore()
+		}
 	})
 
 	it("fan-out path: both parent and child are tracked in the registry with no shared clineMessages reference", async () => {
@@ -313,7 +317,7 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		// Occupy one permit with the "parent's own request loop" so only one
 		// permit remains — exactly the scenario fan-out is meant to handle.
 		void scheduler.schedule(parent, parentRun)
-		while (scheduler.available > 1) {
+		for (let i = 0; i < 10 && scheduler.available > 1; i++) {
 			await Promise.resolve()
 		}
 

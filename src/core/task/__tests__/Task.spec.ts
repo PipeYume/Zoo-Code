@@ -727,6 +727,57 @@ describe("Cline", () => {
 				expect(Object.keys(cleanConversationHistory[0]!)).toEqual(["role", "content"])
 			})
 
+			it("uses task-local mode and apiConfiguration in request metadata when provider state diverges", async () => {
+				const taskApiConfiguration = {
+					...mockApiConfig,
+					apiProvider: providerIdentifiers.gemini,
+				} as ProviderSettings
+
+				vi.spyOn(mockProvider, "getState").mockResolvedValue({
+					mode: "ask",
+					apiConfiguration: taskApiConfiguration,
+					autoApprovalEnabled: true,
+					requestDelaySeconds: 0,
+				})
+
+				const cline = new Task({
+					provider: mockProvider,
+					apiConfiguration: taskApiConfiguration,
+					task: "test task",
+					startTask: false,
+				})
+				await cline.getTaskMode()
+				vi.spyOn(getTaskTestAccess(cline), "getSystemPrompt").mockResolvedValue("mock system prompt")
+				vi.spyOn(cline.api, "getModel").mockReturnValue({
+					id: requireDefined(mockApiConfig.apiModelId),
+					info: { contextWindow: 200000, maxTokens: 4096 } as ModelInfo,
+				})
+
+				vi.spyOn(mockProvider, "getState").mockResolvedValue({
+					mode: "code",
+					apiConfiguration: {
+						...mockApiConfig,
+						apiProvider: providerIdentifiers.anthropic,
+					},
+					autoApprovalEnabled: true,
+					requestDelaySeconds: 0,
+				})
+
+				const mockStream = (async function* () {
+					yield { type: "text", text: "response" } as ApiStreamChunk
+				})()
+				const createMessageSpy = vi.spyOn(cline.api, "createMessage").mockReturnValue(mockStream)
+				cline.apiConversationHistory = [
+					{ role: "user", content: [{ type: "text", text: "test message" }], ts: Date.now() },
+				]
+
+				await cline.attemptApiRequest(0).next()
+
+				const [, , metadata] = requireDefined(createMessageSpy.mock.calls[0])
+				expect(metadata?.mode).toBe("ask")
+				expect(metadata?.allowedFunctionNames).toBeDefined()
+			})
+
 			it("should shape image blocks for API compatibility before request construction", async () => {
 				const conversationHistory = [
 					{

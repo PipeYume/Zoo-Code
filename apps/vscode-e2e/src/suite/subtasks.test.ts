@@ -299,11 +299,13 @@ suite("Roo Code Subtasks", function () {
 		const priorModeApiConfigs = api.getConfiguration().modeApiConfigs ?? {}
 		const parentProfileId = await api.upsertProfile("subtask-fanout-parent-profile", parentProfile, true)
 		const childProfileId = await api.upsertProfile("subtask-fanout-child-profile", childProfile, false)
+		assert.ok(parentProfileId, "Failed to create parent profile")
+		assert.ok(childProfileId, "Failed to create child profile")
 		await api.setConfiguration({
 			modeApiConfigs: {
 				...priorModeApiConfigs,
-				code: parentProfileId!,
-				ask: childProfileId!,
+				code: parentProfileId,
+				ask: childProfileId,
 			},
 		})
 

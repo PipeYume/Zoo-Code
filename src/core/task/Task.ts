@@ -4046,7 +4046,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			autoCondenseContextPercent = 100,
 			profileThresholds = {},
 		} = state ?? {}
-		// Use task-local values, not provider state, to prevent cross-task configuration leaks.
+		// Use task-local mode/apiConfiguration values, not shared provider state, to prevent cross-task configuration leaks.
 		const mode = await this.getTaskMode()
 		const apiConfiguration = this.apiConfiguration
 

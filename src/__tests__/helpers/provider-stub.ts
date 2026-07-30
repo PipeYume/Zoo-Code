@@ -23,6 +23,12 @@ type PrivateProviderMethods = {
 	restoreParentOrReleasePermit: (this: unknown, ...args: unknown[]) => unknown
 }
 
+export function bindRestoreParentOrReleasePermit(provider: ClineProvider): void {
+	const s = provider as unknown as ProviderStubFields
+	const proto = ClineProvider.prototype as unknown as PrivateProviderMethods
+	s.restoreParentOrReleasePermit = proto.restoreParentOrReleasePermit.bind(s)
+}
+
 /**
  * Augments a plain stub object with the instance fields and bound methods that
  * ClineProvider methods read from `this` (runDelegationTransition,
@@ -53,6 +59,8 @@ export function makeProviderStub<T extends object>(stub: T): ClineProvider {
 	s.runDelegationTransition ??= proto.runDelegationTransition.bind(s)
 	s.removeClineFromStack ??= proto.removeClineFromStack.bind(s)
 	s.evictCurrentTask ??= proto.evictCurrentTask.bind(s)
-	s.restoreParentOrReleasePermit ??= proto.restoreParentOrReleasePermit.bind(s)
+	if (!s.restoreParentOrReleasePermit) {
+		bindRestoreParentOrReleasePermit(s as unknown as ClineProvider)
+	}
 	return s as unknown as ClineProvider
 }
