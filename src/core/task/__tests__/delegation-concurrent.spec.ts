@@ -1,5 +1,6 @@
 // npx vitest run src/core/task/__tests__/delegation-concurrent.spec.ts
 
+import * as vscode from "vscode"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import type { HistoryItem } from "@roo-code/types"
 
@@ -144,10 +145,11 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		// the occupying "run" functions never resolve on purpose.
 		void scheduler.schedule(makeParent({ taskId: "occupant-1" }), () => new Promise<void>(() => {}))
 		void scheduler.schedule(makeParent({ taskId: "occupant-2" }), () => new Promise<void>(() => {}))
-		// Let both schedule() calls' internal sem.acquire() microtasks settle so
-		// both permits are actually held before we check availability.
-		await Promise.resolve()
-		await Promise.resolve()
+		// Poll the deterministic signal instead of assuming a fixed microtask
+		// depth for sem.acquire() to settle.
+		while (scheduler.available > 0) {
+			await Promise.resolve()
+		}
 
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
@@ -160,6 +162,113 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		await callDelegate(provider)
 
 		expect(removeClineFromStack).toHaveBeenCalledTimes(1)
+	})
+
+	it("createTask() throws in fan-out: the reserved permit is released, not leaked", async () => {
+		const parent = makeParent()
+		const createTaskError = new Error("createTask boom")
+		const scheduler = new TaskScheduler(2)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			tasks: [parent],
+			taskScheduler: scheduler,
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask: vi.fn().mockRejectedValue(createTaskError),
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
+
+		// Permit must have been released, not leaked — a subsequent reservation
+		// attempt must succeed immediately.
+		expect(scheduler.available).toBe(2)
+		const release = await scheduler.tryReserve()
+		expect(release).toBeDefined()
+	})
+
+	it("handleModeSwitch() throws in fan-out: delegation aborts and releases the reserved permit before child creation", async () => {
+		const parent = makeParent()
+		const modeSwitchError = new Error("Provider profile mutation timed out")
+		const scheduler = new TaskScheduler(2)
+		const createTask = vi.fn()
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			handleModeSwitch: vi.fn().mockRejectedValue(modeSwitchError),
+			tasks: [parent],
+			taskScheduler: scheduler,
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask,
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(modeSwitchError)
+
+		expect(createTask).not.toHaveBeenCalled()
+		expect(scheduler.available).toBe(2)
+	})
+
+	it("createTask() throws in the non-fan-out path: the evicted parent is restored", async () => {
+		const parent = makeParent()
+		const createTaskError = new Error("createTask boom")
+		const createTaskWithHistoryItem = vi.fn().mockResolvedValue(parent)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			tasks: [parent],
+			taskScheduler: new TaskScheduler(1),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask: vi.fn().mockRejectedValue(createTaskError),
+			createTaskWithHistoryItem,
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
+
+		expect(createTaskWithHistoryItem).toHaveBeenCalledWith({ id: "parent-1" })
+	})
+
+	it("createTask() throws in the non-fan-out path: parent restore retries once after a restore failure", async () => {
+		const parent = makeParent()
+		const createTaskError = new Error("createTask boom")
+		const restoreError = new Error("restore failed once")
+		const createTaskWithHistoryItem = vi.fn().mockRejectedValueOnce(restoreError).mockResolvedValueOnce(parent)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			tasks: [parent],
+			taskScheduler: new TaskScheduler(1),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask: vi.fn().mockRejectedValue(createTaskError),
+			createTaskWithHistoryItem,
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
+
+		expect(createTaskWithHistoryItem).toHaveBeenCalledTimes(2)
+		expect(createTaskWithHistoryItem).toHaveBeenNthCalledWith(1, { id: "parent-1" })
+		expect(createTaskWithHistoryItem).toHaveBeenNthCalledWith(2, { id: "parent-1" })
+	})
+
+	it("createTask() throws in the non-fan-out path: parent restore reports an error after retry exhaustion", async () => {
+		const parent = makeParent()
+		const createTaskError = new Error("createTask boom")
+		const createTaskWithHistoryItem = vi.fn().mockRejectedValue(new Error("restore keeps failing"))
+		const showErrorMessage = vi.spyOn(vscode.window, "showErrorMessage").mockResolvedValue(undefined)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			tasks: [parent],
+			taskScheduler: new TaskScheduler(1),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask: vi.fn().mockRejectedValue(createTaskError),
+			createTaskWithHistoryItem,
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
+
+		expect(createTaskWithHistoryItem).toHaveBeenCalledTimes(2)
+		expect(showErrorMessage).toHaveBeenCalledWith(
+			"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
+		)
 	})
 
 	it("fan-out path: both parent and child are tracked in the registry with no shared clineMessages reference", async () => {
@@ -204,7 +313,9 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		// Occupy one permit with the "parent's own request loop" so only one
 		// permit remains — exactly the scenario fan-out is meant to handle.
 		void scheduler.schedule(parent, parentRun)
-		await Promise.resolve()
+		while (scheduler.available > 1) {
+			await Promise.resolve()
+		}
 
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
@@ -215,9 +326,11 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		Object.assign(provider, { createTask: makeCreateTaskMock(provider, child) })
 
 		await callDelegate(provider)
-		// Let the reserved-permit run() invocation's microtask fire.
-		await Promise.resolve()
-		await Promise.resolve()
+		// Poll the deterministic signal (the child's run() having actually been
+		// invoked) instead of assuming a fixed microtask depth.
+		for (let i = 0; i < 10 && !childStarted; i++) {
+			await Promise.resolve()
+		}
 
 		expect(childStarted).toBe(true)
 		expect(child.run).toHaveBeenCalledTimes(1)
@@ -293,5 +406,48 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		})
 
 		expect(getRunningTasks(provider).map((t) => t.taskId)).toEqual(["parent-1", "child-1"])
+	})
+})
+
+describe("ClineProvider.setTaskSchedulerMaxConcurrency()", () => {
+	function setMaxConcurrency(provider: ClineProvider, maxConcurrency: number): void {
+		ClineProvider.prototype.setTaskSchedulerMaxConcurrency.call(provider, maxConcurrency)
+	}
+
+	it("replaces the scheduler with one at the new maxConcurrency when no tasks are active", () => {
+		const cancelQueued = vi.fn()
+		const provider = makeProviderStub({
+			tasks: [],
+			taskScheduler: { cancelQueued, maxConcurrency: 1 } as unknown as TaskScheduler,
+		})
+
+		setMaxConcurrency(provider, 2)
+
+		expect(cancelQueued).toHaveBeenCalledTimes(1)
+		expect((provider as unknown as { taskScheduler: TaskScheduler }).taskScheduler.maxConcurrency).toBe(2)
+	})
+
+	it("throws and leaves the scheduler untouched if a task is active", () => {
+		const cancelQueued = vi.fn()
+		const originalScheduler = { cancelQueued, maxConcurrency: 1 } as unknown as TaskScheduler
+		const provider = makeProviderStub({
+			tasks: [makeParent()],
+			taskScheduler: originalScheduler,
+		})
+
+		expect(() => setMaxConcurrency(provider, 2)).toThrow("Cannot change task scheduler concurrency")
+		expect(cancelQueued).not.toHaveBeenCalled()
+		expect((provider as unknown as { taskScheduler: TaskScheduler }).taskScheduler).toBe(originalScheduler)
+	})
+
+	it("rejects non-positive-integer values", () => {
+		const provider = makeProviderStub({
+			tasks: [],
+			taskScheduler: new TaskScheduler(1),
+		})
+
+		expect(() => setMaxConcurrency(provider, 0)).toThrow("must be a positive integer")
+		expect(() => setMaxConcurrency(provider, 1.5)).toThrow("must be a positive integer")
+		expect(() => setMaxConcurrency(provider, -1)).toThrow("must be a positive integer")
 	})
 })

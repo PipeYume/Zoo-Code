@@ -22,6 +22,11 @@ import {
 	SUBTASK_FAST_CHILD_RESULT,
 	SUBTASK_FANOUT_PARENT_FOLLOWUP,
 	SUBTASK_FANOUT_PARENT_PROMPT,
+	SUBTASK_FANOUT_XPROFILE_CHILD_MODEL,
+	SUBTASK_FANOUT_XPROFILE_CHILD_RESULT,
+	SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP,
+	SUBTASK_FANOUT_XPROFILE_PARENT_MODEL,
+	SUBTASK_FANOUT_XPROFILE_PARENT_PROMPT,
 	SUBTASK_FAST_PARENT_PROMPT,
 	SUBTASK_INTERRUPT_CHILD_FOLLOWUP_ANSWER,
 	SUBTASK_INTERRUPT_PARENT_PROMPT,
@@ -38,6 +43,7 @@ type AimockMessageContent = string | Array<{ type?: string; text?: string }>
 type AimockJournalEntry = {
 	timestamp?: number
 	body?: {
+		model?: string
 		messages?: Array<{
 			role?: string
 			content?: AimockMessageContent
@@ -53,6 +59,12 @@ const messageContentText = (content?: AimockMessageContent) => {
 	return content?.map((part) => part.text ?? "").join("") ?? ""
 }
 
+const requestUserText = (entry: AimockJournalEntry) =>
+	(entry.body?.messages ?? [])
+		.filter((message) => message.role === "user")
+		.map((message) => messageContentText(message.content))
+		.join("")
+
 const fetchAimockJournal = async () => {
 	const aimockUrl = process.env.AIMOCK_URL
 	assert.ok(aimockUrl, "AIMOCK_URL must be set for aimock journal assertions")
@@ -60,6 +72,8 @@ const fetchAimockJournal = async () => {
 	const response = await fetch(`${aimockUrl}/__aimock/journal`)
 	return (await response.json()) as AimockJournalEntry[]
 }
+
+const readAimockJournal = fetchAimockJournal
 
 const findAimockRequest = (entries: AimockJournalEntry[], expectedText: string, excludeText?: string) =>
 	entries.find((entry) => {
@@ -86,6 +100,29 @@ const waitForAimockRequestContaining = async (
 	})
 
 	return matchedAt
+}
+
+const assertAimockRequest = (entries: AimockJournalEntry[], matches: (entry: AimockJournalEntry) => boolean) => {
+	if (entries.some(matches)) return
+
+	const summary = entries.map((entry) => ({
+		model: entry.body?.model,
+		userText: requestUserText(entry).slice(0, 180),
+	}))
+	assert.fail(`Expected aimock request was not found. Requests: ${JSON.stringify(summary, null, 2)}`)
+}
+
+const waitForAimockRequest = async (matches: (entry: AimockJournalEntry) => boolean) => {
+	let latestEntries: AimockJournalEntry[] = []
+
+	try {
+		await waitFor(async () => {
+			latestEntries = await readAimockJournal()
+			return latestEntries.some(matches)
+		})
+	} catch {
+		assertAimockRequest(latestEntries, matches)
+	}
 }
 
 // Grace period after the delayed window for aimock to flush the stream's remaining chunks to
@@ -231,6 +268,118 @@ suite("Roo Code Subtasks", function () {
 			}
 			api.setTaskSchedulerMaxConcurrency(1)
 			await waitFor(() => api.getCurrentTaskStack().length === 0).catch(() => {})
+		}
+	})
+
+	test("fan-out keeps parent API config isolated when child switches to a different saved profile", async () => {
+		const api = globalThis.api
+		const asks: Record<string, ClineMessage[]> = {}
+
+		const messageHandler = ({ taskId, message }: { taskId: string; message: ClineMessage }) => {
+			if (message.type === "ask") {
+				asks[taskId] = asks[taskId] || []
+				asks[taskId].push(message)
+			}
+		}
+
+		api.on(RooCodeEventName.Message, messageHandler)
+
+		const aimockUrl = process.env.AIMOCK_URL
+		const parentProfile = {
+			apiProvider: "openrouter" as const,
+			openRouterApiKey: "mock-key",
+			openRouterModelId: SUBTASK_FANOUT_XPROFILE_PARENT_MODEL,
+			rateLimitSeconds: 0,
+			...(aimockUrl && { openRouterBaseUrl: `${aimockUrl}/v1` }),
+		}
+		const childProfile = {
+			...parentProfile,
+			openRouterModelId: SUBTASK_FANOUT_XPROFILE_CHILD_MODEL,
+		}
+		const priorModeApiConfigs = api.getConfiguration().modeApiConfigs ?? {}
+		const parentProfileId = await api.upsertProfile("subtask-fanout-parent-profile", parentProfile, true)
+		const childProfileId = await api.upsertProfile("subtask-fanout-child-profile", childProfile, false)
+		await api.setConfiguration({
+			modeApiConfigs: {
+				...priorModeApiConfigs,
+				code: parentProfileId!,
+				ask: childProfileId!,
+			},
+		})
+
+		try {
+			api.setTaskSchedulerMaxConcurrency(2)
+
+			const parentTaskId = await api.startNewTask({
+				configuration: {
+					mode: "code",
+					alwaysAllowModeSwitch: true,
+					alwaysAllowSubtasks: true,
+					autoApprovalEnabled: true,
+					enableCheckpoints: false,
+				},
+				text: SUBTASK_FANOUT_XPROFILE_PARENT_PROMPT,
+			})
+
+			let childTaskId: string | undefined
+			await waitFor(() => {
+				const stack = api.getCurrentTaskStack()
+				const current = stack.at(-1)
+				if (current && current !== parentTaskId) {
+					childTaskId = current
+					return stack.includes(parentTaskId)
+				}
+				return false
+			})
+
+			await waitFor(() =>
+				(asks[parentTaskId] ?? []).some(
+					({ ask, text }) => ask === "followup" && text?.includes(SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP),
+				),
+			)
+
+			assert.ok(
+				(asks[parentTaskId] ?? []).some(
+					({ ask, text }) => ask === "followup" && text?.includes(SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP),
+				),
+				"Parent should keep running and ask its follow-up using its own profile",
+			)
+
+			const stack = api.getCurrentTaskStack()
+			assert.ok(stack.includes(parentTaskId), "Fan-out parent should remain in the live task stack")
+			assert.ok(stack.includes(childTaskId!), "Fan-out child should remain in the live task stack")
+			assert.strictEqual(stack.at(-1), childTaskId, "Child should remain the focused task while parent runs")
+
+			await waitForAimockRequest((entry) => {
+				const text = requestUserText(entry)
+				const userMessageCount = (entry.body?.messages ?? []).filter(
+					(message) => message.role === "user",
+				).length
+				return (
+					entry.body?.model === SUBTASK_FANOUT_XPROFILE_PARENT_MODEL &&
+					text.includes(SUBTASK_FANOUT_XPROFILE_PARENT_PROMPT) &&
+					userMessageCount > 1
+				)
+			})
+			await waitForAimockRequest(
+				(entry) =>
+					entry.body?.model === SUBTASK_FANOUT_XPROFILE_CHILD_MODEL &&
+					(entry.body.messages ?? []).some(
+						(message) =>
+							message.role === "user" &&
+							messageContentText(message.content).includes(SUBTASK_FANOUT_XPROFILE_CHILD_RESULT),
+					),
+			)
+		} finally {
+			api.off(RooCodeEventName.Message, messageHandler)
+			while (api.getCurrentTaskStack().length > 0) {
+				await api.clearCurrentTask()
+			}
+			api.setTaskSchedulerMaxConcurrency(1)
+			await waitFor(() => api.getCurrentTaskStack().length === 0).catch(() => {})
+			await api.setConfiguration({ modeApiConfigs: priorModeApiConfigs })
+			await api.deleteProfile("subtask-fanout-child-profile").catch(() => {})
+			await api.deleteProfile("subtask-fanout-parent-profile").catch(() => {})
 		}
 	})
 

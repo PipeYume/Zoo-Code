@@ -16,6 +16,8 @@ const SUBTASK_XPROFILE_SAME_CHILD_MARKER = "SUBTASK_CHILD_SAME_PROFILE"
 const SUBTASK_XPROFILE_DIFFERENT_CHILD_MARKER = "SUBTASK_CHILD_DIFFERENT_PROFILE"
 const SUBTASK_FANOUT_PARENT_MARKER = "SUBTASK_PARENT_FANOUT_CONCURRENT"
 const SUBTASK_FANOUT_CHILD_MARKER = "SUBTASK_CHILD_FANOUT_CONCURRENT"
+const SUBTASK_FANOUT_XPROFILE_PARENT_MARKER = "SUBTASK_PARENT_FANOUT_CROSS_PROFILE"
+const SUBTASK_FANOUT_XPROFILE_CHILD_MARKER = "SUBTASK_CHILD_FANOUT_CROSS_PROFILE"
 
 const SUBTASK_CHILD_PROMPT = `${SUBTASK_CHILD_MARKER}: Ask the user exactly this follow-up question: What is the square root of 81? After the user answers, complete with only the answer.`
 export const SUBTASK_PARENT_PROMPT = `${SUBTASK_PARENT_MARKER}: Use the new_task tool exactly once. Create an ask-mode subtask with this exact message: "${SUBTASK_CHILD_PROMPT}" Do not answer directly.`
@@ -27,6 +29,12 @@ export const SUBTASK_FANOUT_PARENT_FOLLOWUP = "Parent fan-out is still active?"
 export const SUBTASK_FANOUT_CHILD_RESULT = "Fan-out child completed"
 const SUBTASK_FANOUT_CHILD_PROMPT = `${SUBTASK_FANOUT_CHILD_MARKER}: Complete with the exact result "${SUBTASK_FANOUT_CHILD_RESULT}".`
 export const SUBTASK_FANOUT_PARENT_PROMPT = `${SUBTASK_FANOUT_PARENT_MARKER}: Use the new_task tool exactly once. Create an ask-mode subtask with this exact message: "${SUBTASK_FANOUT_CHILD_PROMPT}" After delegation, ask the user exactly this follow-up question: ${SUBTASK_FANOUT_PARENT_FOLLOWUP}`
+export const SUBTASK_FANOUT_XPROFILE_PARENT_MODEL = "openai/gpt-4.1"
+export const SUBTASK_FANOUT_XPROFILE_CHILD_MODEL = "openai/gpt-4.1-mini"
+export const SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP = "Parent cross-profile fan-out is still isolated?"
+export const SUBTASK_FANOUT_XPROFILE_CHILD_RESULT = "Fan-out cross-profile child completed"
+const SUBTASK_FANOUT_XPROFILE_CHILD_PROMPT = `${SUBTASK_FANOUT_XPROFILE_CHILD_MARKER}: Complete with the exact result "${SUBTASK_FANOUT_XPROFILE_CHILD_RESULT}".`
+export const SUBTASK_FANOUT_XPROFILE_PARENT_PROMPT = `${SUBTASK_FANOUT_XPROFILE_PARENT_MARKER}: Use the new_task tool exactly once. Create an ask-mode subtask with this exact message: "${SUBTASK_FANOUT_XPROFILE_CHILD_PROMPT}" After delegation, ask the user exactly this follow-up question: ${SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP}`
 
 const SUBTASK_INTERRUPT_CHILD_PROMPT = `${SUBTASK_INTERRUPT_CHILD_MARKER}: Ask the user exactly this follow-up question: What is the square root of 81? After the user answers, complete with only the answer.`
 export const SUBTASK_INTERRUPT_PARENT_PROMPT = `${SUBTASK_INTERRUPT_PARENT_MARKER}: Use the new_task tool exactly once. Create an ask-mode subtask with this exact message: "${SUBTASK_INTERRUPT_CHILD_PROMPT}" Do not answer directly. When the subtask returns, complete with the exact result "Interrupted parent resumed".`
@@ -199,6 +207,63 @@ export function addSubtaskFixtures(mock: InstanceType<typeof LLMock>) {
 						follow_up: [{ text: "continue" }],
 					}),
 					id: "call_subtasks_fanout_parent_followup_003",
+				},
+			],
+		},
+	})
+
+	mock.addFixture({
+		match: {
+			userMessage: new RegExp(SUBTASK_FANOUT_XPROFILE_PARENT_MARKER),
+			sequenceIndex: 0,
+		},
+		response: {
+			toolCalls: [
+				{
+					name: "new_task",
+					arguments: JSON.stringify({
+						mode: "ask",
+						message: SUBTASK_FANOUT_XPROFILE_CHILD_PROMPT,
+					}),
+					id: "call_subtasks_fanout_xprofile_parent_new_task_001",
+				},
+			],
+		},
+	})
+
+	mock.addFixture({
+		match: {
+			predicate: (req: ChatCompletionRequest) =>
+				lastUserMessageContains(req, SUBTASK_FANOUT_XPROFILE_CHILD_MARKER) &&
+				!requestContains(req, [SUBTASK_FANOUT_XPROFILE_PARENT_MARKER]),
+		},
+		latency: 15_000,
+		response: {
+			toolCalls: [
+				{
+					name: "attempt_completion",
+					arguments: JSON.stringify({ result: SUBTASK_FANOUT_XPROFILE_CHILD_RESULT }),
+					id: "call_subtasks_fanout_xprofile_child_completion_002",
+				},
+			],
+		},
+	})
+
+	mock.addFixture({
+		match: {
+			predicate: (req: ChatCompletionRequest) =>
+				requestContains(req, [SUBTASK_FANOUT_XPROFILE_PARENT_MARKER, "Delegated to child task"]) &&
+				!requestContains(req, [SUBTASK_RESULT_INJECTION]),
+		},
+		response: {
+			toolCalls: [
+				{
+					name: "ask_followup_question",
+					arguments: JSON.stringify({
+						question: SUBTASK_FANOUT_XPROFILE_PARENT_FOLLOWUP,
+						follow_up: [{ text: "continue" }],
+					}),
+					id: "call_subtasks_fanout_xprofile_parent_followup_003",
 				},
 			],
 		},

@@ -3661,6 +3661,48 @@ export class ClineProvider
 	}
 
 	/**
+	 * Undo the "parent kept running" (fan-out) or "parent evicted" (non-fan-out)
+	 * side effect from step 3 of `delegateParentAndOpenChild`, for failures that
+	 * happen before a child exists to attach lineage to. Shared by the
+	 * `createTask()` failure path and the metadata-persistence failure path.
+	 */
+	private async restoreParentOrReleasePermit(
+		parentTaskId: string,
+		fanOut: boolean,
+		childReservedRelease: (() => void) | undefined,
+	): Promise<void> {
+		if (!fanOut) {
+			try {
+				const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
+				await this.createTaskWithHistoryItem(parentHistory)
+			} catch (firstRollbackError) {
+				this.log(
+					`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback, retrying once: ${
+						(firstRollbackError as Error)?.message ?? String(firstRollbackError)
+					}`,
+				)
+				try {
+					const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
+					await this.createTaskWithHistoryItem(parentHistory)
+				} catch (rollbackError) {
+					this.log(
+						`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback retry: ${
+							(rollbackError as Error)?.message ?? String(rollbackError)
+						}`,
+					)
+					vscode.window.showErrorMessage(
+						"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
+					)
+				}
+			}
+		} else {
+			// The child never reached step 6, so the reserved permit must be
+			// released here or it leaks for the lifetime of the scheduler.
+			childReservedRelease?.()
+		}
+	}
+
+	/**
 	 * Delegate parent task and open child task.
 	 *
 	 * - Enforce single-open invariant, unless fan-out (maxConcurrency > 1 with a
@@ -3775,6 +3817,10 @@ export class ClineProvider
 					(e as Error)?.message ?? String(e)
 				}`,
 			)
+			if (fanOut) {
+				await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
+				throw e
+			}
 		}
 
 		// 4) Create and focus child, preserving parent reference for lineage.
@@ -3790,11 +3836,24 @@ export class ClineProvider
 		// Without this, the child's fire-and-forget startTask() races with step 5,
 		// and the last writer to globalState overwrites the other's changes—
 		// causing the parent's delegation fields to be lost.
-		const child = await this.createTask(message, undefined, parent as any, {
-			initialTodos,
-			initialStatus: "active",
-			startTask: false,
-		})
+		let child: Task
+		try {
+			child = await this.createTask(message, undefined, parent as any, {
+				initialTodos,
+				initialStatus: "active",
+				startTask: false,
+			})
+		} catch (err) {
+			this.log(
+				`[delegateParentAndOpenChild] createTask failed for parent ${parentTaskId}: ${
+					(err as Error)?.message ?? String(err)
+				}`,
+			)
+			// No child was created, so there is no lineage to unwind — just undo
+			// step 3's parent-eviction (or release the reserved permit in fan-out).
+			await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
+			throw err
+		}
 
 		// createTask() -> addClineToStack() -> taskRegistry.push() already focuses
 		// the child. In the fan-out case the parent remains in the registry
@@ -3891,22 +3950,7 @@ export class ClineProvider
 			// still focused, removeClineFromStack() above already re-focused the
 			// registry onto the parent (TaskRegistry.remove only reassigns focus
 			// when the removed task was current).
-			if (!fanOut) {
-				try {
-					const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
-					await this.createTaskWithHistoryItem(parentHistory)
-				} catch (rollbackError) {
-					this.log(
-						`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback: ${
-							(rollbackError as Error)?.message ?? String(rollbackError)
-						}`,
-					)
-				}
-			} else {
-				// The child never reached step 6, so the reserved permit must be
-				// released here or it leaks for the lifetime of the scheduler.
-				childReservedRelease?.()
-			}
+			await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
 			throw err
 		}
 

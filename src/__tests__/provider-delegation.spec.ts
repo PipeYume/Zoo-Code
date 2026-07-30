@@ -6,6 +6,24 @@ import { RooCodeEventName } from "@roo-code/types"
 import { ClineProvider } from "../core/webview/ClineProvider"
 import { TaskScheduler } from "../core/task/TaskScheduler"
 
+/**
+ * restoreParentOrReleasePermit is a private prototype method that plain
+ * object-literal provider stubs don't have unless bound explicitly (same
+ * reason removeClineFromStack/evictCurrentTask need binding in provider-stub.ts).
+ */
+function bindRestoreParentOrReleasePermit(provider: ClineProvider): void {
+	type WithRestore = {
+		restoreParentOrReleasePermit: (
+			parentTaskId: string,
+			fanOut: boolean,
+			childReservedRelease: (() => void) | undefined,
+		) => Promise<void>
+	}
+	;(provider as unknown as WithRestore).restoreParentOrReleasePermit = (
+		ClineProvider.prototype as unknown as WithRestore
+	).restoreParentOrReleasePermit.bind(provider)
+}
+
 const parentHistoryItem: HistoryItem = {
 	id: "parent-1",
 	task: "Parent",
@@ -318,6 +336,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindRestoreParentOrReleasePermit(provider)
 
 		await expect(
 			(ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
@@ -373,6 +392,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			// still needs evicting, independent of current focus.
 			taskRegistry: { getById: vi.fn((id: string) => (id === "child-1" ? child : undefined)) },
 		} as unknown as ClineProvider
+		bindRestoreParentOrReleasePermit(provider)
 
 		await expect(
 			(ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
