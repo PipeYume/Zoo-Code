@@ -158,4 +158,36 @@ describe("managed binary downloads", () => {
 		).rejects.toThrow("Example archive exceeds the download size limit")
 		expect(mockCreateWriteStream).not.toHaveBeenCalled()
 	})
+
+	it("destroys the output stream when streamed data exceeds the size limit", async () => {
+		const request = createRequest()
+		const response = createResponse(200, { "content-length": "5" })
+		const output = Object.assign(new EventEmitter(), { close: vi.fn(), destroy: vi.fn() })
+		mockCreateWriteStream.mockReturnValue(output as unknown as ReturnType<typeof createWriteStream>)
+		mockGet.mockImplementation(
+			(
+				_url: string | URL,
+				optionsOrCallback: RequestOptions | ((response: IncomingMessage) => void),
+				optionalCallback?: (response: IncomingMessage) => void,
+			) => {
+				const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : optionalCallback
+				setImmediate(() => callback?.(response as unknown as IncomingMessage))
+				return request as unknown as ReturnType<typeof get>
+			},
+		)
+
+		const download = downloadBinaryFile("https://github.com/release", "/tmp/archive", {
+			name: "Example",
+			trustedDomains,
+			timeoutMs: 1_000,
+			maxBytes: 10,
+		})
+		await new Promise<void>((resolve) => setImmediate(resolve))
+		response.emit("data", Buffer.alloc(11))
+
+		await expect(download).rejects.toThrow("Example archive exceeds the download size limit")
+		expect(response.destroy).toHaveBeenCalled()
+		expect(output.destroy).toHaveBeenCalled()
+		expect(request.destroy).toHaveBeenCalledWith(expect.any(Error))
+	})
 })

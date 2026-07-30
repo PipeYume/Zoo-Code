@@ -129,6 +129,7 @@ function downloadBinaryFileWithRedirects(
 						assertSizeWithinLimit(received, options.maxBytes, options.name)
 					} catch (error) {
 						response.destroy()
+						output.destroy()
 						request.destroy(error as Error)
 						reject(error)
 					}

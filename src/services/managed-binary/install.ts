@@ -102,6 +102,15 @@ async function installManagedBinary(options: ManagedBinaryInstallOptions): Promi
 		await makeExecutable(paths.stagedBinaryPath)
 		await options.validateBinary?.(paths.stagedBinaryPath)
 		await fs.writeFile(path.join(paths.stagingDir, options.versionFile), options.version, "utf-8")
+		const currentVersion = await readInstalledVersion(paths.versionPath)
+		if (currentVersion === options.version) {
+			try {
+				await makeExecutable(paths.binaryPath)
+				return paths.binaryPath
+			} catch {
+				// A concurrent installer left a partial install, so replace it below.
+			}
+		}
 		await fs.rm(paths.installRoot, { recursive: true, force: true })
 		await fs.rename(paths.stagingDir, paths.installRoot)
 		await cleanupStaleArchives(options, paths.archivePath)

@@ -85,4 +85,24 @@ describe("managed binary installation", () => {
 		await expect(access(paths.archivePath)).rejects.toThrow()
 		await expect(access(paths.stagingDir)).rejects.toThrow()
 	})
+
+	it("adopts a valid installation completed by a concurrent process instead of replacing it", async () => {
+		const options = createOptions({
+			download: async (archivePath) => {
+				await writeFile(archivePath, "archive")
+			},
+			extractArchive: async (_archivePath, stagingDir) => {
+				await writeFile(path.join(stagingDir, "example"), "binary")
+				const paths = getManagedBinaryPaths(options)
+				await mkdir(paths.installRoot, { recursive: true })
+				await writeFile(paths.binaryPath, "concurrent binary")
+				await writeFile(paths.versionPath, options.version)
+			},
+		})
+		const paths = getManagedBinaryPaths(options)
+
+		await expect(ensureManagedBinaryInstalled(options)).resolves.toBe(paths.binaryPath)
+		expect(await readFile(paths.binaryPath, "utf8")).toBe("concurrent binary")
+		await expect(access(paths.stagingDir)).rejects.toThrow()
+	})
 })

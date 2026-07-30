@@ -766,11 +766,9 @@ describe("semble-downloader", () => {
 			// Version matches
 			;(fs.readFile as any).mockResolvedValue("v0.4.1")
 			// But binary is missing
-			let accessCallCount = 0
-			;(fs.access as any).mockImplementation(() => {
-				accessCallCount++
-				// First call: binary path check (miss), subsequent: staged binary verify (pass)
-				if (accessCallCount === 1) {
+			;(fs.access as any).mockImplementation((target: string) => {
+				// The installed binary path misses; the staged binary verifies fine.
+				if (target === path.join("/storage", "semble", "semble")) {
 					return Promise.reject(new Error("ENOENT"))
 				}
 				return Promise.resolve(undefined)
