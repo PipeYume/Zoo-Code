@@ -110,7 +110,13 @@ describe("Destructive Command Guard manager", () => {
 		child.emit("close", 0)
 		await extraction
 
-		expect(mockSpawn).toHaveBeenCalledWith("unzip", ["-o", "C:\\dcg.zip", "-d", "C:\\staging"], {
+		const expectedExecutable = process.platform === "win32" ? "powershell" : "unzip"
+		const expectedArgs =
+			process.platform === "win32"
+				? ["-NoProfile", "-Command", "Expand-Archive -Path 'C:\\dcg.zip' -DestinationPath 'C:\\staging' -Force"]
+				: ["-o", "C:\\dcg.zip", "-d", "C:\\staging"]
+
+		expect(mockSpawn).toHaveBeenCalledWith(expectedExecutable, expectedArgs, {
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
 		})
