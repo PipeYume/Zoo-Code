@@ -37,6 +37,20 @@ Roo Code से Zoo Code में आने के लिए एक quick guide
 
 ## v3.74.0 में नया क्या है
 
+**Zoo Gateway लाइव है!**
+
+गेटवे सभी प्रदाताओं के लिए एक ही एंडपॉइंट है, जिसमें एक बैलेंस और प्रति-अनुरोध खर्च/उपयोग का विवरण है।
+
+**सेटअप:**
+
+- क्रेडिट जोड़ें: https://www.zoocode.dev/dashboard/credits
+- एक्सटेंशन से साइन इन करें।
+- सेटिंग्स में, अलग-अलग मॉडलों के लिए प्रोफ़ाइल बनाते समय Zoo Gateway को प्रदाता के रूप में चुनें
+
+उपयोग और शुल्क [डैशबोर्ड](https://www.zoocode.dev/dashboard) में देखे जा सकते हैं।
+
+मॉडल: https://www.zoocode.dev/dashboard/models
+
 - **अधिक OpenAI controls** — OpenAI Codex के साथ Fast priority mode का उपयोग करें और OpenAI-compatible models के लिए अधिक reasoning effort चुनें।
 - **अधिक भरोसेमंद providers और models** — router metadata handling, Ollama model refresh, Bedrock proxy support और Friendli reasoning controls में सुधार।
 - **अधिक सहज settings और developer workflows** — settings अब unsaved edits सुरक्षित रखती हैं, छोटे terminal commands ठीक से पूरे होते हैं, architect plans workspace-relative paths का उपयोग करते हैं और बची हुई user-facing Roo branding को Zoo में अपडेट किया गया है।

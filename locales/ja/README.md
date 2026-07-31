@@ -37,6 +37,20 @@ Roo Code から Zoo Code へ移行するためのクイックガイドは、[Roo
 
 ## v3.74.0 の新機能
 
+**Zoo Gateway がリリースされました！**
+
+ゲートウェイはすべてのプロバイダーに対応する単一のエンドポイントで、1つの残高とリクエストごとの支出/使用量の内訳を提供します。
+
+**セットアップ:**
+
+- クレジットを追加: https://www.zoocode.dev/dashboard/credits
+- 拡張機能からサインインします。
+- 設定で、異なるモデルのプロファイルを作成する際にプロバイダーとして Zoo Gateway を選択します
+
+使用状況と料金は[ダッシュボード](https://www.zoocode.dev/dashboard)で確認できます。
+
+モデル: https://www.zoocode.dev/dashboard/models
+
 - **OpenAI の制御を強化** — OpenAI Codex で Fast 優先モードを使用し、OpenAI 互換モデルではより高い reasoning effort を選択できます。
 - **プロバイダーとモデルの信頼性を向上** — router メタデータ処理、Ollama モデル更新、Bedrock のプロキシ対応、Friendli の reasoning 制御を改善しました。
 - **設定と開発ワークフローを改善** — 未保存の編集を設定画面で保持し、短いターミナルコマンドを正しく完了し、Architect のプランにはワークスペース相対パスを使用します。残っていたユーザー向け Roo 表記も Zoo に更新しました。

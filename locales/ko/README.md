@@ -36,6 +36,20 @@ Roo Code에서 Zoo Code로 옮겨오는 빠른 가이드는 [Roo→Zoo 마이그
 
 ## v3.74.0의 새로운 기능
 
+**Zoo Gateway가 출시되었습니다!**
+
+게이트웨이는 모든 제공업체를 위한 단일 엔드포인트로, 하나의 잔액과 요청별 지출/사용량 내역을 제공합니다.
+
+**설정:**
+
+- 크레딧 추가: https://www.zoocode.dev/dashboard/credits
+- 확장 프로그램에서 로그인하세요.
+- 설정에서 다양한 모델의 프로필을 만들 때 Zoo Gateway를 제공업체로 선택하세요
+
+사용량과 요금은 [대시보드](https://www.zoocode.dev/dashboard)에서 확인할 수 있습니다.
+
+모델: https://www.zoocode.dev/dashboard/models
+
 - **더 다양한 OpenAI 제어** — OpenAI Codex에서 Fast 우선 모드를 사용하고 OpenAI 호환 모델의 reasoning effort를 더 높게 선택하세요.
 - **더 안정적인 프로바이더와 모델** — router 메타데이터 처리, Ollama 모델 새로고침, Bedrock 프록시 지원, Friendli reasoning 제어가 개선되었습니다.
 - **더 매끄러운 설정 및 개발 워크플로우** — 설정에서 저장하지 않은 편집을 유지하고, 짧은 터미널 명령을 올바르게 완료하며, Architect 계획에 워크스페이스 상대 경로를 사용합니다. 남아 있던 사용자용 Roo 브랜드도 Zoo로 업데이트했습니다.

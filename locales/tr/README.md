@@ -38,6 +38,20 @@ Roo Code'dan Zoo Code'a geçmek için hızlı bir rehberi [Roo→Zoo geçiş reh
 
 ## v3.74.0'daki Yenilikler
 
+**Zoo Gateway yayında!**
+
+Gateway, tüm sağlayıcılar için tek bir uç noktadır; tek bakiye ve istek başına harcama/kullanım dökümü sunar.
+
+**Kurulum:**
+
+- Kredi ekleyin: https://www.zoocode.dev/dashboard/credits
+- Uzantıdan oturum açın.
+- Ayarlarda, farklı modeller için profil oluştururken sağlayıcı olarak Zoo Gateway'i seçin
+
+Kullanım ve ücretler [panodan](https://www.zoocode.dev/dashboard) görüntülenebilir.
+
+Modeller: https://www.zoocode.dev/dashboard/models
+
 - **Daha fazla OpenAI denetimi** — OpenAI Codex ile Fast öncelik modunu kullan ve OpenAI uyumlu modeller için daha yüksek reasoning effort seç.
 - **Daha güvenilir provider'lar ve modeller** — router metadata işleme, Ollama model yenileme, Bedrock proxy desteği ve Friendli reasoning denetimleri iyileştirildi.
 - **Daha akıcı ayarlar ve geliştirici iş akışları** — ayarlar kaydedilmemiş düzenlemeleri koruyor, kısa terminal komutları düzgün tamamlanıyor, architect planları workspace'e göreli yollar kullanıyor ve kullanıcıya görünen kalan Roo markaları Zoo olarak güncellendi.

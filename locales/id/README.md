@@ -37,6 +37,20 @@ Kamu bisa menemukan panduan singkat untuk berpindah dari Roo Code ke Zoo Code di
 
 ## Yang Baru di v3.74.0
 
+**Zoo Gateway sudah live!**
+
+Gateway adalah satu endpoint untuk semua penyedia, dengan satu saldo dan rincian pengeluaran/penggunaan per permintaan.
+
+**Penyiapan:**
+
+- Tambahkan kredit: https://www.zoocode.dev/dashboard/credits
+- Masuk dari ekstensi.
+- Di pengaturan, pilih Zoo Gateway sebagai penyedia saat membuat profil untuk berbagai model
+
+Penggunaan dan biaya dapat dilihat di [dasbor](https://www.zoocode.dev/dashboard).
+
+Model: https://www.zoocode.dev/dashboard/models
+
 - **Kontrol OpenAI yang lebih lengkap** — gunakan mode prioritas Fast dengan OpenAI Codex dan pilih tingkat reasoning yang lebih tinggi untuk model yang kompatibel dengan OpenAI.
 - **Provider dan model yang lebih andal** — peningkatan penanganan metadata router, refresh model Ollama, dukungan proxy Bedrock, dan kontrol reasoning Friendli.
 - **Settings dan workflow developer yang lebih mulus** — settings kini mempertahankan edit yang belum disimpan, perintah terminal singkat selesai dengan benar, rencana architect memakai path relatif workspace, dan branding Roo yang masih terlihat telah diperbarui menjadi Zoo.

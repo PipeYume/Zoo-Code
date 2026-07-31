@@ -38,6 +38,20 @@ Pots trobar una guia ràpida per passar de Roo Code a Zoo Code a la [guia de mig
 
 ## Novetats a la v3.74.0
 
+**Zoo Gateway ja és aquí!**
+
+El gateway és un punt d'accés únic per a tots els proveïdors, amb un sol saldo i un desglossament de despeses i ús per petició.
+
+**Configuració:**
+
+- Afegeix crèdits: https://www.zoocode.dev/dashboard/credits
+- Inicia sessió des de l'extensió.
+- A la configuració, selecciona Zoo Gateway com a proveïdor quan creïs perfils per a diferents models
+
+L'ús i els càrrecs es poden consultar al [tauler](https://www.zoocode.dev/dashboard).
+
+Models: https://www.zoocode.dev/dashboard/models
+
 - **Més controls d'OpenAI** — utilitza el mode de prioritat Fast amb OpenAI Codex i tria un nivell de raonament més alt per als models compatibles amb OpenAI.
 - **Proveïdors i models més fiables** — millores en la gestió de metadades del router, l'actualització de models d'Ollama, el suport de proxy de Bedrock i els controls de raonament de Friendli.
 - **Configuració i fluxos de desenvolupament més fluids** — la configuració conserva els canvis sense desar, les ordres curtes de terminal acaben correctament, els plans d'arquitectura utilitzen rutes relatives a l'espai de treball i la marca Roo visible restant s'ha actualitzat a Zoo.

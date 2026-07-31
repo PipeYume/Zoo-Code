@@ -34,6 +34,20 @@
 
 ## v3.74.0 新增内容
 
+**Zoo Gateway 已上线！**
+
+该网关是所有提供商的统一端点，共用一个余额，并提供按请求的费用/用量明细。
+
+**设置：**
+
+- 添加额度：https://www.zoocode.dev/dashboard/credits
+- 从扩展中登录。
+- 在设置中，为不同模型创建配置文件时选择 Zoo Gateway 作为提供商
+
+用量和费用可在[仪表板](https://www.zoocode.dev/dashboard)中查看。
+
+模型：https://www.zoocode.dev/dashboard/models
+
 - **更多 OpenAI 控制选项** — 在 OpenAI Codex 中使用 Fast 优先模式，并为 OpenAI 兼容模型选择更高的 reasoning effort。
 - **更可靠的提供商和模型** — 改进 router 元数据处理、Ollama 模型刷新、Bedrock 代理支持和 Friendli reasoning 控制。
 - **更顺畅的设置和开发工作流** — 设置现在会保留未保存的编辑，短终端命令可正确完成，Architect 计划使用相对于工作区的路径，剩余面向用户的 Roo 品牌也已更新为 Zoo。

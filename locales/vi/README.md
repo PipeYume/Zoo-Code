@@ -37,6 +37,20 @@ Bạn có thể xem hướng dẫn nhanh để chuyển từ Roo Code sang Zoo C
 
 ## Điểm mới trong v3.74.0
 
+**Zoo Gateway đã ra mắt!**
+
+Gateway là một điểm cuối duy nhất cho tất cả các nhà cung cấp, với một số dư và bảng phân tích chi tiêu/mức sử dụng theo từng yêu cầu.
+
+**Thiết lập:**
+
+- Thêm tín dụng: https://www.zoocode.dev/dashboard/credits
+- Đăng nhập từ tiện ích mở rộng.
+- Trong phần cài đặt, chọn Zoo Gateway làm nhà cung cấp khi tạo hồ sơ cho các mô hình khác nhau
+
+Bạn có thể xem mức sử dụng và phí trong [bảng điều khiển](https://www.zoocode.dev/dashboard).
+
+Mô hình: https://www.zoocode.dev/dashboard/models
+
 - **Nhiều tùy chọn điều khiển OpenAI hơn** — dùng chế độ ưu tiên Fast với OpenAI Codex và chọn reasoning effort cao hơn cho các model tương thích OpenAI.
 - **Provider và model đáng tin cậy hơn** — cải thiện xử lý metadata của router, làm mới model Ollama, hỗ trợ proxy Bedrock và điều khiển reasoning của Friendli.
 - **Cài đặt và workflow phát triển mượt mà hơn** — cài đặt giữ lại các chỉnh sửa chưa lưu, lệnh terminal ngắn hoàn tất đúng cách, kế hoạch architect dùng đường dẫn tương đối với workspace và các nhãn Roo còn hiển thị cho người dùng đã được cập nhật thành Zoo.

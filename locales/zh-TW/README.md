@@ -34,6 +34,20 @@
 
 ## v3.74.0 新功能
 
+**Zoo Gateway 正式上線！**
+
+此閘道是所有供應商的單一端點，共用一個餘額，並提供逐請求的費用/用量明細。
+
+**設定：**
+
+- 新增額度：https://www.zoocode.dev/dashboard/credits
+- 從擴充功能登入。
+- 在設定中，為不同模型建立設定檔時選擇 Zoo Gateway 作為供應商
+
+用量與費用可在[儀表板](https://www.zoocode.dev/dashboard)中查看。
+
+模型：https://www.zoocode.dev/dashboard/models
+
 - **更多 OpenAI 控制選項** — 在 OpenAI Codex 中使用 Fast 優先模式，並為 OpenAI 相容模型選擇更高的 reasoning effort。
 - **更可靠的供應商與模型** — 改善 router 中繼資料處理、Ollama 模型重新整理、Bedrock Proxy 支援與 Friendli reasoning 控制。
 - **更順暢的設定與開發工作流程** — 設定現在會保留未儲存的編輯，短終端機命令可正確完成，Architect 計畫使用相對於工作區的路徑，剩餘面向使用者的 Roo 品牌也已更新為 Zoo。
