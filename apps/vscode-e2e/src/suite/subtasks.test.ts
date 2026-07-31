@@ -17,6 +17,7 @@ import {
 	SUBTASK_API_HANG_PARENT_PROMPT,
 	SUBTASK_API_HANG_PARENT_RESULT,
 	SUBTASK_API_HANG_RESUME_MESSAGE,
+	SUBTASK_API_HANG_RESPONSE_LATENCY_MS,
 	SUBTASK_CHILD_FOLLOWUP_ANSWER,
 	SUBTASK_FAST_CHILD_RESULT,
 	SUBTASK_FAST_PARENT_PROMPT,
@@ -71,6 +72,12 @@ const waitForAimockRequestContaining = async (expectedText: string, excludeText?
 
 suite("Roo Code Subtasks", function () {
 	setDefaultSuiteTimeout(this)
+
+	// Task cancellation aborts the client request asynchronously. Let the extension host
+	// finish disposing it before the next test reuses the mock server.
+	teardown(async () => {
+		await sleep(1_500)
+	})
 
 	test("child completing on its first response returns to parent", async () => {
 		const api = globalThis.api
@@ -580,6 +587,9 @@ suite("Roo Code Subtasks", function () {
 				await api.clearCurrentTask()
 			}
 			await waitFor(() => api.getCurrentTaskStack().length === 0).catch(() => {})
+			// aimock does not cancel delayed server-side streams when the client aborts.
+			// Drain this fixture before the next test can open another streamed request.
+			await sleep(SUBTASK_API_HANG_RESPONSE_LATENCY_MS)
 		}
 	})
 

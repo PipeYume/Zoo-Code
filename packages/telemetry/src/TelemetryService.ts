@@ -150,6 +150,10 @@ export class TelemetryService {
 			return
 		}
 
+		if (!this.isTelemetryEnabled()) {
+			return
+		}
+
 		if (this.shouldDropForCircuitBreaker(eventName)) {
 			return
 		}

@@ -174,6 +174,14 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
 	const contextProxy = await ContextProxy.getInstance(context)
+	const updateTelemetryState = () => {
+		const telemetrySetting = contextProxy.getGlobalState("telemetrySetting") ?? "unset"
+		TelemetryService.instance.updateTelemetryState(
+			isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
+		)
+	}
+
+	updateTelemetryState()
 
 	// React live to VS Code's global telemetry toggle (recommended over only reading
 	// telemetry.telemetryLevel, which PostHogTelemetryClient still checks as a secondary gate).
@@ -181,10 +189,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	// telemetry.telemetryLevel setting the client checks doesn't reflect this live event.
 	context.subscriptions.push(
 		vscode.env.onDidChangeTelemetryEnabled(() => {
-			const telemetrySetting = contextProxy.getGlobalState("telemetrySetting") ?? "unset"
-			TelemetryService.instance.updateTelemetryState(
-				isTelemetryOptedIn(telemetrySetting) && vscode.env.isTelemetryEnabled,
-			)
+			updateTelemetryState()
 
 			// Push the new vscode.env.isTelemetryEnabled value to the webview too, so its
 			// own PostHog client (gated separately in TelemetryClient.ts) can't keep

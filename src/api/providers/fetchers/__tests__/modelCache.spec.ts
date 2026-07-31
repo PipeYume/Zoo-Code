@@ -5,6 +5,7 @@ vi.mock("@roo-code/telemetry", () => ({
 	TelemetryService: {
 		instance: {
 			captureEvent: vi.fn(),
+			isTelemetryEnabled: vi.fn().mockReturnValue(true),
 		},
 	},
 }))

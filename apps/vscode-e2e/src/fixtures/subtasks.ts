@@ -32,6 +32,7 @@ export const SUBTASK_API_HANG_PARENT_PROMPT = `${SUBTASK_API_HANG_PARENT_MARKER}
 export const SUBTASK_API_HANG_RESUME_MESSAGE = "Continue after provider hang."
 export const SUBTASK_API_HANG_CHILD_RESULT = "Hung child completed"
 export const SUBTASK_API_HANG_PARENT_RESULT = "API hang parent resumed"
+export const SUBTASK_API_HANG_RESPONSE_LATENCY_MS = 15_000
 
 // Abandon-subtask scenario (#559) — separate markers to avoid sequenceIndex collisions with the
 // interrupted-child-resumes tests above, which exhaust the sequence count for INTERRUPT markers.
@@ -262,7 +263,7 @@ export function addSubtaskFixtures(mock: InstanceType<typeof LLMock>) {
 			sequenceIndex: 0,
 		},
 		// Keep the first child response pending long enough for the e2e test to cancel an in-flight API request.
-		latency: 15_000,
+		latency: SUBTASK_API_HANG_RESPONSE_LATENCY_MS,
 		response: {
 			toolCalls: [
 				{

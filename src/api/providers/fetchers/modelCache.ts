@@ -59,6 +59,10 @@ function captureModelCacheEmptyResponseOnce(
 		return
 	}
 
+	if (!TelemetryService.instance.isTelemetryEnabled()) {
+		return
+	}
+
 	reportedEmptyModelResponse.add(cacheKey)
 	TelemetryService.instance.captureEvent(TelemetryEventName.MODEL_CACHE_EMPTY_RESPONSE, { provider, ...properties })
 }
