@@ -37,6 +37,20 @@ for this exact support, so if you are having problems or if you have question, j
 
 ## What's New in v3.74.0
 
+**Zoo Gateway is live!**
+
+The gateway is a single endpoint for all providers, with one balance and per-request spending/usage breakdown.
+
+**Setup:**
+
+- Add credits: https://www.zoocode.dev/dashboard/credits
+- Sign in from the extension.
+- In the settings, select Zoo Gateway as the provider when creating profiles for different models
+
+Usage and charges can be viewed in the [dashboard](https://www.zoocode.dev/dashboard).
+
+Models: https://www.zoocode.dev/dashboard/models
+
 - **More OpenAI controls** — use Fast priority mode with OpenAI Codex and choose higher reasoning effort for OpenAI-compatible models.
 - **More reliable providers and models** — improved router metadata handling, Ollama model refresh, Bedrock proxy support, and Friendli reasoning controls.
 - **Smoother settings and developer workflows** — settings now preserve unsaved edits, short terminal commands complete cleanly, architect plans use workspace-relative paths, and remaining user-facing Roo branding is updated to Zoo.
@@ -65,7 +79,7 @@ for this exact support, so if you are having problems or if you have question, j
 - [Tiếng Việt](locales/vi/README.md)
 - [简体中文](locales/zh-CN/README.md)
 - [繁體中文](locales/zh-TW/README.md)
-  </details>
+    </details>
 
 ---
 
