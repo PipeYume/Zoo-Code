@@ -129,6 +129,7 @@ export function createHostEventStreamParser(
 		maxPendingStreams?: number
 		maxQueuedEvents?: number
 		maxQueuedBytes?: number
+		maxInputBytes?: number
 		maxPendingMs?: number
 		now?: () => number
 	},
@@ -136,6 +137,7 @@ export function createHostEventStreamParser(
 	const redactor = createZooStreamRedactor(options)
 	const maxQueuedEvents = options.maxQueuedEvents ?? 512
 	const maxQueuedBytes = options.maxQueuedBytes ?? 1024 * 1024
+	const maxInputBytes = options.maxInputBytes ?? 1024 * 1024
 	const maxPendingMs = options.maxPendingMs ?? 1_000
 	const now = options.now ?? Date.now
 	type QueueEntry = {
@@ -149,6 +151,20 @@ export function createHostEventStreamParser(
 	const envelopes = new Map<string, QueueEntry[]>()
 	const pinnedHostId = options.hostId
 	let lastSeq: number | undefined
+	const inputSize = (value: unknown, seen = new WeakSet<object>()): number => {
+		if (value === null || value === undefined) return 4
+		if (typeof value === "string") return new TextEncoder().encode(value).byteLength
+		if (typeof value !== "object") return 8
+		if (seen.has(value)) return maxInputBytes + 1
+		seen.add(value)
+		let bytes = 2
+		for (const [key, entry] of Object.entries(value)) {
+			bytes += new TextEncoder().encode(key).byteLength + inputSize(entry, seen)
+			if (bytes > maxInputBytes) return bytes
+		}
+		seen.delete(value)
+		return bytes
+	}
 	const eventKey = (event: RawZooStreamEvent) =>
 		JSON.stringify([
 			event.hostId,
@@ -218,6 +234,7 @@ export function createHostEventStreamParser(
 
 	return {
 		push(input) {
+			if (inputSize(input) > maxInputBytes) throw new Error("Host event exceeds the input limit")
 			const event = rawHostEventDiscriminatedSchema.parse(input)
 			if (event.hostId !== pinnedHostId) {
 				throw new Error("Host event stream cannot span multiple hosts")

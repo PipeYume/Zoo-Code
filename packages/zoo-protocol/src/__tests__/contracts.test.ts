@@ -19,7 +19,7 @@ import {
 	validateMonotonicSequence,
 	validateNegotiatedStreamSession,
 	validateParentHello,
-	validateStreamLifecycle,
+	validateStreamLifecycle as validateStreamLifecycleContract,
 	zooRunResultSchema,
 	zooStreamEventSchema,
 	zooStreamSchema,
@@ -33,6 +33,25 @@ const startCommand = hostCommandSchema.parse({
 	workspace: "/workspace",
 	prompt: "Start",
 })
+
+function validateStreamLifecycle(
+	events: Parameters<typeof validateStreamLifecycleContract>[0],
+	commands: Parameters<typeof validateStreamLifecycleContract>[1] = [],
+	commandEvents: Parameters<typeof validateStreamLifecycleContract>[2] = [],
+	scope?: Parameters<typeof validateStreamLifecycleContract>[3],
+) {
+	const lastHostSeq = commandEvents.reduce((maximum, event) => Math.max(maximum, event.seq), 0)
+	const eventEnvelopes = events.map((event, index) =>
+		hostEventSchema.parse({
+			v: 1,
+			seq: lastHostSeq + index + 1,
+			hostId: event.hostId,
+			type: "event",
+			event,
+		}),
+	)
+	return validateStreamLifecycleContract(events, commands, [...commandEvents, ...eventEnvelopes], scope)
+}
 
 const initEvent = zooStreamEventSchema.parse({
 	v: 1,
@@ -330,6 +349,30 @@ describe("strict host contracts", () => {
 			hostEventSchema.safeParse({ v: 1, seq: 1, hostId: "host", type: "host.heartbeat", monotonicMs: Infinity })
 				.success,
 		).toBe(false)
+	})
+
+	it("rejects oversized terminal output before stream parsing", () => {
+		const parser = createHostEventStreamParser({ hostId: "host", maxInputBytes: 4 })
+		expect(() =>
+			parser.push({
+				v: 1,
+				seq: 1,
+				hostId: "host",
+				type: "event",
+				event: {
+					v: 1,
+					seq: 1,
+					timestamp,
+					hostId: "host",
+					rootTaskId: "root",
+					taskId: "root",
+					type: "terminal.output",
+					toolCallId: "terminal",
+					stream: "stdout",
+					delta: "12345",
+				},
+			}),
+		).toThrow("input limit")
 	})
 
 	it("does not mutate parser state for an invalid nested event", () => {
@@ -839,6 +882,60 @@ describe("public automation contracts", () => {
 		expect(validateStreamLifecycle([initEvent, { ...initEvent, seq: 2 }, resultEvent(3)])).toMatchObject({
 			ok: false,
 		})
+	})
+
+	it("scopes interleaved host commands and requires ACK before public effects", () => {
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.started"),
+			taskEvent(4, "task.lifecycle", { state: "completed" }),
+			resultEvent(5),
+		]
+		const otherStart = hostCommandSchema.parse({
+			v: 1,
+			id: "other-start",
+			type: "task.start",
+			workspace: "/other",
+			prompt: "Other",
+		})
+		const interleaved = [
+			hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId: "start" }),
+			hostEventSchema.parse({ v: 1, seq: 2, hostId: "host", type: "command.ack", commandId: "other-start" }),
+			hostEventSchema.parse({
+				v: 1,
+				seq: 3,
+				hostId: "host",
+				type: "command.done",
+				commandId: "other-start",
+				data: { commandType: "task.start", task: { rootTaskId: "other-root", taskId: "other-root" } },
+			}),
+			hostEventSchema.parse({
+				v: 1,
+				seq: 4,
+				hostId: "host",
+				type: "command.done",
+				commandId: "start",
+				data: { commandType: "task.start", task: { rootTaskId: "root", taskId: "root" } },
+			}),
+		]
+		expect(
+			validateStreamLifecycle(stream, [startCommand, otherStart], interleaved, {
+				initiatingCommandId: "start",
+				commandIds: ["start"],
+			}),
+		).toEqual({ ok: true })
+
+		const eventEnvelopes = stream.map((event, index) =>
+			hostEventSchema.parse({ v: 1, seq: index + 1, hostId: "host", type: "event", event }),
+		)
+		const lateAckWindow = [
+			eventEnvelopes[0]!,
+			eventEnvelopes[1]!,
+			...startDone("start", "root", 3),
+			...eventEnvelopes.slice(2).map((event, index) => ({ ...event, seq: index + 5 })),
+		]
+		expect(validateStreamLifecycleContract(stream, [startCommand], lateAckWindow)).toMatchObject({ ok: false })
 	})
 
 	it("validates task-tree settlement and approval command causation", () => {
@@ -1940,6 +2037,13 @@ describe("redaction contracts", () => {
 		])
 		expect(multilineCookie.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
 			.toBe("[REDACTED][REDACTED]harmless\n")
+		const multilineAssignment = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "API_TOKEN=\n" },
+			{ ...terminal, seq: 2, delta: "hunter2\n" },
+			{ ...terminal, seq: 3, delta: "harmless\n" },
+		])
+		expect(multilineAssignment.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED][REDACTED]harmless\n")
 		const ansiPem = zooStreamSchema.parse([
 			{ ...terminal, seq: 1, delta: "-----BEGIN\u001b[31m PRIVATE KEY-----\n" },
 			{ ...terminal, seq: 2, delta: "private-body\n" },
@@ -1987,6 +2091,13 @@ describe("redaction contracts", () => {
 		expect(redactText(`API_\u001b]0;title\u0007TOKEN=hunter2`)).toBe("[REDACTED]")
 		expect(redactText(`API_\u009dtitle\u009cTOKEN=hunter2`)).toBe("[REDACTED]")
 		expect(redactText("passX\bword=hunter2")).toBe("[REDACTED]")
+		expect(redactText("passX\u001b[1Dword=hunter2")).toBe("[REDACTED]")
+		expect(redactValue({ apikey: "one", apitoken: "two", authtoken: "three", accesstoken: "four" })).toEqual({
+			apikey: "[REDACTED]",
+			apitoken: "[REDACTED]",
+			authtoken: "[REDACTED]",
+			accesstoken: "[REDACTED]",
+		})
 		expect(redactValue({ accessTokenValue: "hunter2", apiKeyValue: "secret", maxTokenValue: 10 })).toEqual({
 			accessTokenValue: "[REDACTED]",
 			apiKeyValue: "[REDACTED]",

@@ -12,6 +12,10 @@ const terminalControl = new RegExp(
 	`(?:${String.fromCharCode(27)}\\][^${String.fromCharCode(7)}${String.fromCharCode(27)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|${String.fromCharCode(27)}[PX^_][\\s\\S]*?${String.fromCharCode(27)}\\\\|${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]|[\\u0090\\u0098\\u009d\\u009e\\u009f][\\s\\S]*?\\u009c|\\u009b[0-?]*[ -/]*[@-~]|${String.fromCharCode(27)}[@-_])`,
 	"g",
 )
+const unsafeTerminalEditing = new RegExp(
+	`(?:${String.fromCharCode(27)}\\[[0-?]*[ -/]*[A-HJKSTfsu]|${String.fromCharCode(155)}[0-?]*[ -/]*[A-HJKSTfsu])`,
+	"i",
+)
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
 	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${cliSecretValue}`, "gi"),
@@ -33,6 +37,7 @@ export function isSensitiveKey(key: string): boolean {
 		.replace(/[^A-Za-z0-9]+/g, " ")
 		.trim()
 		.toLowerCase()
+	const compact = words.replace(/ /g, "")
 	if (
 		/\b(?:password|secret|passphrase|passwd|pwd)\b/.test(words) ||
 		/^(?:(?:proxy )?authorization|credentials?)$/.test(words) ||
@@ -40,6 +45,9 @@ export function isSensitiveKey(key: string): boolean {
 		/\bprivate key\b/.test(words)
 	)
 		return true
+	if (/^(?:.*)?(?:apikey|apitoken|accesstoken|authtoken|bearertoken|idtoken|privatekey|refreshtoken|sessiontoken)$/.test(compact)) {
+		return true
+	}
 	if (
 		/\b(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token) value$/.test(
 			words,
@@ -50,6 +58,10 @@ export function isSensitiveKey(key: string): boolean {
 	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
 		words,
 	)
+}
+
+export function requiresFailClosedRedaction(value: string): boolean {
+	return unsafeTerminalEditing.test(value)
 }
 
 export function canonicalizeRedactionText(value: string): string {
@@ -68,6 +80,7 @@ export function canonicalizeRedactionText(value: string): string {
 }
 
 export function redactText(value: string): string {
+	if (requiresFailClosedRedaction(value)) return REDACTED
 	const canonical = canonicalizeRedactionText(value)
 	const structured = canonical
 		.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/?#]+/g, (authority) => {
