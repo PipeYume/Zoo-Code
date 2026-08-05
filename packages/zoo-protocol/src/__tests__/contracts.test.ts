@@ -23,6 +23,13 @@ import {
 } from "../index.js"
 
 const timestamp = "2026-08-05T12:00:00.000Z"
+const startCommand = hostCommandSchema.parse({
+	v: 1,
+	id: "start",
+	type: "task.start",
+	workspace: "/workspace",
+	prompt: "Start",
+})
 
 const initEvent = zooStreamEventSchema.parse({
 	v: 1,
@@ -45,6 +52,7 @@ function taskEvent(seq: number, type: string, fields: Record<string, unknown> = 
 		type,
 		rootTaskId: "root",
 		taskId: "root",
+		...(type === "task.created" ? { requestId: "start" } : {}),
 		...fields,
 	})
 }
@@ -52,6 +60,7 @@ function taskEvent(seq: number, type: string, fields: Record<string, unknown> = 
 function resultEvent(seq: number, result: Record<string, unknown> = {}, event: Record<string, unknown> = {}) {
 	const outcome = result.outcome ?? "completed"
 	const parsed = taskEvent(seq, "task.result", {
+		requestId: "start",
 		result: {
 			schemaVersion: 1,
 			protocol: "zoo-run-result",
@@ -283,6 +292,43 @@ describe("strict host contracts", () => {
 		expect(validateCommandLifecycle([start], [acknowledgement, childCompletion])).toMatchObject({ ok: false })
 	})
 
+	it("does not reuse root identities across successful starts", () => {
+		const commands = ["first", "second"].map((id) =>
+			hostCommandSchema.parse({ v: 1, id, type: "task.start", workspace: "/workspace", prompt: id }),
+		)
+		const events = commands.flatMap((command, index) => [
+			hostEventSchema.parse({
+				v: 1,
+				seq: index * 2 + 1,
+				hostId: "host",
+				type: "command.ack",
+				commandId: command.id,
+			}),
+			hostEventSchema.parse({
+				v: 1,
+				seq: index * 2 + 2,
+				hostId: "host",
+				type: "command.done",
+				commandId: command.id,
+				data: { commandType: "task.start", task: { rootTaskId: "root", taskId: "root" } },
+			}),
+		])
+		expect(validateCommandLifecycle(commands, events)).toMatchObject({ ok: false })
+	})
+
+	it("redacts command errors before they cross the host boundary", () => {
+		const parsed = hostEventSchema.parse({
+			v: 1,
+			seq: 1,
+			hostId: "host",
+			type: "command.error",
+			commandId: "command",
+			error: { code: "provider_failed", message: "password=hunter2", phase: "token=secret" },
+		})
+		expect(parsed.type === "command.error" && parsed.error.message).toBe("[REDACTED]")
+		expect(parsed.type === "command.error" && parsed.error.phase).toBe("[REDACTED]")
+	})
+
 	it("binds history completion data to its requested workspace", () => {
 		const command = hostCommandSchema.parse({
 			v: 1,
@@ -382,9 +428,16 @@ describe("public automation contracts", () => {
 
 	it("requires init, contiguous sequence, and a settled authoritative root", () => {
 		const created = taskEvent(2, "task.created")
-		const completed = taskEvent(3, "task.lifecycle", { state: "completed" })
-		const result = resultEvent(4)
-		expect(validateStreamLifecycle([initEvent, created, completed, result])).toEqual({ ok: true })
+		const started = taskEvent(3, "task.started")
+		const completed = taskEvent(4, "task.lifecycle", { state: "completed" })
+		const result = resultEvent(5)
+		expect(validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand])).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, created, started, completed, resultEvent(5, { workspace: "/other" })],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([initEvent, resultEvent(2)])).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([initEvent, created, resultEvent(3)])).toMatchObject({ ok: false })
 		expect(
@@ -409,25 +462,45 @@ describe("public automation contracts", () => {
 
 	it("validates task-tree settlement and approval command causation", () => {
 		const rootCreated = taskEvent(2, "task.created")
-		const childCreated = taskEvent(3, "task.created", { taskId: "child", parentTaskId: "root" })
-		const delegated = taskEvent(4, "task.delegated", {
+		const rootStarted = taskEvent(3, "task.started")
+		const childCreated = taskEvent(4, "task.created", { taskId: "child", parentTaskId: "root" })
+		const delegated = taskEvent(5, "task.delegated", {
 			taskId: "child",
 			parentTaskId: "root",
 			childTaskId: "child",
 		})
-		const childCompleted = taskEvent(5, "task.lifecycle", { taskId: "child", state: "completed" })
-		const rootCompleted = taskEvent(6, "task.lifecycle", { state: "completed" })
+		const childStarted = taskEvent(6, "task.started", { taskId: "child" })
+		const childCompleted = taskEvent(7, "task.lifecycle", { taskId: "child", state: "completed" })
+		const rootCompleted = taskEvent(8, "task.lifecycle", { state: "completed" })
 		expect(
 			validateStreamLifecycle([
 				initEvent,
 				rootCreated,
+				rootStarted,
 				childCreated,
 				delegated,
+				childStarted,
 				childCompleted,
 				rootCompleted,
-				resultEvent(7),
-			]),
+				resultEvent(9),
+			], [startCommand]),
 		).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					rootCreated,
+					rootStarted,
+					childCreated,
+					delegated,
+					childStarted,
+					{ ...rootCompleted, seq: 7 },
+					{ ...childCompleted, seq: 8 },
+					resultEvent(9),
+				],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle([initEvent, rootCreated, childCreated, delegated, rootCompleted, resultEvent(6)]),
 		).toMatchObject({ ok: false })
@@ -457,12 +530,12 @@ describe("public automation contracts", () => {
 			]),
 		).toMatchObject({ ok: false })
 
-		const required = taskEvent(3, "ask.required", {
+		const required = taskEvent(4, "ask.required", {
 			askId: "ask",
 			category: "tool",
 			subject: "Run command",
 		})
-		const resolved = taskEvent(4, "ask.resolved", {
+		const resolved = taskEvent(5, "ask.resolved", {
 			requestId: "respond",
 			askId: "ask",
 			decision: "approve",
@@ -476,11 +549,11 @@ describe("public automation contracts", () => {
 			askId: "ask",
 			response: "approve",
 		})
-		const completed = taskEvent(5, "task.lifecycle", { state: "completed" })
+		const completed = taskEvent(6, "task.lifecycle", { state: "completed" })
 		expect(
 			validateStreamLifecycle(
-				[initEvent, rootCreated, required, resolved, completed, resultEvent(6)],
-				[response],
+				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[startCommand, response],
 			),
 		).toEqual({
 			ok: true,
@@ -500,14 +573,15 @@ describe("public automation contracts", () => {
 
 	it("correlates cancellation and settles operation lifecycles", () => {
 		const created = taskEvent(2, "task.created")
-		const toolStarted = taskEvent(3, "tool.started", { toolCallId: "tool", name: "read" })
-		const toolCompleted = taskEvent(4, "tool.completed", { toolCallId: "tool", name: "read" })
-		const terminalStarted = taskEvent(5, "terminal.status", { toolCallId: "terminal", state: "running" })
-		const terminalExited = taskEvent(6, "terminal.status", { toolCallId: "terminal", state: "exited", exitCode: 0 })
-		const mcpStarted = taskEvent(7, "mcp.started", { operationId: "mcp", server: "test", operation: "read" })
-		const mcpCompleted = taskEvent(8, "mcp.completed", { operationId: "mcp", server: "test", operation: "read" })
-		const interrupted = taskEvent(9, "task.lifecycle", { state: "interrupted" })
-		const cancelled = resultEvent(10, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
+		const started = taskEvent(3, "task.started")
+		const toolStarted = taskEvent(4, "tool.started", { toolCallId: "tool", name: "read" })
+		const toolCompleted = taskEvent(5, "tool.completed", { toolCallId: "tool", name: "read" })
+		const terminalStarted = taskEvent(6, "terminal.status", { toolCallId: "terminal", state: "running" })
+		const terminalExited = taskEvent(7, "terminal.status", { toolCallId: "terminal", state: "exited", exitCode: 0 })
+		const mcpStarted = taskEvent(8, "mcp.started", { operationId: "mcp", server: "test", operation: "read" })
+		const mcpCompleted = taskEvent(9, "mcp.completed", { operationId: "mcp", server: "test", operation: "read" })
+		const interrupted = taskEvent(10, "task.lifecycle", { state: "interrupted" })
+		const cancelled = resultEvent(11, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
 		const command = hostCommandSchema.parse({
 			v: 1,
 			id: "cancel",
@@ -519,6 +593,7 @@ describe("public automation contracts", () => {
 		const stream = [
 			initEvent,
 			created,
+			started,
 			toolStarted,
 			toolCompleted,
 			terminalStarted,
@@ -528,7 +603,7 @@ describe("public automation contracts", () => {
 			interrupted,
 			cancelled,
 		]
-		expect(validateStreamLifecycle(stream, [command])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [startCommand, command])).toEqual({ ok: true })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream, [{ ...command, reason: "signal" }])).toMatchObject({ ok: false })
 		expect(
@@ -598,11 +673,12 @@ describe("public automation contracts", () => {
 
 	it("abandons pending asks only for cancellation or timeout", () => {
 		const created = taskEvent(2, "task.created")
-		const required = taskEvent(3, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
-		const abandoned = taskEvent(4, "ask.abandoned", { askId: "ask", reason: "cancelled" })
+		const started = taskEvent(3, "task.started")
+		const required = taskEvent(4, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
+		const abandoned = taskEvent(5, "ask.abandoned", { askId: "ask", reason: "cancelled" })
 		if (abandoned.type !== "ask.abandoned") throw new Error("Expected ask.abandoned fixture")
-		const interrupted = taskEvent(5, "task.lifecycle", { state: "interrupted" })
-		const cancelled = resultEvent(6, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
+		const interrupted = taskEvent(6, "task.lifecycle", { state: "interrupted" })
+		const cancelled = resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
 		const command = hostCommandSchema.parse({
 			v: 1,
 			id: "cancel",
@@ -611,7 +687,7 @@ describe("public automation contracts", () => {
 			reason: "user",
 		})
 		expect(
-			validateStreamLifecycle([initEvent, created, required, abandoned, interrupted, cancelled], [command]),
+			validateStreamLifecycle([initEvent, created, started, required, abandoned, interrupted, cancelled], [startCommand, command]),
 		).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle(
@@ -647,9 +723,19 @@ describe("public automation contracts", () => {
 			rootTaskId: "root",
 			taskId: "root",
 		})
-		const resumed = taskEvent(3, "task.resumed", { requestId: "resume", previousState: "interrupted" })
-		const completed = taskEvent(4, "task.lifecycle", { state: "completed" })
-		const stream = [initEvent, taskEvent(2, "task.created"), resumed, completed, resultEvent(5)]
+		const predecessor = taskEvent(3, "task.lifecycle", { state: "interrupted" })
+		const resumed = taskEvent(4, "task.resumed", { requestId: "resume", previousState: "interrupted" })
+		const started = taskEvent(5, "task.started")
+		const completed = taskEvent(6, "task.lifecycle", { state: "completed" })
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			predecessor,
+			resumed,
+			started,
+			completed,
+			resultEvent(7, {}, { requestId: "resume" }),
+		]
 		expect(validateStreamLifecycle(stream, [command])).toEqual({ ok: true })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(
@@ -659,6 +745,65 @@ describe("public automation contracts", () => {
 			),
 		).toMatchObject({ ok: false })
 		expect(zooStreamEventSchema.safeParse({ ...resumed, previousState: "completed" }).success).toBe(false)
+	})
+
+	it("resumes a correlated descendant from its reconstructed predecessor", () => {
+		const command = hostCommandSchema.parse({
+			v: 1,
+			id: "resume-child",
+			type: "task.resume",
+			rootTaskId: "root",
+			taskId: "child",
+		})
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.created", { taskId: "child", parentTaskId: "root" }),
+			taskEvent(4, "task.delegated", { taskId: "child", parentTaskId: "root", childTaskId: "child" }),
+			taskEvent(5, "task.lifecycle", { taskId: "child", state: "waiting" }),
+			taskEvent(6, "task.resumed", {
+				taskId: "child",
+				requestId: "resume-child",
+				previousState: "waiting",
+			}),
+			taskEvent(7, "task.started", { taskId: "child" }),
+			taskEvent(8, "task.lifecycle", { taskId: "child", state: "completed" }),
+			taskEvent(9, "task.started"),
+			taskEvent(10, "task.lifecycle", { state: "completed" }),
+			resultEvent(11, {}, { requestId: "resume-child" }),
+		]
+		expect(validateStreamLifecycle(stream, [command])).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				stream.map((event) =>
+					event.type === "task.resumed" ? { ...event, previousState: "interrupted" as const } : event,
+				),
+				[command],
+			),
+		).toMatchObject({ ok: false })
+	})
+
+	it("keeps operation identities separate for delimiter-bearing IDs", () => {
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.started"),
+			taskEvent(4, "task.created", { taskId: "root\u0000x", parentTaskId: "root" }),
+			taskEvent(5, "task.delegated", {
+				taskId: "root\u0000x",
+				parentTaskId: "root",
+				childTaskId: "root\u0000x",
+			}),
+			taskEvent(6, "task.started", { taskId: "root\u0000x" }),
+			taskEvent(7, "tool.started", { toolCallId: "x\u0000y", name: "read" }),
+			taskEvent(8, "tool.started", { taskId: "root\u0000x", toolCallId: "y", name: "read" }),
+			taskEvent(9, "tool.completed", { toolCallId: "x\u0000y", name: "read" }),
+			taskEvent(10, "tool.completed", { taskId: "root\u0000x", toolCallId: "y", name: "read" }),
+			taskEvent(11, "task.lifecycle", { taskId: "root\u0000x", state: "completed" }),
+			taskEvent(12, "task.lifecycle", { state: "completed" }),
+			resultEvent(13),
+		]
+		expect(validateStreamLifecycle(stream, [startCommand])).toEqual({ ok: true })
 	})
 
 	it("keeps pending asks on waiting tasks", () => {
@@ -731,6 +876,8 @@ describe("redaction contracts", () => {
 		expect(redactText("Private Key: abc123")).toBe("[REDACTED]")
 		expect(redactText('{"auth.token":"secret"}')).toBe('{"auth.token":"[REDACTED]"}')
 		expect(redactText("https://alice:hunter2@example.com/path")).toBe("https://[REDACTED]@example.com/path")
+		expect(redactText("https://alice:p@ss@example.com/path")).toBe("https://[REDACTED]@example.com/path")
+		expect(redactText("--password abc,def run")).toBe("[REDACTED] run")
 		expect(redactText('API_TOKEN="abc def" run')).toBe("[REDACTED] run")
 	})
 
@@ -762,8 +909,21 @@ describe("redaction contracts", () => {
 			content: "safe",
 			complete: true,
 		})
+		if (structuralIdentity.type !== "message.upsert") throw new Error("Expected message.upsert fixture")
 		expect(structuralIdentity.taskId).toBe("password=hunter2")
-		expect(structuralIdentity.type === "message.upsert" && structuralIdentity.messageId).toBe("token=identity")
+		expect(structuralIdentity.messageId).toBe("token=identity")
+		const terminalOutput = taskEvent(3, "terminal.output", {
+			toolCallId: "terminal",
+			stream: "stdout",
+			delta: "abcdefgh",
+		})
+		expect(terminalOutput.type === "terminal.output" && terminalOutput.delta).toBe("[REDACTED]")
+		const terminalPrefix = taskEvent(4, "terminal.output", {
+			toolCallId: "terminal",
+			stream: "stdout",
+			delta: "API_TOKEN=",
+		})
+		expect(terminalPrefix.type === "terminal.output" && terminalPrefix.delta).toBe("[REDACTED]")
 	})
 
 	it("handles cycles without throwing", () => {
@@ -795,6 +955,14 @@ describe("deterministic parity oracle", () => {
 		})
 	})
 
+	it("includes tool identity and arguments in fake-provider semantics", () => {
+		const trace = runDeterministicFakeProvider(parityScenarios[1]!)
+		expect(trace.find((entry) => entry.type === "tool.started")).toMatchObject({
+			toolName: "read_file",
+			toolArguments: { path: "README.md" },
+		})
+	})
+
 	it("detects child completion incorrectly settling the root", () => {
 		const trace = [
 			{ type: "task.created", taskId: "root" },
@@ -808,6 +976,26 @@ describe("deterministic parity oracle", () => {
 		expect(
 			assertAuthoritativeRootResult(
 				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "failed" }],
+				"root",
+			),
+		).toBe(false)
+		expect(
+			assertAuthoritativeRootResult(
+				[
+					{
+						type: "task.result",
+						taskId: "root",
+						rootTaskId: "root",
+						outcome: "cancelled",
+						cancellationReason: "invalid" as "user",
+					},
+				],
+				"root",
+			),
+		).toBe(false)
+		expect(
+			assertAuthoritativeRootResult(
+				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "timed_out" }],
 				"root",
 			),
 		).toBe(false)

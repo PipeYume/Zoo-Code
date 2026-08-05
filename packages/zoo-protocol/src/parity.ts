@@ -12,6 +12,8 @@ export type SemanticTraceEntry = {
 	rootTaskId?: string
 	parentTaskId?: string
 	toolCallId?: string
+	toolName?: string
+	toolArguments?: Record<string, unknown>
 	state?: "running" | "waiting" | "interrupted" | "completed" | "failed"
 	askId?: string
 	decision?: "approve" | "reject" | "needs_input"
@@ -38,6 +40,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 		providerTurns: ["Hello from Zoo."],
 		expected: [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Reply with the fixture greeting." },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "Hello from Zoo." },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
 			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
@@ -54,8 +57,23 @@ export const parityScenarios: readonly ParityScenario[] = [
 				taskId: "root",
 				prompt: "Read README.md and report its title.",
 			},
-			{ type: "tool.started", rootTaskId: "root", taskId: "root", toolCallId: "call-1" },
-			{ type: "tool.completed", rootTaskId: "root", taskId: "root", toolCallId: "call-1" },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
+			{
+				type: "tool.started",
+				rootTaskId: "root",
+				taskId: "root",
+				toolCallId: "call-1",
+				toolName: "read_file",
+				toolArguments: { path: "README.md" },
+			},
+			{
+				type: "tool.completed",
+				rootTaskId: "root",
+				taskId: "root",
+				toolCallId: "call-1",
+				toolName: "read_file",
+				toolArguments: { path: "README.md" },
+			},
 			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "Zoo Code" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
 			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
@@ -72,8 +90,10 @@ export const parityScenarios: readonly ParityScenario[] = [
 				taskId: "root",
 				prompt: "Delegate once, then finish the root task.",
 			},
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "task.created", rootTaskId: "root", taskId: "child", parentTaskId: "root" },
 			{ type: "task.delegated", rootTaskId: "root", taskId: "child", parentTaskId: "root" },
+			{ type: "task.started", rootTaskId: "root", taskId: "child" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "child", state: "completed" },
 			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "root:accepted" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
@@ -86,6 +106,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 		providerTurns: ["ask:ask-1", "approve:ask-1:user:respond-1"],
 		expected: [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Request approval." },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "ask.required", rootTaskId: "root", taskId: "root", askId: "ask-1" },
 			{
 				type: "ask.resolved",
@@ -106,6 +127,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 		providerTurns: ["cancel:cancel-1:user"],
 		expected: [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Cancel deterministically." },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" },
 			{
 				type: "task.result",
@@ -123,6 +145,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 		providerTurns: ["fail:provider_failed"],
 		expected: [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Fail deterministically." },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "failed" },
 			{
 				type: "task.result",
@@ -161,6 +184,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 
 	const trace: SemanticTraceEntry[] = [
 		{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: scenario.prompt },
+		{ type: "task.started", rootTaskId: "root", taskId: "root" },
 	]
 	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
 	let terminalReached = false
@@ -169,8 +193,15 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		if (turn.startsWith("tool:")) {
 			const [, operation, toolCallId, argument] = turn.split(":")
 			if (operation !== "read_file" || !toolCallId || !argument) throw new Error(`Invalid tool fixture: ${turn}`)
-			trace.push({ type: "tool.started", rootTaskId: "root", taskId: "root", toolCallId })
-			trace.push({ type: "tool.completed", rootTaskId: "root", taskId: "root", toolCallId })
+			const tool = {
+				rootTaskId: "root",
+				taskId: "root",
+				toolCallId,
+				toolName: operation,
+				toolArguments: { path: argument },
+			}
+			trace.push({ type: "tool.started", ...tool })
+			trace.push({ type: "tool.completed", ...tool })
 			continue
 		}
 		if (turn.startsWith("delegate:")) {
@@ -178,6 +209,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			if (!taskId) throw new Error(`Invalid delegation fixture: ${turn}`)
 			trace.push({ type: "task.created", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.delegated", rootTaskId: "root", taskId, parentTaskId: "root" })
+			trace.push({ type: "task.started", rootTaskId: "root", taskId })
 			continue
 		}
 		if (turn.endsWith(":done")) {
@@ -257,10 +289,21 @@ export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry
 	) {
 		return false
 	}
-	if (result.outcome === "failed") return failedErrorCodeSchema.safeParse(result.errorCode).success
-	if (result.outcome === "timed_out") {
-		return result.errorCode === undefined || ["task_timed_out", "cleanup_timed_out"].includes(result.errorCode)
+	if (result.outcome === "failed") {
+		return failedErrorCodeSchema.safeParse(result.errorCode).success && result.cancellationReason === undefined
 	}
-	if (result.outcome === "cancelled") return result.cancellationReason !== undefined && result.errorCode === undefined
+	if (result.outcome === "timed_out") {
+		return (
+			["task_timed_out", "cleanup_timed_out"].includes(result.errorCode ?? "") &&
+			result.cancellationReason === undefined
+		)
+	}
+	if (result.outcome === "cancelled") {
+		return (
+			result.errorCode === undefined &&
+			result.cancellationReason !== undefined &&
+			["user", "signal", "timeout"].includes(result.cancellationReason)
+		)
+	}
 	return result.errorCode === undefined && result.cancellationReason === undefined
 }

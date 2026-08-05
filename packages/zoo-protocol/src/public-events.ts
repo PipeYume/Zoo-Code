@@ -2,7 +2,7 @@ import { z } from "zod"
 
 import type { HostCommand } from "./host-commands.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
-import { redactValue, type RedactedValue } from "./redaction.js"
+import { REDACTED, redactValue, type RedactedValue } from "./redaction.js"
 import { ZOO_PUBLIC_SCHEMA_VERSION, zooCapabilitySchema } from "./version.js"
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict()
@@ -225,7 +225,7 @@ export const zooStreamEventSchema = rawZooStreamEventSchema.transform((streamEve
 				error: redactError(streamEvent.error),
 			}
 		case "terminal.output":
-			return { ...streamEvent, delta: String(redactValue(streamEvent.delta)) }
+			return { ...streamEvent, delta: streamEvent.delta.length === 0 ? "" : REDACTED }
 		case "mcp.started":
 		case "mcp.completed":
 			return {
@@ -274,18 +274,61 @@ export function validateStreamLifecycle(
 	if (resultEvent.rootTaskId !== rootTaskId || resultEvent.taskId !== rootTaskId) {
 		return { ok: false, code: "task_failed", message: "task.result must identify the authoritative root task" }
 	}
+	const resumedEvents = events.filter((streamEvent) => streamEvent.type === "task.resumed")
+	const startCommands = commands.filter((command) => command.type === "task.start")
+	const resumeCommands = commands.filter((command) => command.type === "task.resume")
+	if (resumedEvents.length === 0) {
+		const start = startCommands[0]
+		if (
+			startCommands.length !== 1 ||
+			resumeCommands.length !== 0 ||
+			start === undefined ||
+			resultEvent.result.workspace !== start.workspace
+		) {
+			return { ok: false, code: "task_failed", message: "Fresh streams must match exactly one task.start command" }
+		}
+	} else if (resumedEvents.length !== 1 || startCommands.length !== 0 || resumeCommands.length !== 1) {
+		return { ok: false, code: "task_failed", message: "Resume streams must match exactly one task.resume command" }
+	}
 
-	const pendingAsks = new Set<string>()
-	const abandonedAsks = new Map<string, "cancelled" | "timed_out">()
+	const pendingAsks = new Map<string, Set<string>>()
+	const abandonedAsks = new Map<string, Map<string, "cancelled" | "timed_out">>()
 	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
-	const terminalStates = new Set(["interrupted", "completed", "failed"])
+	const endedStates = new Set(["completed", "failed"])
+	const settledStates = new Set(["interrupted", "completed", "failed"])
 	const taskParents = new Map<string, string | null>()
 	const createdTasks = new Set<string>()
 	const delegatedTasks = new Set<string>()
 	const resumedTasks = new Set<string>()
-	const toolStates = new Map<string, { state: "active" | "terminal"; name: string }>()
-	const terminalOperationStates = new Map<string, "active" | "terminal">()
-	const mcpStates = new Map<string, { state: "active" | "terminal"; server: string; operation: string }>()
+	const startedTasks = new Set<string>()
+	type ToolState = { state: "active" | "terminal"; name: string }
+	type McpState = { state: "active" | "terminal"; server: string; operation: string }
+	const toolStates = new Map<string, Map<string, ToolState>>()
+	const terminalOperationStates = new Map<string, Map<string, "active" | "terminal">>()
+	const mcpStates = new Map<string, Map<string, McpState>>()
+	const scope = <T>(map: Map<string, Map<string, T>>, taskId: string): Map<string, T> => {
+		const existing = map.get(taskId)
+		if (existing !== undefined) return existing
+		const created = new Map<string, T>()
+		map.set(taskId, created)
+		return created
+	}
+	const askScope = (taskId: string): Set<string> => {
+		const existing = pendingAsks.get(taskId)
+		if (existing !== undefined) return existing
+		const created = new Set<string>()
+		pendingAsks.set(taskId, created)
+		return created
+	}
+	const values = <T>(map: Map<string, Map<string, T>>): T[] => [...map.values()].flatMap((entries) => [...entries.values()])
+	const isDescendantOf = (taskId: string, parentTaskId: string): boolean => {
+		let current = taskParents.get(taskId)
+		while (current !== undefined && current !== null) {
+			if (current === parentTaskId) return true
+			current = taskParents.get(current)
+		}
+		return false
+	}
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
 			return {
@@ -301,7 +344,7 @@ export function validateStreamLifecycle(
 			if (
 				(streamEvent.taskId === rootTaskId) !== (parentTaskId === null) ||
 				(parentTaskId !== null && !taskParents.has(parentTaskId)) ||
-				(parentTaskId !== null && terminalStates.has(taskStates.get(parentTaskId) ?? "")) ||
+				(parentTaskId !== null && settledStates.has(taskStates.get(parentTaskId) ?? "")) ||
 				createdTasks.has(streamEvent.taskId)
 			) {
 				return {
@@ -315,6 +358,9 @@ export function validateStreamLifecycle(
 			}
 			taskParents.set(streamEvent.taskId, parentTaskId)
 			createdTasks.add(streamEvent.taskId)
+			if (streamEvent.taskId === rootTaskId && resumedEvents.length === 0 && streamEvent.requestId !== startCommands[0]?.id) {
+				return { ok: false, code: "task_failed", message: "Root creation must match its task.start request" }
+			}
 		} else if (streamEvent.type === "task.delegated") {
 			if (
 				streamEvent.taskId !== streamEvent.childTaskId ||
@@ -322,7 +368,7 @@ export function validateStreamLifecycle(
 				streamEvent.childTaskId === streamEvent.parentTaskId ||
 				!createdTasks.has(streamEvent.parentTaskId) ||
 				!createdTasks.has(streamEvent.childTaskId) ||
-				terminalStates.has(taskStates.get(streamEvent.parentTaskId) ?? "") ||
+				settledStates.has(taskStates.get(streamEvent.parentTaskId) ?? "") ||
 				delegatedTasks.has(streamEvent.childTaskId)
 			) {
 				return {
@@ -356,44 +402,96 @@ export function validateStreamLifecycle(
 		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
-		if (previousState !== undefined && terminalStates.has(previousState)) {
+		if (
+			(previousState !== undefined && endedStates.has(previousState)) ||
+			(previousState === "interrupted" && streamEvent.type !== "task.resumed")
+		) {
 			return {
 				ok: false,
 				code: "task_failed",
 				message: `Task ${streamEvent.taskId} emitted an event after termination`,
 			}
 		}
+		if (streamEvent.type === "task.started") {
+			if (
+				startedTasks.has(streamEvent.taskId) ||
+				(previousState !== undefined && previousState !== "running") ||
+				(resumeCommands[0]?.taskId === streamEvent.taskId && !resumedTasks.has(streamEvent.taskId))
+			) {
+				return { ok: false, code: "task_failed", message: `Invalid start transition for task ${streamEvent.taskId}` }
+			}
+			startedTasks.add(streamEvent.taskId)
+			taskStates.set(streamEvent.taskId, "running")
+		}
 		if (streamEvent.type === "task.lifecycle") {
-			const hasPendingAsk = [...pendingAsks].some((askKey) => askKey.startsWith(`${streamEvent.taskId}\u0000`))
-			if (hasPendingAsk && terminalStates.has(streamEvent.state)) {
+			const resume = resumeCommands[0]
+			const reconstructingPredecessor =
+				!startedTasks.has(streamEvent.taskId) &&
+				resume?.taskId === streamEvent.taskId &&
+				!resumedTasks.has(streamEvent.taskId) &&
+				(streamEvent.state === "waiting" || streamEvent.state === "interrupted")
+			if (!startedTasks.has(streamEvent.taskId) && !reconstructingPredecessor) {
+				return { ok: false, code: "task_failed", message: "Task lifecycle requires an ordered task.started event" }
+			}
+			if ((pendingAsks.get(streamEvent.taskId)?.size ?? 0) > 0 && settledStates.has(streamEvent.state)) {
 				return { ok: false, code: "task_failed", message: "A task with a pending ask cannot terminate" }
+			}
+			if (
+				settledStates.has(streamEvent.state) &&
+				[...createdTasks].some(
+					(taskId) => isDescendantOf(taskId, streamEvent.taskId) && !settledStates.has(taskStates.get(taskId) ?? ""),
+				)
+			) {
+				return { ok: false, code: "task_failed", message: "A task cannot terminate before its descendants" }
 			}
 			taskStates.set(streamEvent.taskId, streamEvent.state)
 		}
 		if (streamEvent.type === "task.resumed") {
-			const resume = commands.find(
-				(command) =>
-					command.type === "task.resume" &&
-					command.id === streamEvent.requestId &&
-					command.taskId === streamEvent.taskId &&
-					command.rootTaskId === streamEvent.rootTaskId,
-			)
-			if (resume === undefined || resumedTasks.size > 0 || streamEvent.taskId !== rootTaskId) {
-				return { ok: false, code: "task_failed", message: "task.resumed must uniquely match the root resume command" }
+			const resume = resumeCommands[0]
+			if (
+				resume === undefined ||
+				resume.id !== streamEvent.requestId ||
+				resume.taskId !== streamEvent.taskId ||
+				resume.rootTaskId !== streamEvent.rootTaskId ||
+				resultEvent.requestId !== resume.id ||
+				resumedTasks.size > 0 ||
+				previousState !== streamEvent.previousState
+			) {
+				return { ok: false, code: "task_failed", message: "task.resumed must match reconstructed persisted state" }
 			}
 			resumedTasks.add(streamEvent.taskId)
 			taskStates.set(streamEvent.taskId, "running")
 		}
+		if (
+			[
+				"message.upsert",
+				"ask.required",
+				"ask.resolved",
+				"ask.abandoned",
+				"tool.started",
+				"tool.updated",
+				"tool.completed",
+				"tool.failed",
+				"terminal.output",
+				"terminal.status",
+				"mcp.started",
+				"mcp.completed",
+				"mcp.failed",
+				"usage.updated",
+			].includes(streamEvent.type) &&
+			!startedTasks.has(streamEvent.taskId)
+		) {
+			return { ok: false, code: "task_failed", message: "Task operation requires an ordered task.started event" }
+		}
 		if (streamEvent.type === "ask.required") {
-			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
-			if (pendingAsks.has(askKey)) {
+			const asks = askScope(streamEvent.taskId)
+			if (asks.has(streamEvent.askId)) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} is already pending` }
 			}
-			pendingAsks.add(askKey)
+			asks.add(streamEvent.askId)
 		}
 		if (streamEvent.type === "ask.resolved") {
-			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
-			if (!pendingAsks.delete(askKey)) {
+			if (!pendingAsks.get(streamEvent.taskId)?.delete(streamEvent.askId)) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
 			}
 			if (
@@ -424,58 +522,62 @@ export function validateStreamLifecycle(
 			}
 		}
 		if (streamEvent.type === "ask.abandoned") {
-			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
-			if (!pendingAsks.delete(askKey)) {
+			if (!pendingAsks.get(streamEvent.taskId)?.delete(streamEvent.askId)) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
 			}
-			abandonedAsks.set(askKey, streamEvent.reason)
+			scope(abandonedAsks, streamEvent.taskId).set(streamEvent.askId, streamEvent.reason)
 		}
 
-		const toolKey = "toolCallId" in streamEvent ? `${streamEvent.taskId}\u0000${streamEvent.toolCallId}` : undefined
 		if (streamEvent.type === "tool.started") {
-			if (toolStates.has(toolKey!))
+			const tools = scope(toolStates, streamEvent.taskId)
+			if (tools.has(streamEvent.toolCallId))
 				return { ok: false, code: "task_failed", message: "Tool operation started twice" }
-			toolStates.set(toolKey!, { state: "active", name: streamEvent.name })
+			tools.set(streamEvent.toolCallId, { state: "active", name: streamEvent.name })
 		} else if (
 			streamEvent.type === "tool.updated" ||
 			streamEvent.type === "tool.completed" ||
 			streamEvent.type === "tool.failed"
 		) {
-			const tool = toolStates.get(toolKey!)
+			const tools = scope(toolStates, streamEvent.taskId)
+			const tool = tools.get(streamEvent.toolCallId)
 			if (tool?.state !== "active" || tool.name !== streamEvent.name) {
 				return { ok: false, code: "task_failed", message: "Tool event requires an active operation" }
 			}
 			if (streamEvent.type === "tool.completed" || streamEvent.type === "tool.failed")
-				toolStates.set(toolKey!, { ...tool, state: "terminal" })
+				tools.set(streamEvent.toolCallId, { ...tool, state: "terminal" })
 		}
 
 		if (streamEvent.type === "terminal.status") {
-			const state = terminalOperationStates.get(toolKey!)
+			const operations = scope(terminalOperationStates, streamEvent.taskId)
+			const state = operations.get(streamEvent.toolCallId)
 			if (streamEvent.state === "running") {
 				if (state !== undefined)
 					return { ok: false, code: "task_failed", message: "Terminal operation started twice" }
-				terminalOperationStates.set(toolKey!, "active")
+				operations.set(streamEvent.toolCallId, "active")
 			} else if (state !== "active") {
 				return { ok: false, code: "task_failed", message: "Terminal status requires an active operation" }
 			} else if (streamEvent.state === "exited" || streamEvent.state === "killed") {
-				terminalOperationStates.set(toolKey!, "terminal")
+				operations.set(streamEvent.toolCallId, "terminal")
 			}
-		} else if (streamEvent.type === "terminal.output" && terminalOperationStates.get(toolKey!) !== "active") {
+		} else if (
+			streamEvent.type === "terminal.output" &&
+			terminalOperationStates.get(streamEvent.taskId)?.get(streamEvent.toolCallId) !== "active"
+		) {
 			return { ok: false, code: "task_failed", message: "Terminal output requires an active operation" }
 		}
 
-		const mcpKey =
-			"operationId" in streamEvent ? `${streamEvent.taskId}\u0000${streamEvent.operationId}` : undefined
 		if (streamEvent.type === "mcp.started") {
-			if (mcpStates.has(mcpKey!))
+			const operations = scope(mcpStates, streamEvent.taskId)
+			if (operations.has(streamEvent.operationId))
 				return { ok: false, code: "task_failed", message: "MCP operation started twice" }
-			mcpStates.set(mcpKey!, {
+			operations.set(streamEvent.operationId, {
 				state: "active",
 				server: streamEvent.server,
 				operation: streamEvent.operation,
 			})
 		} else if (streamEvent.type === "mcp.completed" || streamEvent.type === "mcp.failed") {
-			const operation = mcpStates.get(mcpKey!)
+			const operations = scope(mcpStates, streamEvent.taskId)
+			const operation = operations.get(streamEvent.operationId)
 			if (
 				operation?.state !== "active" ||
 				operation.server !== streamEvent.server ||
@@ -483,23 +585,23 @@ export function validateStreamLifecycle(
 			) {
 				return { ok: false, code: "task_failed", message: "MCP result requires an active operation" }
 			}
-			mcpStates.set(mcpKey!, { ...operation, state: "terminal" })
+			operations.set(streamEvent.operationId, { ...operation, state: "terminal" })
 		}
 	}
-	if (pendingAsks.size > 0 && resultEvent.result.outcome !== "needs_input") {
+	const pendingAskCount = [...pendingAsks.values()].reduce((count, asks) => count + asks.size, 0)
+	if (pendingAskCount > 0 && resultEvent.result.outcome !== "needs_input") {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains unresolved asks" }
 	}
 	if (
 		resultEvent.result.outcome === "needs_input" &&
-		[...pendingAsks].some((askKey) => taskStates.get(askKey.slice(0, askKey.indexOf("\u0000"))) !== "waiting")
+		[...pendingAsks].some(([taskId, asks]) => asks.size > 0 && taskStates.get(taskId) !== "waiting")
 	) {
 		return { ok: false, code: "task_failed", message: "Pending asks must belong to waiting tasks" }
 	}
-	const resumeCommands = commands.filter((command) => command.type === "task.resume")
 	if (resumeCommands.length !== resumedTasks.size) {
-		return { ok: false, code: "task_failed", message: "Every resume command must reconstruct one resumed root" }
+		return { ok: false, code: "task_failed", message: "Every resume command must reconstruct one resumed task" }
 	}
-	if ([...abandonedAsks.values()].some((reason) => reason !== resultEvent.result.outcome)) {
+	if (values(abandonedAsks).some((reason) => reason !== resultEvent.result.outcome)) {
 		return { ok: false, code: "task_failed", message: "Ask abandonment contradicts task.result" }
 	}
 	const expectedState = {
@@ -546,8 +648,8 @@ export function validateStreamLifecycle(
 		}
 	}
 	if (
-		[...toolStates.values(), ...mcpStates.values()].some((operation) => operation.state === "active") ||
-		[...terminalOperationStates.values()].includes("active")
+		[...values(toolStates), ...values(mcpStates)].some((operation) => operation.state === "active") ||
+		values(terminalOperationStates).includes("active")
 	) {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains active operations" }
 	}

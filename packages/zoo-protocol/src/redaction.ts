@@ -2,6 +2,7 @@ const REDACTED = "[REDACTED]" as const
 const sensitiveKey = /(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)/i
 const sensitiveKeyName = String.raw`[A-Za-z0-9_.-]*(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)[A-Za-z0-9_.-]*`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
+const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
 const quotedUnquotedSecret = new RegExp(
@@ -9,9 +10,8 @@ const quotedUnquotedSecret = new RegExp(
 	"gi",
 )
 const secretPatterns: ReadonlyArray<RegExp> = [
-	/\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@/gi,
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
-	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${secretValue}`, "gi"),
+	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${cliSecretValue}`, "gi"),
 	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*[:=]\\s*${secretValue}`, "gi"),
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
@@ -23,7 +23,12 @@ export type RedactedValue = null | undefined | boolean | number | string | Redac
 
 export function redactText(value: string): string {
 	const structured = value
-		.replace(/\b(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, `$1${REDACTED}@`)
+		.replace(/\bhttps?:\/\/[^\s/?#]+/gi, (authority) => {
+			const schemeEnd = authority.indexOf("//") + 2
+			const credentialsEnd = authority.lastIndexOf("@")
+			if (credentialsEnd < schemeEnd || !authority.slice(schemeEnd, credentialsEnd).includes(":")) return authority
+			return `${authority.slice(0, schemeEnd)}${REDACTED}@${authority.slice(credentialsEnd + 1)}`
+		})
 		.replace(doubleQuotedSecret, `$1"${REDACTED}"`)
 		.replace(singleQuotedSecret, `$1'${REDACTED}'`)
 		.replace(quotedUnquotedSecret, `$1${REDACTED}`)

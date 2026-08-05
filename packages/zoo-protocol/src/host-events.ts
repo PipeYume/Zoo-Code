@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { HostCommand } from "./host-commands.js"
 import { zooErrorSchema } from "./outcomes.js"
 import { zooStreamEventSchema } from "./public-events.js"
+import { redactText } from "./redaction.js"
 import { ZOO_HOST_PROTOCOL_VERSION } from "./version.js"
 
 const base = {
@@ -79,11 +80,24 @@ const hostEventDiscriminatedSchema = z.discriminatedUnion("type", [
 	normalizedEventSchema,
 ])
 
-export const hostEventSchema = hostEventDiscriminatedSchema.superRefine((event, context) => {
-	if (event.type === "event" && event.event.hostId !== event.hostId) {
-		context.addIssue({ code: z.ZodIssueCode.custom, message: "Normalized event hostId must match its host envelope" })
-	}
-})
+export const hostEventSchema = hostEventDiscriminatedSchema
+	.superRefine((event, context) => {
+		if (event.type === "event" && event.event.hostId !== event.hostId) {
+			context.addIssue({ code: z.ZodIssueCode.custom, message: "Normalized event hostId must match its host envelope" })
+		}
+	})
+	.transform((event) =>
+		event.type === "command.error"
+			? {
+					...event,
+					error: {
+						...event.error,
+						message: redactText(event.error.message),
+						phase: event.error.phase === undefined ? undefined : redactText(event.error.phase),
+					},
+				}
+			: event,
+	)
 
 export type HostEvent = z.infer<typeof hostEventSchema>
 
@@ -102,6 +116,7 @@ export function validateCommandLifecycle(
 	events: readonly HostEvent[],
 ): { ok: true } | { ok: false; commandId: string; message: string } {
 	const commandById = new Map<string, HostCommand>()
+	const startedRoots = new Set<string>()
 	for (const command of commands) {
 		if (commandById.has(command.id)) {
 			return { ok: false, commandId: command.id, message: "Command IDs must be unique" }
@@ -182,6 +197,12 @@ export function validateCommandLifecycle(
 			})()
 			if (!matches) {
 				return { ok: false, commandId, message: "DONE payload does not match the originating command" }
+			}
+			if (command.type === "task.start" && data.commandType === "task.start") {
+				if (startedRoots.has(data.task.rootTaskId)) {
+					return { ok: false, commandId, message: "Successful task starts must return unique root task IDs" }
+				}
+				startedRoots.add(data.task.rootTaskId)
 			}
 		}
 	}
