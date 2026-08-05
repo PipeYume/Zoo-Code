@@ -1,7 +1,8 @@
 import { z } from "zod"
 
 import type { HostCommand } from "./host-commands.js"
-import { zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
+import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
+import { redactValue } from "./redaction.js"
 import { ZOO_PUBLIC_SCHEMA_VERSION, zooCapabilitySchema } from "./version.js"
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict()
@@ -15,7 +16,7 @@ export const usageSchema = strictObject({
 
 export const changedFileSchema = strictObject({ path: z.string().min(1), status: z.string().min(1) })
 
-export const zooRunResultSchema = strictObject({
+const rawZooRunResultSchema = strictObject({
 	schemaVersion: z.literal(ZOO_PUBLIC_SCHEMA_VERSION),
 	protocol: z.literal("zoo-run-result"),
 	success: z.boolean(),
@@ -30,6 +31,7 @@ export const zooRunResultSchema = strictObject({
 	cost: z.number().nonnegative().optional(),
 	elapsedMs: z.number().int().nonnegative(),
 	changedFiles: z.array(changedFileSchema).optional(),
+	cancellationReason: z.enum(["user", "signal", "timeout"]).optional(),
 }).superRefine((result, context) => {
 	if (result.success !== (result.outcome === "completed")) {
 		context.addIssue({ code: z.ZodIssueCode.custom, message: "success must match completed outcome" })
@@ -37,10 +39,29 @@ export const zooRunResultSchema = strictObject({
 	if (result.outcome === "failed" && result.error === undefined) {
 		context.addIssue({ code: z.ZodIssueCode.custom, message: "failed results require an error" })
 	}
-	if (result.outcome === "completed" && result.error !== undefined) {
-		context.addIssue({ code: z.ZodIssueCode.custom, message: "completed results cannot include an error" })
+	if (
+		result.outcome === "failed" &&
+		result.error !== undefined &&
+		!failedErrorCodeSchema.safeParse(result.error.code).success
+	) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: "failed results require a non-timeout error code" })
+	}
+	if (
+		result.outcome === "timed_out" &&
+		result.error !== undefined &&
+		!["task_timed_out", "cleanup_timed_out"].includes(result.error.code)
+	) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: "timed_out results require a timeout error code" })
+	}
+	if (!["failed", "timed_out"].includes(result.outcome) && result.error !== undefined) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: `${result.outcome} results cannot include an error` })
+	}
+	if ((result.outcome === "cancelled") !== (result.cancellationReason !== undefined)) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: "cancelled results require a cancellation reason" })
 	}
 })
+
+export const zooRunResultSchema = z.preprocess((value) => redactValue(value), rawZooRunResultSchema)
 
 export type ZooRunResult = z.infer<typeof zooRunResultSchema>
 
@@ -132,7 +153,7 @@ const usageUpdatedEventSchema = taskEvent("usage.updated", {
 })
 const taskResultEventSchema = taskEvent("task.result", { result: zooRunResultSchema })
 
-export const zooStreamEventSchema = z.discriminatedUnion("type", [
+const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	systemInitEventSchema,
 	systemWarningEventSchema,
 	taskCreatedEventSchema,
@@ -155,6 +176,8 @@ export const zooStreamEventSchema = z.discriminatedUnion("type", [
 	usageUpdatedEventSchema,
 	taskResultEventSchema,
 ])
+
+export const zooStreamEventSchema = z.preprocess((value) => redactValue(value), rawZooStreamEventSchema)
 
 export type ZooStreamEvent = z.infer<typeof zooStreamEventSchema>
 
@@ -191,12 +214,19 @@ export function validateStreamLifecycle(
 	const pendingAsks = new Set<string>()
 	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
 	const terminalStates = new Set(["interrupted", "completed", "failed"])
-	const taskParents = new Map<string, string | null>([[rootTaskId, null]])
+	const taskParents = new Map<string, string | null>()
 	const createdTasks = new Set<string>()
 	const delegatedTasks = new Set<string>()
+	const toolStates = new Map<string, "active" | "terminal">()
+	const terminalOperationStates = new Map<string, "active" | "terminal">()
+	const mcpStates = new Map<string, "active" | "terminal">()
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
-			return { ok: false, code: "task_failed", message: "All task events must identify the authoritative root task" }
+			return {
+				ok: false,
+				code: "task_failed",
+				message: "All task events must identify the authoritative root task",
+			}
 		}
 		if (!("taskId" in streamEvent) || streamEvent.type === "task.result") continue
 
@@ -205,9 +235,14 @@ export function validateStreamLifecycle(
 			if (
 				(streamEvent.taskId === rootTaskId) !== (parentTaskId === null) ||
 				(parentTaskId !== null && !taskParents.has(parentTaskId)) ||
+				(parentTaskId !== null && terminalStates.has(taskStates.get(parentTaskId) ?? "")) ||
 				createdTasks.has(streamEvent.taskId)
 			) {
-				return { ok: false, code: "task_failed", message: `Invalid creation edge for task ${streamEvent.taskId}` }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Invalid creation edge for task ${streamEvent.taskId}`,
+				}
 			}
 			if (taskParents.has(streamEvent.taskId) && taskParents.get(streamEvent.taskId) !== parentTaskId) {
 				return { ok: false, code: "task_failed", message: `Conflicting parent for task ${streamEvent.taskId}` }
@@ -219,16 +254,26 @@ export function validateStreamLifecycle(
 				streamEvent.taskId !== streamEvent.childTaskId ||
 				streamEvent.childTaskId === rootTaskId ||
 				streamEvent.childTaskId === streamEvent.parentTaskId ||
-				!taskParents.has(streamEvent.parentTaskId) ||
+				!createdTasks.has(streamEvent.parentTaskId) ||
+				!createdTasks.has(streamEvent.childTaskId) ||
+				terminalStates.has(taskStates.get(streamEvent.parentTaskId) ?? "") ||
 				delegatedTasks.has(streamEvent.childTaskId)
 			) {
-				return { ok: false, code: "task_failed", message: `Invalid delegation edge for task ${streamEvent.childTaskId}` }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Invalid delegation edge for task ${streamEvent.childTaskId}`,
+				}
 			}
 			if (
 				taskParents.has(streamEvent.childTaskId) &&
 				taskParents.get(streamEvent.childTaskId) !== streamEvent.parentTaskId
 			) {
-				return { ok: false, code: "task_failed", message: `Conflicting parent for task ${streamEvent.childTaskId}` }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Conflicting parent for task ${streamEvent.childTaskId}`,
+				}
 			}
 			taskParents.set(streamEvent.childTaskId, streamEvent.parentTaskId)
 			delegatedTasks.add(streamEvent.childTaskId)
@@ -238,7 +283,11 @@ export function validateStreamLifecycle(
 
 		const previousState = taskStates.get(streamEvent.taskId)
 		if (previousState !== undefined && terminalStates.has(previousState)) {
-			return { ok: false, code: "task_failed", message: `Task ${streamEvent.taskId} emitted an event after termination` }
+			return {
+				ok: false,
+				code: "task_failed",
+				message: `Task ${streamEvent.taskId} emitted an event after termination`,
+			}
 		}
 		if (streamEvent.type === "task.lifecycle") {
 			taskStates.set(streamEvent.taskId, streamEvent.state)
@@ -274,9 +323,54 @@ export function validateStreamLifecycle(
 						? { approve: "approve", reject: "reject", message: "needs_input" }[response.response]
 						: undefined
 				if (expectedDecision !== streamEvent.decision) {
-					return { ok: false, code: "task_failed", message: "User ask resolution does not match its response command" }
+					return {
+						ok: false,
+						code: "task_failed",
+						message: "User ask resolution does not match its response command",
+					}
 				}
 			}
+		}
+
+		const toolKey = "toolCallId" in streamEvent ? `${streamEvent.taskId}\u0000${streamEvent.toolCallId}` : undefined
+		if (streamEvent.type === "tool.started") {
+			if (toolStates.has(toolKey!))
+				return { ok: false, code: "task_failed", message: "Tool operation started twice" }
+			toolStates.set(toolKey!, "active")
+		} else if (["tool.updated", "tool.completed", "tool.failed"].includes(streamEvent.type)) {
+			if (toolStates.get(toolKey!) !== "active") {
+				return { ok: false, code: "task_failed", message: "Tool event requires an active operation" }
+			}
+			if (streamEvent.type === "tool.completed" || streamEvent.type === "tool.failed")
+				toolStates.set(toolKey!, "terminal")
+		}
+
+		if (streamEvent.type === "terminal.status") {
+			const state = terminalOperationStates.get(toolKey!)
+			if (streamEvent.state === "running") {
+				if (state !== undefined)
+					return { ok: false, code: "task_failed", message: "Terminal operation started twice" }
+				terminalOperationStates.set(toolKey!, "active")
+			} else if (state !== "active") {
+				return { ok: false, code: "task_failed", message: "Terminal status requires an active operation" }
+			} else if (streamEvent.state === "exited" || streamEvent.state === "killed") {
+				terminalOperationStates.set(toolKey!, "terminal")
+			}
+		} else if (streamEvent.type === "terminal.output" && terminalOperationStates.get(toolKey!) !== "active") {
+			return { ok: false, code: "task_failed", message: "Terminal output requires an active operation" }
+		}
+
+		const mcpKey =
+			"operationId" in streamEvent ? `${streamEvent.taskId}\u0000${streamEvent.operationId}` : undefined
+		if (streamEvent.type === "mcp.started") {
+			if (mcpStates.has(mcpKey!))
+				return { ok: false, code: "task_failed", message: "MCP operation started twice" }
+			mcpStates.set(mcpKey!, "active")
+		} else if (streamEvent.type === "mcp.completed" || streamEvent.type === "mcp.failed") {
+			if (mcpStates.get(mcpKey!) !== "active") {
+				return { ok: false, code: "task_failed", message: "MCP result requires an active operation" }
+			}
+			mcpStates.set(mcpKey!, "terminal")
 		}
 	}
 	if (pendingAsks.size > 0 && resultEvent.result.outcome !== "needs_input") {
@@ -289,9 +383,49 @@ export function validateStreamLifecycle(
 		timed_out: "interrupted",
 		failed: "failed",
 	} as const
+	if (!createdTasks.has(rootTaskId) || [...taskParents.keys()].some((taskId) => !createdTasks.has(taskId))) {
+		return { ok: false, code: "task_failed", message: "Every task in the authoritative tree must be created" }
+	}
 	const rootState = taskStates.get(rootTaskId)
-	if (rootState !== undefined && rootState !== expectedState[resultEvent.result.outcome]) {
+	if (rootState !== expectedState[resultEvent.result.outcome]) {
 		return { ok: false, code: "task_failed", message: "Root lifecycle state contradicts task.result" }
+	}
+	const allowedDescendantStates = {
+		completed: new Set(["completed"]),
+		needs_input: new Set(["waiting", "interrupted", "completed", "failed"]),
+		cancelled: new Set(["interrupted", "completed", "failed"]),
+		timed_out: new Set(["interrupted", "completed", "failed"]),
+		failed: new Set(["interrupted", "completed", "failed"]),
+	}[resultEvent.result.outcome]
+	if (
+		[...createdTasks].some(
+			(taskId) => taskId !== rootTaskId && !allowedDescendantStates.has(taskStates.get(taskId) ?? "running"),
+		)
+	) {
+		return {
+			ok: false,
+			code: "task_failed",
+			message: "Every descendant task must reach a compatible settled state",
+		}
+	}
+	if ([...toolStates.values(), ...terminalOperationStates.values(), ...mcpStates.values()].includes("active")) {
+		return { ok: false, code: "task_failed", message: "Terminal stream contains active operations" }
+	}
+	if (resultEvent.result.outcome === "cancelled") {
+		const cancellation = commands.find(
+			(command) =>
+				command.type === "task.cancel" &&
+				command.id === resultEvent.requestId &&
+				command.rootTaskId === rootTaskId &&
+				command.reason === resultEvent.result.cancellationReason,
+		)
+		if (cancellation === undefined) {
+			return {
+				ok: false,
+				code: "task_failed",
+				message: "Cancelled result does not match its cancellation command",
+			}
+		}
 	}
 	return { ok: true }
 }

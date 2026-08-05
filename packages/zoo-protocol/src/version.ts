@@ -64,20 +64,34 @@ export function negotiateProtocol(
 ): NegotiationResult {
 	const version = [...supportedVersions]
 		.sort((left, right) => right - left)
-		.find((candidate) => host.supportedVersions.includes(candidate))
+		.find(
+			(candidate) =>
+				host.supportedVersions.includes(candidate) &&
+				requiredCapabilities.every((capability) => host.capabilities[String(candidate)]?.includes(capability)),
+		)
 	if (version === undefined) {
-		return { ok: false, code: "protocol_incompatible", message: "No mutually supported host protocol version" }
-	}
-
-	const capabilities = host.capabilities[String(version)] ?? []
-	const missing = requiredCapabilities.filter((capability) => !capabilities.includes(capability))
-	if (missing.length > 0) {
 		return {
 			ok: false,
 			code: "protocol_incompatible",
-			message: `Host is missing required capabilities: ${missing.join(", ")}`,
+			message: "No mutually supported host protocol version provides all required capabilities",
 		}
 	}
 
 	return { ok: true, version }
+}
+
+export function validateParentHello(host: HostHello, parent: ParentHello): NegotiationResult {
+	if (!host.supportedVersions.includes(parent.version)) {
+		return { ok: false, code: "protocol_incompatible", message: "Parent selected an unadvertised protocol version" }
+	}
+	const capabilities = host.capabilities[String(parent.version)] ?? []
+	const missing = parent.requiredCapabilities.filter((capability) => !capabilities.includes(capability))
+	if (missing.length > 0) {
+		return {
+			ok: false,
+			code: "protocol_incompatible",
+			message: `Selected protocol version is missing required capabilities: ${missing.join(", ")}`,
+		}
+	}
+	return { ok: true, version: parent.version }
 }

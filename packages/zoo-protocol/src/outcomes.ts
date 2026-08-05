@@ -31,6 +31,13 @@ export const zooErrorCodes = [
 export const zooErrorCodeSchema = z.enum(zooErrorCodes)
 export type ZooErrorCode = z.infer<typeof zooErrorCodeSchema>
 
+export const failedErrorCodeSchema = z.enum(
+	zooErrorCodes.filter((code) => code !== "task_timed_out" && code !== "cleanup_timed_out") as [
+		Exclude<ZooErrorCode, "task_timed_out" | "cleanup_timed_out">,
+		...Exclude<ZooErrorCode, "task_timed_out" | "cleanup_timed_out">[],
+	],
+)
+
 export const zooErrorKindSchema = z.enum(["configuration", "provider", "runtime"])
 export type ZooErrorKind = z.infer<typeof zooErrorKindSchema>
 
@@ -73,9 +80,12 @@ export const exitContextSchema = z.discriminatedUnion("outcome", [
 	z.object({ outcome: z.literal("needs_input") }).strict(),
 	z.object({ outcome: z.literal("cancelled"), signal: z.enum(["SIGINT", "SIGTERM"]).optional() }).strict(),
 	z
-		.object({ outcome: z.literal("timed_out"), errorCode: z.enum(["task_timed_out", "cleanup_timed_out"]).optional() })
+		.object({
+			outcome: z.literal("timed_out"),
+			errorCode: z.enum(["task_timed_out", "cleanup_timed_out"]).optional(),
+		})
 		.strict(),
-	z.object({ outcome: z.literal("failed"), errorCode: zooErrorCodeSchema }).strict(),
+	z.object({ outcome: z.literal("failed"), errorCode: failedErrorCodeSchema }).strict(),
 ])
 
 export type ExitContext = z.infer<typeof exitContextSchema>

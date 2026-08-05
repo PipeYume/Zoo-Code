@@ -4,6 +4,10 @@ const sensitiveKeyName = String.raw`[A-Za-z0-9_-]*(?:api[-_]?key|authorization|c
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
+const quotedUnquotedSecret = new RegExp(
+	`((?:"${sensitiveKeyName}"|'${sensitiveKeyName}')\\s*:\\s*)(?!["'])[^\\s,;}]+`,
+	"gi",
+)
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
 	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${secretValue}`, "gi"),
@@ -14,17 +18,19 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 	/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
 ]
 
-export type RedactedValue = null | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
+export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
 
 export function redactText(value: string): string {
 	const structured = value
 		.replace(doubleQuotedSecret, `$1"${REDACTED}"`)
 		.replace(singleQuotedSecret, `$1'${REDACTED}'`)
+		.replace(quotedUnquotedSecret, `$1${REDACTED}`)
 	return secretPatterns.reduce((redacted, pattern) => redacted.replace(pattern, REDACTED), structured)
 }
 
 export function redactValue(value: unknown, seen = new WeakSet<object>()): RedactedValue {
 	if (value === null || typeof value === "boolean" || typeof value === "number") return value
+	if (value === undefined) return undefined
 	if (typeof value === "string") return redactText(value)
 	if (typeof value !== "object") return String(value)
 	if (seen.has(value)) return "[CIRCULAR]"

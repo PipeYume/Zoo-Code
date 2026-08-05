@@ -1,10 +1,17 @@
-import type { ZooOutcome, ZooErrorCode } from "./outcomes.js"
+import { type ZooErrorCode, type ZooOutcome, zooErrorCodeSchema } from "./outcomes.js"
 
 export type SemanticTraceEntry = {
 	type: string
 	taskId?: string
+	rootTaskId?: string
 	parentTaskId?: string
 	toolCallId?: string
+	state?: "running" | "waiting" | "interrupted" | "completed" | "failed"
+	askId?: string
+	decision?: "approve" | "reject" | "needs_input"
+	source?: "policy" | "user" | "auto" | "deny"
+	requestId?: string
+	cancellationReason?: "user" | "signal" | "timeout"
 	content?: string
 	prompt?: string
 	outcome?: ZooOutcome
@@ -24,9 +31,10 @@ export const parityScenarios: readonly ParityScenario[] = [
 		prompt: "Reply with the fixture greeting.",
 		providerTurns: ["Hello from Zoo."],
 		expected: [
-			{ type: "task.created", taskId: "root", prompt: "Reply with the fixture greeting." },
-			{ type: "message.upsert", taskId: "root", content: "Hello from Zoo." },
-			{ type: "task.result", taskId: "root", outcome: "completed" },
+			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Reply with the fixture greeting." },
+			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "Hello from Zoo." },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
+			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
 		],
 	},
 	{
@@ -34,11 +42,17 @@ export const parityScenarios: readonly ParityScenario[] = [
 		prompt: "Read README.md and report its title.",
 		providerTurns: ["tool:read_file:call-1:README.md", "Zoo Code"],
 		expected: [
-			{ type: "task.created", taskId: "root", prompt: "Read README.md and report its title." },
-			{ type: "tool.started", taskId: "root", toolCallId: "call-1" },
-			{ type: "tool.completed", taskId: "root", toolCallId: "call-1" },
-			{ type: "message.upsert", taskId: "root", content: "Zoo Code" },
-			{ type: "task.result", taskId: "root", outcome: "completed" },
+			{
+				type: "task.created",
+				rootTaskId: "root",
+				taskId: "root",
+				prompt: "Read README.md and report its title.",
+			},
+			{ type: "tool.started", rootTaskId: "root", taskId: "root", toolCallId: "call-1" },
+			{ type: "tool.completed", rootTaskId: "root", taskId: "root", toolCallId: "call-1" },
+			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "Zoo Code" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
+			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
 		],
 	},
 	{
@@ -46,11 +60,71 @@ export const parityScenarios: readonly ParityScenario[] = [
 		prompt: "Delegate once, then finish the root task.",
 		providerTurns: ["delegate:child", "child:done", "root:accepted"],
 		expected: [
-			{ type: "task.created", taskId: "root", prompt: "Delegate once, then finish the root task." },
-			{ type: "task.delegated", taskId: "child", parentTaskId: "root" },
-			{ type: "task.lifecycle", taskId: "child" },
-			{ type: "message.upsert", taskId: "root", content: "root:accepted" },
-			{ type: "task.result", taskId: "root", outcome: "completed" },
+			{
+				type: "task.created",
+				rootTaskId: "root",
+				taskId: "root",
+				prompt: "Delegate once, then finish the root task.",
+			},
+			{ type: "task.created", rootTaskId: "root", taskId: "child", parentTaskId: "root" },
+			{ type: "task.delegated", rootTaskId: "root", taskId: "child", parentTaskId: "root" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "child", state: "completed" },
+			{ type: "message.upsert", rootTaskId: "root", taskId: "root", content: "root:accepted" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
+			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
+		],
+	},
+	{
+		id: "approval-causation",
+		prompt: "Request approval.",
+		providerTurns: ["ask:ask-1", "approve:ask-1:user:respond-1"],
+		expected: [
+			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Request approval." },
+			{ type: "ask.required", rootTaskId: "root", taskId: "root", askId: "ask-1" },
+			{
+				type: "ask.resolved",
+				rootTaskId: "root",
+				taskId: "root",
+				askId: "ask-1",
+				decision: "approve",
+				source: "user",
+				requestId: "respond-1",
+			},
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
+			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
+		],
+	},
+	{
+		id: "cancelled",
+		prompt: "Cancel deterministically.",
+		providerTurns: ["cancel:cancel-1:user"],
+		expected: [
+			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Cancel deterministically." },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" },
+			{
+				type: "task.result",
+				rootTaskId: "root",
+				taskId: "root",
+				outcome: "cancelled",
+				requestId: "cancel-1",
+				cancellationReason: "user",
+			},
+		],
+	},
+	{
+		id: "provider-failure",
+		prompt: "Fail deterministically.",
+		providerTurns: ["fail:provider_failed"],
+		expected: [
+			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Fail deterministically." },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "failed" },
+			{
+				type: "task.result",
+				rootTaskId: "root",
+				taskId: "root",
+				outcome: "failed",
+				errorCode: "provider_failed",
+			},
 		],
 	},
 ]
@@ -79,34 +153,80 @@ export function compareSemanticTraces(
 export function runDeterministicFakeProvider(scenario: ParityScenario): readonly SemanticTraceEntry[] {
 	if (scenario.prompt.trim().length === 0) throw new Error("Fake-provider scenarios require a prompt")
 
-	const trace: SemanticTraceEntry[] = [{ type: "task.created", taskId: "root", prompt: scenario.prompt }]
+	const trace: SemanticTraceEntry[] = [
+		{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: scenario.prompt },
+	]
+	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
 	for (const turn of scenario.providerTurns) {
 		if (turn.startsWith("tool:")) {
 			const [, operation, toolCallId, argument] = turn.split(":")
 			if (operation !== "read_file" || !toolCallId || !argument) throw new Error(`Invalid tool fixture: ${turn}`)
-			trace.push({ type: "tool.started", taskId: "root", toolCallId })
-			trace.push({ type: "tool.completed", taskId: "root", toolCallId })
+			trace.push({ type: "tool.started", rootTaskId: "root", taskId: "root", toolCallId })
+			trace.push({ type: "tool.completed", rootTaskId: "root", taskId: "root", toolCallId })
 			continue
 		}
 		if (turn.startsWith("delegate:")) {
 			const taskId = turn.slice("delegate:".length)
 			if (!taskId) throw new Error(`Invalid delegation fixture: ${turn}`)
-			trace.push({ type: "task.delegated", taskId, parentTaskId: "root" })
+			trace.push({ type: "task.created", rootTaskId: "root", taskId, parentTaskId: "root" })
+			trace.push({ type: "task.delegated", rootTaskId: "root", taskId, parentTaskId: "root" })
 			continue
 		}
 		if (turn.endsWith(":done")) {
 			const taskId = turn.slice(0, -":done".length)
 			if (!taskId) throw new Error(`Invalid completion fixture: ${turn}`)
-			trace.push({ type: "task.lifecycle", taskId })
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId, state: "completed" })
 			continue
 		}
-		trace.push({ type: "message.upsert", taskId: "root", content: turn })
+		if (turn.startsWith("ask:")) {
+			trace.push({ type: "ask.required", rootTaskId: "root", taskId: "root", askId: turn.slice(4) })
+			continue
+		}
+		if (turn.startsWith("approve:")) {
+			const [, askId, source, requestId] = turn.split(":")
+			if (!askId || source !== "user" || !requestId) throw new Error(`Invalid approval fixture: ${turn}`)
+			trace.push({
+				type: "ask.resolved",
+				rootTaskId: "root",
+				taskId: "root",
+				askId,
+				decision: "approve",
+				source,
+				requestId,
+			})
+			continue
+		}
+		if (turn.startsWith("cancel:")) {
+			const [, requestId, cancellationReason] = turn.split(":")
+			if (!requestId || !["user", "signal", "timeout"].includes(cancellationReason ?? ""))
+				throw new Error(`Invalid cancellation fixture: ${turn}`)
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
+			result = {
+				type: "task.result",
+				rootTaskId: "root",
+				taskId: "root",
+				outcome: "cancelled",
+				requestId,
+				cancellationReason: cancellationReason as "user" | "signal" | "timeout",
+			}
+			continue
+		}
+		if (turn.startsWith("fail:")) {
+			const errorCode = zooErrorCodeSchema.parse(turn.slice(5))
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "failed" })
+			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "failed", errorCode }
+			continue
+		}
+		trace.push({ type: "message.upsert", rootTaskId: "root", taskId: "root", content: turn })
 	}
-	trace.push({ type: "task.result", taskId: "root", outcome: "completed" })
+	if (result.outcome === "completed") {
+		trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" })
+	}
+	trace.push(result)
 	return trace
 }
 
 export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry[], rootTaskId: string): boolean {
 	const results = trace.filter((entry) => entry.type === "task.result")
-	return results.length === 1 && results[0]?.taskId === rootTaskId
+	return results.length === 1 && results[0]?.taskId === rootTaskId && results[0].rootTaskId === rootTaskId
 }
