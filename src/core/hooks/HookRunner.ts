@@ -41,6 +41,19 @@ async function terminateProcessTree(pid: number | undefined): Promise<void> {
 	if (pid === undefined) {
 		return
 	}
+	if (process.platform === "win32") {
+		const result = await execa("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { reject: false }).catch(
+			() => undefined,
+		)
+		if (!result || result.exitCode !== 0) {
+			try {
+				process.kill(pid, "SIGKILL")
+			} catch {
+				// The root process may already have exited.
+			}
+		}
+		return
+	}
 
 	const descendants = await collectProcessTree(pid)
 	for (const childPid of descendants.reverse()) {
@@ -156,6 +169,9 @@ export class HookRunner {
 		let tempDirectory: string | undefined
 		try {
 			await validateCwd(invocation.workspacePath)
+			if (path.isAbsolute(definition.executable)) {
+				await fs.access(definition.executable)
+			}
 			tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "zoo-code-hook-"))
 			await fs.chmod(tempDirectory, 0o700)
 			const invocationPath = path.join(tempDirectory, "invocation.json")
