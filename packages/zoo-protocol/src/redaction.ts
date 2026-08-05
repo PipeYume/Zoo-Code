@@ -8,7 +8,10 @@ const quotedUnquotedSecret = new RegExp(
 	`((?:"${sensitiveKeyName}"|'${sensitiveKeyName}')\\s*:\\s*)(?!["'])[^\\s,;}]+`,
 	"gi",
 )
-const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g")
+const terminalControl = new RegExp(
+	`(?:${String.fromCharCode(27)}\\][^${String.fromCharCode(7)}${String.fromCharCode(27)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|${String.fromCharCode(27)}[PX^_][\\s\\S]*?${String.fromCharCode(27)}\\\\|${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]|[\\u0090\\u0098\\u009d\\u009e\\u009f][\\s\\S]*?\\u009c|\\u009b[0-?]*[ -/]*[@-~]|${String.fromCharCode(27)}[@-_])`,
+	"g",
+)
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
 	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${cliSecretValue}`, "gi"),
@@ -22,6 +25,7 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 function isSensitiveKey(key: string): boolean {
 	const words = key
@@ -36,6 +40,13 @@ function isSensitiveKey(key: string): boolean {
 		/\bprivate key\b/.test(words)
 	)
 		return true
+	if (
+		/\b(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token) value$/.test(
+			words,
+		)
+	) {
+		return true
+	}
 	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
 		words,
 	)
@@ -43,7 +54,7 @@ function isSensitiveKey(key: string): boolean {
 
 export function canonicalizeRedactionText(value: string): string {
 	return value
-		.replace(ansiEscape, "")
+		.replace(terminalControl, "")
 		.replace(/\\u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
 }
 
@@ -62,6 +73,10 @@ export function redactText(value: string): string {
 	return secretPatterns.reduce((redacted, pattern) => redacted.replace(pattern, REDACTED), structured)
 }
 
+export function redactValue(value: Record<string, JsonValue>): Record<string, JsonValue>
+export function redactValue(value: JsonValue[]): JsonValue[]
+export function redactValue(value: JsonValue): JsonValue
+export function redactValue(value: unknown, seen?: WeakSet<object>): RedactedValue
 export function redactValue(value: unknown, seen = new WeakSet<object>()): RedactedValue {
 	if (value === null || typeof value === "boolean" || typeof value === "number") return value
 	if (value === undefined) return undefined

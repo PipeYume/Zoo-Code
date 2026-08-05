@@ -221,15 +221,18 @@ export function createHostEventStreamParser(
 			if (lastSeq !== undefined && !validateMonotonicSequence(lastSeq, event.seq).ok) {
 				throw new Error(`Expected host sequence ${lastSeq + 1}`)
 			}
-			pinnedHostId ??= event.hostId
-			lastSeq = event.seq
-			const released = releaseBlockedQueue()
+			if (event.type === "event" && event.event.hostId !== event.hostId) {
+				throw new Error("Normalized event hostId must match its host envelope")
+			}
 			let bytes: number
 			try {
 				bytes = new TextEncoder().encode(JSON.stringify(event)).byteLength
 			} catch {
 				bytes = maxQueuedBytes
 			}
+			pinnedHostId ??= event.hostId
+			lastSeq = event.seq
+			const released = releaseBlockedQueue()
 			const entry: QueueEntry = { enqueuedAt: now(), bytes }
 			queue.push(entry)
 			queuedBytes += bytes
@@ -237,7 +240,6 @@ export function createHostEventStreamParser(
 				entry.output = sanitizeNonEvent(event)
 				return [...released, ...releaseBlockedQueue()]
 			}
-			if (event.event.hostId !== event.hostId) throw new Error("Normalized event hostId must match its host envelope")
 			entry.envelope = event
 			const key = eventKey(event.event)
 			const entries = envelopes.get(key) ?? []

@@ -3,7 +3,7 @@ import { z } from "zod"
 import type { HostCommand } from "./host-commands.js"
 import type { HostEvent } from "./host-events.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
-import { canonicalizeRedactionText, REDACTED, redactValue, type RedactedValue } from "./redaction.js"
+import { canonicalizeRedactionText, REDACTED, redactValue, type JsonValue } from "./redaction.js"
 import {
 	ZOO_HOST_PROTOCOL_VERSION,
 	ZOO_PUBLIC_SCHEMA_VERSION,
@@ -69,6 +69,9 @@ const rawZooRunResultSchema = strictObject({
 	if (result.resumable && !["needs_input", "cancelled", "timed_out"].includes(result.outcome)) {
 		context.addIssue({ code: z.ZodIssueCode.custom, message: `${result.outcome} results cannot be resumed` })
 	}
+	if (result.outcome === "needs_input" && !result.resumable) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: "needs_input results must be resumable" })
+	}
 })
 
 const redactError = <T extends { message: string; phase?: string }>(error: T): T => ({
@@ -76,8 +79,7 @@ const redactError = <T extends { message: string; phase?: string }>(error: T): T
 	message: String(redactValue(error.message)),
 	...(error.phase === undefined ? {} : { phase: String(redactValue(error.phase)) }),
 })
-const redactRecord = (value: Record<string, unknown>): Record<string, RedactedValue> =>
-	redactValue(value) as Record<string, RedactedValue>
+const redactRecord = (value: Record<string, JsonValue>): Record<string, JsonValue> => redactValue(value)
 
 export const zooRunResultSchema = rawZooRunResultSchema.transform((result) => ({
 	...result,
@@ -148,10 +150,13 @@ const askAbandonedEventSchema = taskEvent("ask.abandoned", {
 	askId: z.string().min(1),
 	reason: z.enum(["cancelled", "timed_out", "failed"]),
 })
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+	z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(jsonValueSchema), z.record(jsonValueSchema)]),
+)
 const toolEventState = {
 	toolCallId: z.string().min(1),
 	name: z.string().min(1),
-	arguments: z.record(z.unknown()).optional(),
+	arguments: z.record(jsonValueSchema).optional(),
 	output: z.string().optional(),
 }
 const toolStartedEventSchema = taskEvent("tool.started", toolEventState)
@@ -297,6 +302,7 @@ export function createZooStreamRedactor(
 		text: string
 		pem: boolean
 		overflowed: boolean
+		secretQuote?: '"' | "'"
 	}
 	const pendingOutputs = new Map<string, PendingOutput>()
 	let failClosedAll = false
@@ -311,6 +317,18 @@ export function createZooStreamRedactor(
 		}
 		return openLabels.length > 0
 	}
+	const incompleteSecretQuote = (text: string): '"' | "'" | undefined => {
+		const match = text.match(
+			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)["']?\s*[:=]\s*(["'])(?:\\.|[^\\])*$/i,
+		)
+		if (match?.[1] !== '"' && match?.[1] !== "'") return undefined
+		const opening = /[:=]\s*(["'])/.exec(match[0])
+		if (opening === null) return undefined
+		const value = match[0].slice(opening.index + opening[0].length)
+		return new RegExp(`(?:^|[^\\\\])${match[1]}`).test(value) ? undefined : match[1]
+	}
+	const closesSecretQuote = (text: string, quote: '"' | "'"): boolean =>
+		new RegExp(`(?:^|[^\\\\])${quote}`).test(text)
 
 	const emit = (key: string, replacement?: string): ZooStreamEvent[] => {
 		const pending = pendingOutputs.get(key)
@@ -321,16 +339,21 @@ export function createZooStreamRedactor(
 		}
 		const [first, ...rest] = pending.events
 		const detectionText = canonicalizeRedactionText(pending.text)
-		const unterminatedSecret =
-			pending.pem ||
-			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*|'(?:\\.|[^'\\])*)?$/i.test(
-				detectionText,
-			)
+		const continuedSecret = pending.secretQuote !== undefined
+		const secretQuote = continuedSecret
+			? closesSecretQuote(detectionText, pending.secretQuote!)
+				? undefined
+				: pending.secretQuote
+			: incompleteSecretQuote(detectionText)
+		const unterminatedSecret = pending.pem || secretQuote !== undefined
 		const delta = replacement ?? (unterminatedSecret ? REDACTED : String(redactValue(pending.text)))
 		pendingOutputs.delete(key)
+		if (secretQuote !== undefined) {
+			pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: false, secretQuote })
+		}
 		return first === undefined
 			? []
-			: [{ ...first, delta }, ...rest.map((event) => ({ ...event, delta: "" }))]
+			: [{ ...first, delta: continuedSecret ? REDACTED : delta }, ...rest.map((event) => ({ ...event, delta: "" }))]
 	}
 	const emitOperation = (event: z.infer<typeof terminalStatusEventSchema>): ZooStreamEvent[] =>
 		[...pendingOutputs.keys()]
@@ -891,9 +914,7 @@ export function validateStreamLifecycle(
 				if (response !== undefined) consumedResponseCommands.add(response.id)
 			}
 			setScope(settledAsks, streamEvent.taskId).add(streamEvent.askId)
-			if (streamEvent.decision === "approve" || streamEvent.decision === "needs_input") {
-				approvalResumeCauses.set(streamEvent.taskId, streamEvent.requestId)
-			}
+			approvalResumeCauses.set(streamEvent.taskId, streamEvent.requestId)
 		}
 		if (streamEvent.type === "ask.abandoned") {
 			if (!pendingAsks.get(streamEvent.taskId)?.delete(streamEvent.askId)) {
@@ -1007,6 +1028,15 @@ export function validateStreamLifecycle(
 	const rootState = taskStates.get(rootTaskId)
 	if (rootState !== expectedState[resultEvent.result.outcome]) {
 		return { ok: false, code: "task_failed", message: "Root lifecycle state contradicts task.result" }
+	}
+	const expectedInterruptedCause =
+		resultEvent.result.outcome === "cancelled"
+			? "cancelled"
+			: resultEvent.result.outcome === "timed_out"
+				? "timed_out"
+				: undefined
+	if (expectedInterruptedCause !== undefined && taskTerminalCauses.get(rootTaskId) !== expectedInterruptedCause) {
+		return { ok: false, code: "task_failed", message: "Root lifecycle cause contradicts task.result" }
 	}
 	const allowedDescendantStates = {
 		completed: new Set(["completed"]),

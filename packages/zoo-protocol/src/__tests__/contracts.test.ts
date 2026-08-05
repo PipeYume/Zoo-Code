@@ -323,6 +323,33 @@ describe("strict host contracts", () => {
 		).toBe(false)
 	})
 
+	it("does not mutate parser state for an invalid nested event", () => {
+		const parser = createHostEventStreamParser()
+		const invalid = {
+			v: 1,
+			seq: 1,
+			hostId: "host",
+			type: "event",
+			event: {
+				v: 1,
+				seq: 1,
+				timestamp,
+				hostId: "other",
+				rootTaskId: "root",
+				taskId: "root",
+				type: "terminal.output",
+				toolCallId: "terminal",
+				stream: "stdout",
+				delta: "safe\n",
+			},
+		}
+		expect(() => parser.push(invalid)).toThrow("hostId must match")
+		expect(parser.push({ ...invalid, event: { ...invalid.event, hostId: "host" } })).toMatchObject([
+			{ seq: 1, event: { delta: "safe\n" } },
+		])
+		expect(parser.flush()).toEqual([])
+	})
+
 	it("models one ACK and terminal command response independently", () => {
 		const command = hostCommandSchema.parse({ v: 1, id: "cmd", type: "host.shutdown" })
 		const events = [
@@ -658,6 +685,14 @@ describe("public automation contracts", () => {
 				...result,
 				success: false,
 				outcome: "needs_input",
+				resumable: false,
+			}).success,
+		).toBe(false)
+		expect(
+			zooRunResultSchema.safeParse({
+				...result,
+				success: false,
+				outcome: "needs_input",
 				error: { code: "provider_failed", message: "contradiction" },
 			}).success,
 		).toBe(false)
@@ -690,6 +725,22 @@ describe("public automation contracts", () => {
 		expect(zooStreamEventSchema.safeParse({ ...event, seq: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, rawSecret: "no" }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, taskId: undefined }).success).toBe(false)
+		const tool = {
+			v: 1,
+			seq: 1,
+			timestamp,
+			hostId: "host",
+			type: "tool.started",
+			rootTaskId: "root",
+			taskId: "root",
+			toolCallId: "tool",
+			name: "read",
+			arguments: { nested: [null, true, 1, "value"] },
+		}
+		expect(zooStreamEventSchema.safeParse(tool).success).toBe(true)
+		for (const invalid of [Infinity, BigInt(1), undefined, () => undefined]) {
+			expect(zooStreamEventSchema.safeParse({ ...tool, arguments: { invalid } }).success).toBe(false)
+		}
 		expect(zooStreamEventSchema.safeParse({ ...initEvent, capabilities: ["task:start", "future:additive"] }).success).toBe(
 			true,
 		)
@@ -772,6 +823,7 @@ describe("public automation contracts", () => {
 				resultEvent(9),
 			], [startCommand], startDone()),
 		).toEqual({ ok: true })
+
 		expect(
 			validateStreamLifecycle(
 				[
@@ -953,6 +1005,17 @@ describe("public automation contracts", () => {
 		expect(
 			validateStreamLifecycle(stream, [startCommand, command], [...startDone(), ...cancellationDone("cancel", "host", 3)]),
 		).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				stream.map((event) =>
+					event.type === "task.lifecycle" && event.state === "interrupted"
+						? { ...event, cause: "timed_out" as const }
+						: event,
+				),
+				[startCommand, command],
+				[...startDone(), ...cancellationDone("cancel", "host", 3)],
+			),
+		).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle(stream, [startCommand, command], cancellationDone("cancel", "other")),
 		).toMatchObject({ ok: false })
@@ -1159,6 +1222,31 @@ describe("public automation contracts", () => {
 				],
 				[startCommand, response],
 				[...startDone(), ...askResponseDone("respond", "host", 3)],
+			),
+		).toEqual({ ok: true })
+
+		const rejection = hostCommandSchema.parse({ ...response, id: "reject", response: "reject" })
+		const rejected = taskEvent(6, "ask.resolved", {
+			requestId: "reject",
+			askId: "ask",
+			decision: "reject",
+			source: "user",
+		})
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					started,
+					required,
+					waiting,
+					rejected,
+					{ ...running, seq: 7, requestId: "reject" },
+					{ ...completed, seq: 8 },
+					resultEvent(9),
+				],
+				[startCommand, rejection],
+				[...startDone(), ...askResponseDone("reject", "host", 3)],
 			),
 		).toEqual({ ok: true })
 
@@ -1373,7 +1461,7 @@ describe("public automation contracts", () => {
 				required,
 				childCompleted,
 				rootWaiting,
-				resultEvent(8, { outcome: "needs_input" }),
+				resultEvent(8, { outcome: "needs_input", resumable: true }),
 			]),
 		).toMatchObject({ ok: false })
 	})
@@ -1780,6 +1868,13 @@ describe("redaction contracts", () => {
 		expect(
 			escapedUnterminatedQuoted[0]?.type === "terminal.output" && escapedUnterminatedQuoted[0].delta,
 		).toBe("[REDACTED]")
+		const multilineQuoted = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: 'password="first\n' },
+			{ ...terminal, seq: 2, delta: 'second"\n' },
+			{ ...terminal, seq: 3, delta: "harmless\n" },
+		])
+		expect(multilineQuoted.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED][REDACTED]harmless\n")
 		const ansiPem = zooStreamSchema.parse([
 			{ ...terminal, seq: 1, delta: "-----BEGIN\u001b[31m PRIVATE KEY-----\n" },
 			{ ...terminal, seq: 2, delta: "private-body\n" },
@@ -1820,6 +1915,16 @@ describe("redaction contracts", () => {
 		expect(redactValue({ left: shared, right: shared })).toEqual({
 			left: { value: "safe" },
 			right: { value: "safe" },
+		})
+	})
+
+	it("canonicalizes terminal controls and credential value suffixes", () => {
+		expect(redactText(`API_\u001b]0;title\u0007TOKEN=hunter2`)).toBe("[REDACTED]")
+		expect(redactText(`API_\u009dtitle\u009cTOKEN=hunter2`)).toBe("[REDACTED]")
+		expect(redactValue({ accessTokenValue: "hunter2", apiKeyValue: "secret", maxTokenValue: 10 })).toEqual({
+			accessTokenValue: "[REDACTED]",
+			apiKeyValue: "[REDACTED]",
+			maxTokenValue: 10,
 		})
 	})
 })
@@ -1998,6 +2103,17 @@ describe("deterministic parity oracle", () => {
 		]) {
 			expect(() =>
 				runDeterministicFakeProvider({ id: "reused", prompt: "Reuse", providerTurns, expected: [] }),
+			).toThrow()
+		}
+	})
+
+	it("rejects extra approval and cancellation fixture fields", () => {
+		for (const providerTurns of [
+			["ask:ask-1", "approve:ask-1:user:request-1:extra"],
+			["cancel:request-1:user:extra"],
+		]) {
+			expect(() =>
+				runDeterministicFakeProvider({ id: "extra-fields", prompt: "Reject extras", providerTurns, expected: [] }),
 			).toThrow()
 		}
 	})

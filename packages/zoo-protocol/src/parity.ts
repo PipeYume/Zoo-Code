@@ -263,10 +263,12 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			continue
 		}
 		if (turn.startsWith("approve:")) {
-			const [, askId, source, requestId] = turn.split(":")
+			const fields = turn.split(":")
+			const [, askId, source, requestId] = fields
 			if (!askId || source !== "user" || !requestId || usedRequestIds.has(requestId)) {
 				throw new Error(`Invalid approval fixture: ${turn}`)
 			}
+			if (fields.length !== 4) throw new Error(`Invalid approval fixture: ${turn}`)
 			if (!pendingAsks.delete(askId)) throw new Error(`Approval references unknown ask: ${turn}`)
 			usedRequestIds.add(requestId)
 			trace.push({
@@ -282,8 +284,10 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		}
 		if (turn.startsWith("cancel:")) {
 			requireSettledState()
-			const [, requestId, cancellationReason] = turn.split(":")
+			const fields = turn.split(":")
+			const [, requestId, cancellationReason] = fields
 			if (
+				fields.length !== 3 ||
 				!requestId ||
 				usedRequestIds.has(requestId) ||
 				!["user", "signal", "timeout"].includes(cancellationReason ?? "")
