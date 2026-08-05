@@ -12,8 +12,13 @@ export class HostEventBridge {
 	private readonly initiatingRequests = new Map<string, string>()
 	private readonly approvalModes = new Map<string, "interactive" | "safe" | "auto">()
 	private readonly pendingAsks = new Map<string, { askId: string; subject: string }>()
-	private readonly pendingResponses = new Map<string, { requestId: string; askId: string; decision: "approve" | "reject" | "needs_input" }>()
+	private readonly pendingResponses = new Map<
+		string,
+		{ requestId: string; askId: string; decision: "approve" | "reject" | "needs_input" }
+	>()
 	private readonly cancellationRequests = new Map<string, string>()
+	private readonly startedTasks = new Set<string>()
+	private eventQueue = Promise.resolve()
 	private pendingInitiation:
 		| { type: "start"; requestId: string; approval: "interactive" | "safe" | "auto" }
 		| {
@@ -23,7 +28,7 @@ export class HostEventBridge {
 				taskId: string
 				rootTaskId: string
 				previousState: "waiting" | "interrupted"
-			}
+		  }
 		| undefined
 
 	constructor(
@@ -84,6 +89,9 @@ export class HostEventBridge {
 			this.pendingCreated.add(taskId)
 		})
 		this.api.on(RooCodeEventName.TaskStarted, (taskId) => {
+			let creation:
+				| { requestId?: string; rootTaskId: string; previousState?: "waiting" | "interrupted" }
+				| undefined
 			if (this.pendingCreated.delete(taskId)) {
 				const initiation = this.pendingInitiation
 				const rootTaskId = initiation?.type === "resume" ? initiation.rootTaskId : taskId
@@ -92,46 +100,69 @@ export class HostEventBridge {
 					this.initiatingRequests.set(rootTaskId, initiation.requestId)
 					this.approvalModes.set(rootTaskId, initiation.approval)
 				}
-				void (async () => {
-					await this.emitTask("task.created", taskId, { requestId: initiation?.requestId }, rootTaskId)
-					if (initiation?.type === "resume") {
-						await this.emitTask("task.lifecycle", taskId, { state: initiation.previousState }, rootTaskId)
-						await this.emitTask(
-							"task.resumed",
-							taskId,
-							{ requestId: initiation.requestId, previousState: initiation.previousState },
-							rootTaskId,
-						)
-					}
-					await this.emitTask("task.started", taskId, {}, rootTaskId)
-					await this.emitTask("task.lifecycle", taskId, { state: "running" }, rootTaskId)
-				})()
+				creation = {
+					requestId: initiation?.requestId,
+					rootTaskId,
+					previousState: initiation?.type === "resume" ? initiation.previousState : undefined,
+				}
 				this.pendingInitiation = undefined
 			}
 			this.startedAt.set(this.roots.get(taskId) ?? taskId, Date.now())
+			this.enqueue(async () => {
+				if (creation) {
+					await this.emitTask("task.created", taskId, { requestId: creation.requestId }, creation.rootTaskId)
+					if (creation.previousState) {
+						await this.emitTask(
+							"task.lifecycle",
+							taskId,
+							{ state: creation.previousState },
+							creation.rootTaskId,
+						)
+						await this.emitTask(
+							"task.resumed",
+							taskId,
+							{ requestId: creation.requestId, previousState: creation.previousState },
+							creation.rootTaskId,
+						)
+					}
+				}
+				if (!this.startedTasks.has(taskId)) {
+					this.startedTasks.add(taskId)
+					await this.emitTask("task.started", taskId, {})
+				}
+			})
 		})
 		this.api.on(RooCodeEventName.TaskDelegated, (parentTaskId, childTaskId) => {
 			const rootTaskId = this.roots.get(parentTaskId) ?? parentTaskId
 			this.roots.set(childTaskId, rootTaskId)
-			if (this.pendingCreated.delete(childTaskId)) {
-				void this.emitTask("task.created", childTaskId, { parentTaskId }, rootTaskId)
+			const created = this.pendingCreated.delete(childTaskId)
+			this.enqueue(async () => {
+				if (created) await this.emitTask("task.created", childTaskId, { parentTaskId }, rootTaskId)
+				await this.emitTask("task.delegated", childTaskId, { parentTaskId, childTaskId }, rootTaskId)
+			})
+		})
+		this.api.on(RooCodeEventName.TaskCompleted, (taskId) => {
+			const rootTaskId = this.roots.get(taskId)
+			if (rootTaskId && taskId !== rootTaskId) {
+				this.enqueue(() => this.emitTask("task.lifecycle", taskId, { state: "completed" }, rootTaskId))
 			}
-			void this.emitTask("task.delegated", childTaskId, { parentTaskId, childTaskId }, rootTaskId)
 		})
 		this.api.on(RooCodeEventName.Message, ({ taskId, message }) => {
 			if (message.type !== "say" || !message.say || message.say === "api_req_started") return
 			const role = message.say === "reasoning" ? "reasoning" : "assistant"
-			void this.emitTask("message.upsert", taskId, {
-				messageId: String(message.ts),
-				role,
-				content: message.text ?? "",
-				complete: message.partial !== true,
-			})
+			this.enqueue(() =>
+				this.emitTask("message.upsert", taskId, {
+					messageId: String(message.ts),
+					role,
+					content: message.text ?? "",
+					complete: message.partial !== true,
+				}),
+			)
 		})
 		this.api.on(RooCodeEventName.HeadlessAsk, (ask) => {
 			this.roots.set(ask.taskId, ask.rootTaskId)
 			this.pendingAsks.set(ask.taskId, { askId: ask.askId, subject: ask.text ?? ask.ask })
-			void (async () => {
+			this.enqueue(async () => {
 				await this.emitTask(
 					"ask.required",
 					ask.taskId,
@@ -146,14 +177,14 @@ export class HostEventBridge {
 						content: ask.text ?? ask.ask,
 					})
 				}
-			})()
+			})
 		})
 		this.api.on(RooCodeEventName.TaskAskResponded, (taskId) => {
 			const response = this.pendingResponses.get(taskId)
 			if (!response) return
 			this.pendingResponses.delete(taskId)
 			this.pendingAsks.delete(taskId)
-			void (async () => {
+			this.enqueue(async () => {
 				await this.emitTask("ask.resolved", taskId, {
 					requestId: response.requestId,
 					askId: response.askId,
@@ -161,9 +192,26 @@ export class HostEventBridge {
 					source: "user",
 				})
 				await this.emitTask("task.lifecycle", taskId, { state: "running", requestId: response.requestId })
-			})()
+			})
 		})
-		this.api.on(RooCodeEventName.HeadlessTaskResult, (result) => void this.emitResult(result))
+		this.api.on(RooCodeEventName.HeadlessTaskResult, (result) => this.enqueue(() => this.emitResult(result)))
+	}
+
+	public recordTaskInput(requestId: string, taskId: string, text: string): void {
+		this.enqueue(async () => {
+			await this.emitTask("message.upsert", taskId, {
+				requestId,
+				messageId: `input-${requestId}`,
+				role: "user",
+				content: text,
+				complete: true,
+			})
+			await this.emitTask("task.lifecycle", taskId, { requestId, state: "running" })
+		})
+	}
+
+	private enqueue(operation: () => Promise<void>): void {
+		this.eventQueue = this.eventQueue.then(operation).catch(() => undefined)
 	}
 
 	private async emitResult(event: {

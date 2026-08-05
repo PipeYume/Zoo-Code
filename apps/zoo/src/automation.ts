@@ -17,7 +17,7 @@ import {
 import { runOverrides, type OutputFormat, type SharedOptions } from "./options.js"
 import { initialProjection, reduceSession } from "./projection.js"
 import { createRenderer } from "./render.js"
-import { defaultStorageRoot, HostClient } from "./supervisor.js"
+import { defaultStorageRoot, HostClient, ZooClientError } from "./supervisor.js"
 
 type AutomationOptions = Omit<SharedOptions, "timeout"> & {
 	format: OutputFormat
@@ -54,7 +54,15 @@ export async function runAutomation(
 	const makeResult = (
 		outcome: "needs_input" | "cancelled" | "timed_out" | "failed",
 		rootTaskId: string,
-		input: { currentTaskId?: string; resumable: boolean; code?: ZooErrorCode; message?: string; content?: string },
+		input: {
+			currentTaskId?: string
+			resumable: boolean
+			code?: ZooErrorCode
+			message?: string
+			content?: string
+			kind?: "configuration" | "provider" | "runtime"
+			phase?: string
+		},
 	): ZooRunResult =>
 		zooRunResultSchema.parse({
 			schemaVersion: ZOO_PUBLIC_SCHEMA_VERSION,
@@ -68,7 +76,12 @@ export async function runAutomation(
 			content: input.content,
 			error:
 				outcome === "failed" || outcome === "timed_out"
-					? { code: input.code ?? "task_failed", message: input.message ?? "Task failed", kind: "runtime" }
+					? {
+							code: input.code ?? "task_failed",
+							message: input.message ?? "Task failed",
+							kind: input.kind ?? "runtime",
+							phase: input.phase,
+						}
 					: undefined,
 			elapsedMs: Date.now() - startedAt,
 			cancellationReason: outcome === "cancelled" ? "signal" : undefined,
@@ -106,6 +119,18 @@ export async function runAutomation(
 	let clientStopped = false
 	const deadline = options.timeout === undefined ? undefined : startedAt + options.timeout
 	const remainingDeadline = () => (deadline === undefined ? 7_000 : Math.max(0, deadline - Date.now()))
+	const commandBudget = () => {
+		const remaining = remainingDeadline()
+		if (remaining <= 0) throw new ZooClientError("task_timed_out", "Task deadline exceeded")
+		return Math.max(1, Math.min(15_000, remaining))
+	}
+	const runCommand = <T>(operation: Promise<T>) =>
+		Promise.race([
+			operation,
+			signalPromise.then(() => {
+				throw new ZooClientError("cancel_failed", `Received ${signal}`)
+			}),
+		])
 	const renderFinal = (result: ZooRunResult) => {
 		if (finalRendered) return
 		finalRendered = true
@@ -138,7 +163,11 @@ export async function runAutomation(
 				: result.outcome === "cancelled"
 					? { outcome: "cancelled", signal }
 					: result.outcome === "timed_out"
-						? { outcome: "timed_out", errorCode: result.error?.code === "cleanup_timed_out" ? "cleanup_timed_out" : "task_timed_out" }
+						? {
+								outcome: "timed_out",
+								errorCode:
+									result.error?.code === "cleanup_timed_out" ? "cleanup_timed_out" : "task_timed_out",
+							}
 						: { outcome: result.outcome },
 		)
 	}
@@ -163,7 +192,7 @@ export async function runAutomation(
 	if (options.timeout !== undefined) timeout = setTimeout(() => notifyTimeout?.(), options.timeout)
 	try {
 		const startup = await Promise.race([
-			client.start().then(() => "started" as const),
+			client.start(remainingDeadline()).then(() => "started" as const),
 			timeoutPromise,
 			signalPromise.then(() => "signal" as const),
 		])
@@ -182,17 +211,22 @@ export async function runAutomation(
 				overrides,
 			}
 		} else {
-			let taskId = request.taskId
-			if (!taskId) {
-				const history = await client.command({ type: "history.list", workspace: options.workspace })
-				if (history.data.commandType !== "history.list" || history.data.tasks.length === 0) {
-					throw new Error("No session exists for this workspace")
-				}
-				taskId = history.data.tasks[0]!.rootTaskId
+			const history = await runCommand(
+				client.command({ type: "history.list", workspace: options.workspace }, commandBudget()),
+			)
+			if (history.data.commandType !== "history.list" || history.data.tasks.length === 0) {
+				throw new ZooClientError("invalid_session", "No session exists for this workspace")
 			}
-			command = { type: "task.resume", taskId, rootTaskId: taskId, overrides }
+			const selected = request.taskId
+				? history.data.tasks.find(
+						(task) => task.rootTaskId === request.taskId || task.currentTaskId === request.taskId,
+					)
+				: history.data.tasks[0]
+			if (!selected) throw new ZooClientError("invalid_session", `Unknown session ${request.taskId}`)
+			const taskId = request.taskId === selected.currentTaskId ? request.taskId : selected.currentTaskId
+			command = { type: "task.resume", taskId, rootTaskId: selected.rootTaskId, overrides }
 		}
-		const accepted = await client.command(command)
+		const accepted = await runCommand(client.command(command, commandBudget()))
 		if (accepted.data.commandType !== "task.start" && accepted.data.commandType !== "task.resume") {
 			throw new Error("Host returned an invalid task acceptance")
 		}
@@ -200,10 +234,12 @@ export async function runAutomation(
 		if (signal) void client.command({ type: "task.cancel", rootTaskId, reason: "signal" }).catch(() => undefined)
 		const localSettlement = Promise.race([
 			timeoutPromise.then(() => {
-				void client.command({ type: "task.cancel", rootTaskId: rootTaskId!, reason: "timeout" }, 1).catch(() => undefined)
+				void client
+					.command({ type: "task.cancel", rootTaskId: rootTaskId!, reason: "timeout" }, 1)
+					.catch(() => undefined)
 				return makeResult("timed_out", rootTaskId!, {
 					currentTaskId: projection.currentTaskId,
-					resumable: true,
+					resumable: false,
 					code: "task_timed_out",
 					message: "Task deadline exceeded",
 				})
@@ -233,8 +269,10 @@ export async function runAutomation(
 				makeResult("failed", rootTaskId!, {
 					currentTaskId: projection.currentTaskId,
 					resumable: false,
-					code: "host_crashed",
+					code: error instanceof ZooClientError ? error.code : "host_crashed",
 					message: error.message,
+					kind: error instanceof ZooClientError ? error.detail?.kind : "runtime",
+					phase: error instanceof ZooClientError ? error.detail?.phase : undefined,
 				}),
 			),
 		])
@@ -254,16 +292,14 @@ export async function runAutomation(
 		return resultExitCode(finalResult)
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
-		const parsedCode = zooErrorCodeSchema.safeParse(message.split(":", 1)[0])
+		const parsedCode = zooErrorCodeSchema.safeParse(error instanceof ZooClientError ? error.code : undefined)
 		const code: ZooErrorCode = parsedCode.success
 			? parsedCode.data
-			: message.includes("protocol") || message.includes("negotiat")
-				? "protocol_incompatible"
-				: rootTaskId
-					? "task_failed"
-					: "host_start_failed"
+			: rootTaskId
+				? "task_failed"
+				: "host_start_failed"
 		const result =
-			message.includes("deadline")
+			code === "task_timed_out" || message.includes("deadline")
 				? makeResult("timed_out", rootTaskId ?? "unavailable", {
 						resumable: Boolean(rootTaskId),
 						code: "task_timed_out",
@@ -275,6 +311,8 @@ export async function runAutomation(
 							resumable: false,
 							code,
 							message,
+							kind: error instanceof ZooClientError ? error.detail?.kind : "runtime",
+							phase: error instanceof ZooClientError ? error.detail?.phase : undefined,
 						})
 		renderFinal(result)
 		return resultExitCode(result)

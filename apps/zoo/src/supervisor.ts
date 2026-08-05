@@ -19,6 +19,8 @@ import {
 	type HostHello,
 	type ParentHello,
 	type ZooCapability,
+	type ZooError,
+	type ZooErrorCode,
 	type ZooStreamEvent,
 } from "@roo-code/zoo-protocol"
 
@@ -48,6 +50,17 @@ const requiredCapabilities: ZooCapability[] = [
 	"host:shutdown",
 ]
 
+export class ZooClientError extends Error {
+	constructor(
+		public readonly code: ZooErrorCode,
+		message: string,
+		public readonly detail?: ZooError,
+	) {
+		super(message)
+		this.name = "ZooClientError"
+	}
+}
+
 export class HostClient {
 	private child: ChildProcess | undefined
 	private parser: ReturnType<typeof createHostEventStreamParser> | undefined
@@ -69,7 +82,8 @@ export class HostClient {
 
 	constructor(private readonly options: HostClientOptions) {}
 
-	public async start(): Promise<void> {
+	public async start(timeoutMs = 45_000): Promise<void> {
+		const deadline = Date.now() + timeoutMs
 		const hostPath =
 			process.env.ZOO_HOST_PATH ??
 			fileURLToPath(new URL("../../../packages/zoo-host/dist/child.js", import.meta.url))
@@ -98,10 +112,13 @@ export class HostClient {
 		child.once("exit", (code, signal) => this.fail(new Error(`Zoo host exited (${signal ?? code ?? "unknown"})`)))
 		child.once("error", (error) => this.fail(error))
 
-		const hello = await Promise.race([this.waitForHello(child, 15_000), this.failed])
+		const hello = await Promise.race([
+			this.waitForHello(child, Math.max(1, Math.min(15_000, deadline - Date.now()))),
+			this.failed,
+		])
 		this.hello = hello
 		const negotiation = negotiateProtocol(hello, [ZOO_HOST_PROTOCOL_VERSION], requiredCapabilities)
-		if (!negotiation.ok) throw new Error(negotiation.message)
+		if (!negotiation.ok) throw new ZooClientError("protocol_incompatible", negotiation.message)
 		this.parser = createHostEventStreamParser({ hostId: hello.hostId })
 		child.on("message", (message) => this.receive(message))
 		this.selection = parentHelloSchema.parse({
@@ -119,7 +136,7 @@ export class HostClient {
 				new Promise<never>((_, reject) => {
 					initializationTimer = setTimeout(
 						() => reject(new Error("Zoo host initialization timed out")),
-						30_000,
+						Math.max(1, Math.min(30_000, deadline - Date.now())),
 					)
 				}),
 			])
@@ -142,7 +159,7 @@ export class HostClient {
 		return new Promise<Extract<HostEvent, { type: "command.done" }>>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id)
-				reject(new Error(`Host command timed out: ${command.type}`))
+				reject(new ZooClientError("task_timed_out", `Host command timed out: ${command.type}`))
 			}, timeoutMs)
 			this.pending.set(id, {
 				acknowledged: false,
@@ -219,7 +236,7 @@ export class HostClient {
 						if (!this.hello || !this.selection)
 							throw new Error("Host initialized before protocol negotiation")
 						const validation = validateNegotiatedStreamSession(this.hello, this.selection, [event.event])
-						if (!validation.ok) throw new Error(validation.message)
+						if (!validation.ok) throw new ZooClientError(validation.code, validation.message)
 						this.resolveInitialized?.()
 					}
 					if (event.event.type === "task.result") {
@@ -245,8 +262,9 @@ export class HostClient {
 				if (event.type === "command.error") {
 					const pending = this.pending.get(event.commandId)
 					if (!pending?.acknowledged) throw new Error(`ERROR preceded ACK for command ${event.commandId}`)
-					pending.reject(new Error(`${event.error.code}: ${event.error.message}`))
+					pending.reject(new ZooClientError(event.error.code, event.error.message, event.error))
 					this.pending.delete(event.commandId)
+					this.flushResult()
 				}
 			}
 		} catch (error) {
@@ -261,7 +279,7 @@ export class HostClient {
 			initiatingCommandId: this.initiatingCommandId,
 			commandIds: this.commands.map((command) => command.id),
 		})
-		if (!validation.ok) throw new Error(`${validation.code}: ${validation.message}`)
+		if (!validation.ok) throw new ZooClientError(validation.code, validation.message)
 		const result = this.pendingResult
 		this.pendingResult = undefined
 		this.options.onEvent(result)

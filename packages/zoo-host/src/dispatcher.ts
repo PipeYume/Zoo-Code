@@ -1,4 +1,4 @@
-import type { RooCodeAPI } from "@roo-code/types"
+import { HeadlessApiError, type RooCodeAPI } from "@roo-code/types"
 import { hostCommandSchema, type HostCommand } from "@roo-code/zoo-protocol"
 
 import { HostTransport } from "./transport.js"
@@ -28,14 +28,22 @@ export class HostCommandDispatcher {
 			const data = await this.executeCommand(command)
 			await this.transport.send({ type: "command.done", commandId: command.id, data })
 		} catch (error) {
+			const detail =
+				error instanceof HeadlessApiError
+					? { code: error.code, kind: error.kind, message: error.message }
+					: {
+							code: "task_failed" as const,
+							kind: "runtime" as const,
+							message: error instanceof Error ? error.message : String(error),
+						}
 			await this.transport.send({
 				type: "command.error",
 				commandId: command.id,
 				error: {
-					code: "task_failed",
-					kind: "runtime",
+					code: detail.code,
+					kind: detail.kind,
 					phase: command.type,
-					message: error instanceof Error ? error.message : String(error),
+					message: detail.message,
 				},
 			})
 		}
@@ -52,9 +60,14 @@ export class HostCommandDispatcher {
 			}
 			case "task.resume": {
 				const history = await this.api.getTaskHistoryItem(command.taskId)
-				if (!history) throw new Error(`Unknown session ${command.taskId}`)
+				if (!history)
+					throw new HeadlessApiError("invalid_session", `Unknown session ${command.taskId}`, "configuration")
 				if (history.workspace !== this.workspace) {
-					throw new Error(`Session ${command.taskId} belongs to workspace ${history.workspace ?? "unknown"}`)
+					throw new HeadlessApiError(
+						"invalid_session",
+						`Session ${command.taskId} belongs to workspace ${history.workspace ?? "unknown"}`,
+						"configuration",
+					)
 				}
 				this.bridge?.prepareResume(
 					command.id,
@@ -68,14 +81,23 @@ export class HostCommandDispatcher {
 				return { commandType: command.type, task }
 			}
 			case "task.input":
-				await this.api.sendMessage(command.text, command.images)
+				await this.api.submitHeadlessTaskInput({
+					taskId: command.taskId,
+					text: command.text,
+					images: command.images,
+				})
+				this.bridge?.recordTaskInput(command.id, command.taskId, command.text ?? "")
 				return { commandType: command.type, taskId: command.taskId }
 			case "ask.respond":
 				this.bridge?.prepareAskResponse(
 					command.id,
 					command.taskId,
 					command.askId,
-					command.response === "approve" ? "approve" : command.response === "reject" ? "reject" : "needs_input",
+					command.response === "approve"
+						? "approve"
+						: command.response === "reject"
+							? "reject"
+							: "needs_input",
 				)
 				await this.api.respondToHeadlessAsk({
 					taskId: command.taskId,
@@ -86,10 +108,17 @@ export class HostCommandDispatcher {
 							: { response: command.response },
 				})
 				return { commandType: command.type, taskId: command.taskId, askId: command.askId }
-			case "task.cancel":
+			case "task.cancel": {
 				this.bridge?.prepareCancellation(command.id, command.rootTaskId)
-				await this.api.cancelHeadlessTask({ rootTaskId: command.rootTaskId, reason: command.reason })
+				const settlement = await this.api.cancelHeadlessTask({
+					rootTaskId: command.rootTaskId,
+					reason: command.reason,
+				})
+				if (settlement.status === "failed") {
+					throw new HeadlessApiError("cancel_failed", `Failed to cancel task ${command.rootTaskId}`)
+				}
 				return { commandType: command.type, rootTaskId: command.rootTaskId }
+			}
 			case "host.snapshot":
 				return {
 					commandType: command.type,

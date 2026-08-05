@@ -56,7 +56,6 @@ process.on("message", (message) => {
 		})
 		stream({ type: "task.created", requestId: message.id, rootTaskId: "root-1", taskId: "root-1" })
 		stream({ type: "task.started", rootTaskId: "root-1", taskId: "root-1" })
-		stream({ type: "task.lifecycle", rootTaskId: "root-1", taskId: "root-1", state: "running" })
 		if (scenario === "crash") {
 			setImmediate(() => process.exit(70))
 			return

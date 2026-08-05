@@ -21,6 +21,7 @@ import {
 	type HeadlessTaskReference,
 	type HeadlessTaskResult,
 	type RunOverrides,
+	HeadlessApiError,
 	RooCodeEventName,
 	TaskCommandName,
 	isSecretStateKey,
@@ -531,6 +532,22 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		}
 
 		await this.sidebarProvider.postMessageToWebview({ type: "invoke", invoke: "sendMessage", text, images })
+	}
+
+	public async submitHeadlessTaskInput({
+		taskId,
+		text,
+		images,
+	}: {
+		taskId: string
+		text?: string
+		images?: string[]
+	}): Promise<void> {
+		const task = this.sidebarProvider.getTaskById(taskId)
+		if (!task || this.sidebarProvider.getCurrentTask()?.taskId !== taskId) {
+			throw new HeadlessApiError("invalid_session", `Task ${taskId} is not the active session`, "configuration")
+		}
+		await task.submitUserMessage(text ?? "", images)
 	}
 
 	public deleteQueuedMessage(messageId: string) {
