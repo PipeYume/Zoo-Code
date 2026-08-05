@@ -310,9 +310,10 @@ export function createZooStreamRedactor(
 	type PendingOutput = {
 		events: Array<z.infer<typeof terminalOutputEventSchema>>
 		text: string
+		textByStream: Partial<Record<z.infer<typeof terminalOutputEventSchema>["stream"], string>>
 		pem: boolean
 		overflowed: boolean
-		secretQuote?: '"' | "'"
+		secretQuotes: Partial<Record<z.infer<typeof terminalOutputEventSchema>["stream"], '"' | "'">>
 		secretValueContinuation?: boolean
 	}
 	const pendingOutputs = new Map<string, PendingOutput>()
@@ -353,22 +354,39 @@ export function createZooStreamRedactor(
 		}
 		const [first, ...rest] = pending.events
 		const detectionText = canonicalizeRedactionText(pending.text)
-		const continuedSecret = pending.secretQuote !== undefined
+		const continuedSecret = Object.keys(pending.secretQuotes).length > 0
 		const continuedValue = pending.secretValueContinuation === true
-		const secretQuote = continuedSecret
-			? closesSecretQuote(detectionText, pending.secretQuote!)
-				? undefined
-				: pending.secretQuote
-			: incompleteSecretQuote(detectionText)
+		const secretQuotes = { ...pending.secretQuotes }
+		for (const [stream, text] of Object.entries(pending.textByStream) as Array<
+			[z.infer<typeof terminalOutputEventSchema>["stream"], string]
+		>) {
+			const streamText = canonicalizeRedactionText(text)
+			const activeQuote = secretQuotes[stream]
+			if (activeQuote !== undefined) {
+				if (closesSecretQuote(streamText, activeQuote)) delete secretQuotes[stream]
+			} else {
+				const quote = incompleteSecretQuote(streamText)
+				if (quote !== undefined) secretQuotes[stream] = quote
+			}
+		}
 		const secretValueContinuation = !continuedValue && incompleteSecretValue(detectionText)
 		const unterminatedSecret =
-			pending.pem || secretQuote !== undefined || secretValueContinuation || requiresFailClosedRedaction(pending.text)
+			pending.pem ||
+			Object.keys(secretQuotes).length > 0 ||
+			secretValueContinuation ||
+			requiresFailClosedRedaction(pending.text)
 		const delta = replacement ?? (unterminatedSecret ? REDACTED : String(redactValue(pending.text)))
 		pendingOutputs.delete(key)
-		if (secretQuote !== undefined) {
-			pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: false, secretQuote })
-		} else if (secretValueContinuation) {
-			pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: false, secretValueContinuation: true })
+		if (Object.keys(secretQuotes).length > 0 || secretValueContinuation) {
+			pendingOutputs.set(key, {
+				events: [],
+				text: "",
+				textByStream: {},
+				pem: false,
+				overflowed: false,
+				secretQuotes,
+				secretValueContinuation: secretValueContinuation || undefined,
+			})
 		}
 		return first === undefined
 			? []
@@ -409,17 +427,25 @@ export function createZooStreamRedactor(
 					const buffered = [...pendingOutputs.keys()].flatMap((pendingKey) => emit(pendingKey, REDACTED))
 					return [...buffered, { ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 				}
-				pending = { events: [], text: "", pem: false, overflowed: false }
+				pending = { events: [], text: "", textByStream: {}, pem: false, overflowed: false, secretQuotes: {} }
 				pendingOutputs.set(key, pending)
 			}
 			if (pending.overflowed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 			pending.events.push(event)
 			pending.text += event.delta
+			pending.textByStream[event.stream] = (pending.textByStream[event.stream] ?? "") + event.delta
 			pending.pem = hasUnmatchedPem(canonicalizeRedactionText(pending.text))
 			if (new TextEncoder().encode(pending.text).byteLength > maxPendingBytes || pending.events.length > maxPendingEvents) {
 				pending.overflowed = true
 				const redacted = emit(key, REDACTED)
-				pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: true })
+				pendingOutputs.set(key, {
+					events: [],
+					text: "",
+					textByStream: {},
+					pem: false,
+					overflowed: true,
+					secretQuotes: {},
+				})
 				return redacted
 			}
 			if (pending.pem) return []
@@ -433,7 +459,14 @@ export function createZooStreamRedactor(
 			const keys = event?.type === "terminal.output" ? [outputKey(event)] : [...pendingOutputs.keys()]
 			return keys.flatMap((key) => {
 				const redacted = emit(key, REDACTED)
-				pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: true })
+				pendingOutputs.set(key, {
+					events: [],
+					text: "",
+					textByStream: {},
+					pem: false,
+					overflowed: true,
+					secretQuotes: {},
+				})
 				return redacted
 			})
 		},

@@ -48,6 +48,7 @@ export function isSensitiveKey(key: string): boolean {
 		/\bprivate key\b/.test(words)
 	)
 		return true
+	if (/^[a-z0-9]+(?:password|secret|passphrase|passwd|pwd)$/.test(compact)) return true
 	if (/^(?:.*)?(?:apikey|apitoken|accesstoken|authtoken|bearertoken|idtoken|privatekey|refreshtoken|sessiontoken)$/.test(compact)) {
 		return true
 	}
@@ -74,22 +75,33 @@ function containsSensitiveAssignment(value: string): boolean {
 }
 
 function redactAssignments(value: string): string {
+	const isRedactedValue = (entry: string) => {
+		const unquoted =
+			(entry.startsWith('"') && entry.endsWith('"')) || (entry.startsWith("'") && entry.endsWith("'"))
+				? entry.slice(1, -1)
+				: entry
+		return unquoted === REDACTED
+	}
+	const redactValueText = (prefix: string, entry: string) => {
+		const quote = entry.startsWith('"') && entry.endsWith('"') ? '"' : entry.startsWith("'") && entry.endsWith("'") ? "'" : ""
+		return `${prefix}${quote}${REDACTED}${quote}`
+	}
 	return value
 		.replace(quotedAssignment, (match, prefix: string, _quote: string, key: string, value: string) =>
-			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+			isSensitiveKey(key) && !isRedactedValue(value) ? redactValueText(prefix, value) : match,
 		)
 		.replace(bareColonAssignment, (match, prefix: string, key: string, value: string) =>
-			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+			isSensitiveKey(key) && !isRedactedValue(value) ? redactValueText(prefix, value) : match,
 		)
 		.replace(bareEqualsAssignment, (match, prefix: string, key: string, value: string) =>
-			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+			isSensitiveKey(key) && !isRedactedValue(value) ? redactValueText(prefix, value) : match,
 		)
 }
 
 export function canonicalizeRedactionText(value: string): string {
 	const withoutTerminalControls = value
-		.replace(terminalControl, "")
 		.replace(/\\u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+		.replace(terminalControl, "")
 	const rendered: string[] = []
 	for (const character of withoutTerminalControls) {
 		if (character === "\b") {

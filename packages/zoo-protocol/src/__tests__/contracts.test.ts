@@ -1905,6 +1905,12 @@ describe("redaction contracts", () => {
 			cookieJar: "[REDACTED]",
 			privateKeyPem: "[REDACTED]",
 		})
+		expect(redactValue({ dbpassword: "pw", appsecret: "secret" })).toEqual({
+			dbpassword: "[REDACTED]",
+			appsecret: "[REDACTED]",
+		})
+		expect(redactText('{"my token":"[REDACTED]hunter2"}')).toBe('{"my token":"[REDACTED]"}')
+		expect(redactText("pass\\u001b[31mword=hunter2")).toBe("[REDACTED]")
 	})
 
 	it("redacts public event and result payloads during parsing", () => {
@@ -2143,6 +2149,13 @@ describe("redaction contracts", () => {
 			"stdout",
 			"stderr",
 		])
+		const crossStreamQuote = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: 'password="first\n' },
+			{ ...terminal, seq: 2, stream: "stderr", delta: 'diagnostic "\n' },
+			{ ...terminal, seq: 3, delta: "hunter2\n" },
+		])
+		expect(crossStreamQuote.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED][REDACTED][REDACTED]")
 	})
 
 	it("preserves prototype-like keys as redacted record data", () => {

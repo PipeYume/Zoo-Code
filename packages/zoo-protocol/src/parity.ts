@@ -110,6 +110,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Request approval." },
 			{ type: "task.started", rootTaskId: "root", taskId: "root" },
 			{ type: "ask.required", rootTaskId: "root", taskId: "root", askId: "ask-1" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "waiting" },
 			{
 				type: "ask.resolved",
 				rootTaskId: "root",
@@ -119,6 +120,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 				source: "user",
 				requestId: "respond-1",
 			},
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "running" },
 			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" },
 			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" },
 		],
@@ -258,9 +260,11 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		if (turn.startsWith("ask:")) {
 			const askId = turn.slice(4)
 			if (!askId || usedAskIds.has(askId)) throw new Error(`Invalid ask fixture: ${turn}`)
+			const wasUnblocked = pendingAsks.size === 0
 			pendingAsks.add(askId)
 			usedAskIds.add(askId)
 			trace.push({ type: "ask.required", rootTaskId: "root", taskId: "root", askId })
+			if (wasUnblocked) trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "waiting" })
 			continue
 		}
 		if (turn.startsWith("approve:")) {
@@ -281,6 +285,9 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 				source,
 				requestId,
 			})
+			if (pendingAsks.size === 0) {
+				trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "running" })
+			}
 			continue
 		}
 		if (turn.startsWith("cancel:")) {
@@ -330,7 +337,6 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			if (activeChildren.size > 0 || pendingAsks.size === 0) {
 				throw new Error("needs_input requires a pending ask and settled descendants")
 			}
-			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "waiting" })
 			result = {
 				type: "task.result",
 				rootTaskId: "root",
