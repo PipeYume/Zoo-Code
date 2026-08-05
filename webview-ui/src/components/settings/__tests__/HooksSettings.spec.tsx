@@ -91,4 +91,21 @@ describe("HooksSettings", () => {
 		expect(screen.getByTestId("save-hook")).toBeEnabled()
 		expect(setErrorMessage).toHaveBeenCalledWith("settings:hooks.validation.invalid")
 	})
+
+	it("accepts exact custom and native MCP tool names", () => {
+		const onChange = vi.fn()
+		render(<HooksSettings hookDefinitions={[]} onChange={onChange} setErrorMessage={vi.fn()} />)
+		fireEvent.click(screen.getByTestId("add-hook"))
+		fireEvent.change(screen.getByTestId("hook-name"), { target: { value: "Dynamic guard" } })
+		fireEvent.change(screen.getByTestId("hook-executable"), { target: { value: "guard" } })
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "preToolUse" } })
+		fireEvent.change(screen.getByTestId("hook-dynamic-tools"), {
+			target: { value: "my_custom_tool, mcp_local_search" },
+		})
+		fireEvent.click(screen.getByTestId("save-hook"))
+
+		expect(onChange).toHaveBeenCalledWith([
+			expect.objectContaining({ toolMatcher: ["my_custom_tool", "mcp_local_search"] }),
+		])
+	})
 })

@@ -3,6 +3,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { presentAssistantMessage } from "../presentAssistantMessage"
 import { validateToolUse } from "../../tools/validateToolUse"
+import { readFileTool } from "../../tools/ReadFileTool"
+import { writeToFileTool } from "../../tools/WriteToFileTool"
 
 // Mock dependencies
 vi.mock("../../task/Task")
@@ -23,6 +25,17 @@ vi.mock("@roo-code/core", () => ({
 	},
 }))
 
+vi.mock("@roo-code/telemetry", () => ({
+	TelemetryService: {
+		instance: {
+			captureToolUsage: vi.fn(),
+			captureConsecutiveMistakeError: vi.fn(),
+			captureException: vi.fn(),
+		},
+	},
+}))
+
+import { TelemetryService } from "@roo-code/telemetry"
 import { customToolRegistry } from "@roo-code/core"
 
 describe("presentAssistantMessage - Custom Tool Recording", () => {
@@ -31,6 +44,8 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 	beforeEach(() => {
 		// Reset all mocks
 		vi.clearAllMocks()
+		vi.mocked(customToolRegistry.has).mockReturnValue(false)
+		vi.mocked(customToolRegistry.get).mockReturnValue(undefined)
 
 		// Create a mock Task with minimal properties needed for testing
 		mockTask = {
@@ -52,6 +67,7 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			},
 			recordToolUsage: vi.fn(),
 			recordToolError: vi.fn(),
+			runPreToolUseHooks: vi.fn().mockResolvedValue({ decision: "allow", context: [] }),
 			toolRepetitionDetector: {
 				check: vi.fn().mockReturnValue({ allowExecution: true }),
 			},
@@ -111,6 +127,182 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 		})
 	})
 
+	describe("preToolUse dispatch", () => {
+		it("runs a static hook after repetition and before approval/execution", async () => {
+			const order: string[] = []
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "static-hook",
+					name: "read_file",
+					params: { path: "test.txt" },
+					nativeArgs: { path: "test.txt" },
+					partial: false,
+				},
+			]
+			mockTask.toolRepetitionDetector.check.mockImplementation(() => {
+				order.push("repetition")
+				return { allowExecution: true }
+			})
+			mockTask.runPreToolUseHooks.mockImplementation(async () => {
+				order.push("hook")
+				return { decision: "allow", context: [{ type: "text", text: "<hook_result>safe</hook_result>" }] }
+			})
+			vi.spyOn(readFileTool, "handle").mockImplementationOnce(async (_task, _block, callbacks) => {
+				order.push("execution")
+				await callbacks.askApproval("tool", "read")
+				callbacks.pushToolResult("read result")
+			})
+
+			await presentAssistantMessage(mockTask)
+
+			expect(order).toEqual(["repetition", "hook", "execution"])
+			expect(mockTask.runPreToolUseHooks).toHaveBeenCalledWith("read_file")
+			expect(mockTask.userMessageContent).toEqual([
+				{ type: "text", text: "<hook_result>safe</hook_result>" },
+				expect.objectContaining({ type: "tool_result", tool_use_id: "static-hook" }),
+			])
+		})
+
+		it("blocks a custom tool after argument validation with one real tool result", async () => {
+			const execute = vi.fn()
+			const parse = vi.fn().mockReturnValue({ safe: true })
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "custom-block",
+					name: "my_custom_tool",
+					nativeArgs: { secret: "not-forwarded" },
+					params: {},
+					partial: false,
+				},
+			]
+			vi.mocked(customToolRegistry.get).mockReturnValue({
+				name: "my_custom_tool",
+				description: "custom",
+				parameters: { parse },
+				execute,
+			} as any)
+			mockTask.runPreToolUseHooks.mockResolvedValue({
+				decision: "block",
+				context: [],
+				status: "blocked",
+				reason: "blocked by hook",
+			})
+
+			await presentAssistantMessage(mockTask)
+
+			expect(parse).toHaveBeenCalledBefore(mockTask.runPreToolUseHooks)
+			expect(mockTask.runPreToolUseHooks).toHaveBeenCalledWith("my_custom_tool")
+			expect(mockTask.runPreToolUseHooks.mock.calls[0]).toEqual(["my_custom_tool"])
+			expect(execute).not.toHaveBeenCalled()
+			expect(mockTask.ask).not.toHaveBeenCalled()
+			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+		})
+
+		it("skips approval, checkpoint, and static execution when blocked", async () => {
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "static-block",
+					name: "write_to_file",
+					params: { path: "blocked.txt", content: "blocked" },
+					nativeArgs: { path: "blocked.txt", content: "blocked" },
+					partial: false,
+				},
+			]
+			mockTask.currentStreamingDidCheckpoint = false
+			mockTask.checkpointSave = vi.fn()
+			mockTask.runPreToolUseHooks.mockResolvedValue({
+				decision: "block",
+				context: [],
+				status: "blocked",
+				reason: "blocked by hook",
+			})
+			const execute = vi.spyOn(writeToFileTool, "handle")
+
+			await presentAssistantMessage(mockTask)
+
+			expect(mockTask.ask).not.toHaveBeenCalled()
+			expect(mockTask.checkpointSave).not.toHaveBeenCalled()
+			expect(execute).not.toHaveBeenCalled()
+			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+		})
+
+		it("does not run a hook for invalid custom arguments", async () => {
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "custom-invalid",
+					name: "my_custom_tool",
+					nativeArgs: { invalid: true },
+					params: {},
+					partial: false,
+				},
+			]
+			vi.mocked(customToolRegistry.get).mockReturnValue({
+				name: "my_custom_tool",
+				description: "custom",
+				parameters: {
+					parse: vi.fn(() => {
+						throw new Error("invalid")
+					}),
+				},
+				execute: vi.fn(),
+			} as any)
+
+			await presentAssistantMessage(mockTask)
+
+			expect(mockTask.runPreToolUseHooks).not.toHaveBeenCalled()
+			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+		})
+
+		it("does not run a hook when built-in mode validation rejects the call", async () => {
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "static-invalid",
+					name: "read_file",
+					params: { path: "secret" },
+					nativeArgs: { path: "secret" },
+					partial: false,
+				},
+			]
+			vi.mocked(validateToolUse).mockImplementationOnce(() => {
+				throw new Error("not allowed")
+			})
+
+			await presentAssistantMessage(mockTask)
+
+			expect(mockTask.toolRepetitionDetector.check).not.toHaveBeenCalled()
+			expect(mockTask.runPreToolUseHooks).not.toHaveBeenCalled()
+		})
+
+		it("does not run a hook when repetition blocks the call", async () => {
+			mockTask.assistantMessageContent = [
+				{
+					type: "tool_use",
+					id: "static-repeated",
+					name: "read_file",
+					params: { path: "repeat" },
+					nativeArgs: { path: "repeat" },
+					partial: false,
+				},
+			]
+			mockTask.toolRepetitionDetector.check.mockReturnValue({
+				allowExecution: false,
+				askUser: { messageKey: "mistake_limit_reached", messageDetail: "Repeated {toolName}" },
+			})
+			mockTask.apiConfiguration = { apiProvider: "test" }
+			mockTask.consecutiveMistakeLimit = 3
+
+			await presentAssistantMessage(mockTask)
+
+			expect(mockTask.runPreToolUseHooks).not.toHaveBeenCalled()
+			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+		})
+	})
+
 	describe("Custom tool error recording", () => {
 		it("should record custom tool error as 'custom_tool'", async () => {
 			const toolCallId = "tool_call_custom_error_123"
@@ -149,6 +341,7 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 					id: toolCallId,
 					name: "read_file",
 					params: { path: "test.txt" },
+					nativeArgs: { path: "test.txt" },
 					partial: false,
 				},
 			]
@@ -173,6 +366,11 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 						server_name: "test-server",
 						tool_name: "test-tool",
 						arguments: "{}",
+					},
+					nativeArgs: {
+						server_name: "test-server",
+						tool_name: "test-tool",
+						arguments: {},
 					},
 					partial: false,
 				},
