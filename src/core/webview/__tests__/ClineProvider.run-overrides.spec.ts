@@ -118,4 +118,20 @@ describe("ClineProvider run overrides", () => {
 		expect(result.apiConfiguration).toMatchObject({ apiProvider: "openrouter", openRouterModelId: "mode-model" })
 		expect(host.providerSettingsManager.activateProfile).not.toHaveBeenCalled()
 	})
+
+	it("reports a missing profile through the public task resolver", async () => {
+		const host = createResolverHost()
+		host.providerSettingsManager.getProfile.mockRejectedValueOnce(new Error("not found"))
+		const provider = Object.assign(host, {
+			resolveRunOverrides: ClineProvider.prototype["resolveRunOverrides"],
+		})
+
+		await expect(
+			ClineProvider.prototype.resolveTaskRunOverrides.call(
+				provider as unknown as ClineProvider,
+				{ profile: "missing", mode: "code" },
+				{ apiProvider: "anthropic" },
+			),
+		).rejects.toMatchObject({ code: "invalid_profile", kind: "configuration" })
+	})
 })
