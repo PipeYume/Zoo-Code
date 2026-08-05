@@ -19,7 +19,7 @@ export const zooRunResultSchema = strictObject({
 	protocol: z.literal("zoo-run-result"),
 	success: z.boolean(),
 	outcome: zooOutcomeSchema,
-	rootTaskId: z.string().min(1).optional(),
+	rootTaskId: z.string().min(1),
 	currentTaskId: z.string().min(1).optional(),
 	workspace: z.string().min(1),
 	resumable: z.boolean(),
@@ -36,6 +36,9 @@ export const zooRunResultSchema = strictObject({
 	if (result.outcome === "failed" && result.error === undefined) {
 		context.addIssue({ code: z.ZodIssueCode.custom, message: "failed results require an error" })
 	}
+	if (result.outcome === "completed" && result.error !== undefined) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: "completed results cannot include an error" })
+	}
 })
 
 export type ZooRunResult = z.infer<typeof zooRunResultSchema>
@@ -45,13 +48,20 @@ const eventBase = {
 	seq: z.number().int().positive(),
 	timestamp: z.string().datetime({ offset: true }),
 	hostId: z.string().min(1),
-	rootTaskId: z.string().min(1).optional(),
-	taskId: z.string().min(1).optional(),
 	requestId: z.string().min(1).optional(),
 }
 
 const event = <T extends z.ZodRawShape>(type: string, shape: T) =>
 	strictObject({ ...eventBase, type: z.literal(type), ...shape })
+
+const taskEvent = <T extends z.ZodRawShape>(type: string, shape: T) =>
+	strictObject({
+		...eventBase,
+		type: z.literal(type),
+		rootTaskId: z.string().min(1),
+		taskId: z.string().min(1),
+		...shape,
+	})
 
 const systemInitEventSchema = event("system.init", {
 	protocol: z.literal("zoo-stream"),
@@ -60,28 +70,28 @@ const systemInitEventSchema = event("system.init", {
 	hostVersion: z.string().min(1),
 })
 const systemWarningEventSchema = event("system.warning", { code: z.string().min(1), message: z.string().min(1) })
-const taskCreatedEventSchema = event("task.created", { parentTaskId: z.string().min(1).optional() })
-const taskStartedEventSchema = event("task.started", {})
-const taskLifecycleEventSchema = event("task.lifecycle", {
+const taskCreatedEventSchema = taskEvent("task.created", { parentTaskId: z.string().min(1).optional() })
+const taskStartedEventSchema = taskEvent("task.started", {})
+const taskLifecycleEventSchema = taskEvent("task.lifecycle", {
 	state: z.enum(["running", "waiting", "interrupted", "completed", "failed"]),
 })
-const taskResumedEventSchema = event("task.resumed", {})
-const taskDelegatedEventSchema = event("task.delegated", {
+const taskResumedEventSchema = taskEvent("task.resumed", {})
+const taskDelegatedEventSchema = taskEvent("task.delegated", {
 	parentTaskId: z.string().min(1),
 	childTaskId: z.string().min(1),
 })
-const messageUpsertEventSchema = event("message.upsert", {
+const messageUpsertEventSchema = taskEvent("message.upsert", {
 	messageId: z.string().min(1),
 	role: z.enum(["assistant", "user", "reasoning"]),
 	content: z.string(),
 	complete: z.boolean(),
 })
-const askRequiredEventSchema = event("ask.required", {
+const askRequiredEventSchema = taskEvent("ask.required", {
 	askId: z.string().min(1),
 	category: z.string().min(1),
 	subject: z.string().min(1),
 })
-const askResolvedEventSchema = event("ask.resolved", {
+const askResolvedEventSchema = taskEvent("ask.resolved", {
 	askId: z.string().min(1),
 	decision: z.enum(["approve", "reject", "needs_input"]),
 	source: z.enum(["policy", "user", "auto", "deny"]),
@@ -92,16 +102,16 @@ const toolEventState = {
 	arguments: z.record(z.unknown()).optional(),
 	output: z.string().optional(),
 }
-const toolStartedEventSchema = event("tool.started", toolEventState)
-const toolUpdatedEventSchema = event("tool.updated", toolEventState)
-const toolCompletedEventSchema = event("tool.completed", toolEventState)
-const toolFailedEventSchema = event("tool.failed", { ...toolEventState, error: zooErrorSchema })
-const terminalOutputEventSchema = event("terminal.output", {
+const toolStartedEventSchema = taskEvent("tool.started", toolEventState)
+const toolUpdatedEventSchema = taskEvent("tool.updated", toolEventState)
+const toolCompletedEventSchema = taskEvent("tool.completed", toolEventState)
+const toolFailedEventSchema = taskEvent("tool.failed", { ...toolEventState, error: zooErrorSchema })
+const terminalOutputEventSchema = taskEvent("terminal.output", {
 	toolCallId: z.string().min(1),
 	stream: z.enum(["stdout", "stderr"]),
 	delta: z.string(),
 })
-const terminalStatusEventSchema = event("terminal.status", {
+const terminalStatusEventSchema = taskEvent("terminal.status", {
 	toolCallId: z.string().min(1),
 	state: z.enum(["running", "background", "exited", "killed"]),
 	exitCode: z.number().int().nullable().optional(),
@@ -112,14 +122,14 @@ const mcpEventState = {
 	operation: z.string().min(1),
 	output: z.string().optional(),
 }
-const mcpStartedEventSchema = event("mcp.started", mcpEventState)
-const mcpCompletedEventSchema = event("mcp.completed", mcpEventState)
-const mcpFailedEventSchema = event("mcp.failed", { ...mcpEventState, error: zooErrorSchema })
-const usageUpdatedEventSchema = event("usage.updated", {
+const mcpStartedEventSchema = taskEvent("mcp.started", mcpEventState)
+const mcpCompletedEventSchema = taskEvent("mcp.completed", mcpEventState)
+const mcpFailedEventSchema = taskEvent("mcp.failed", { ...mcpEventState, error: zooErrorSchema })
+const usageUpdatedEventSchema = taskEvent("usage.updated", {
 	usage: usageSchema,
 	cost: z.number().nonnegative().optional(),
 })
-const taskResultEventSchema = event("task.result", { result: zooRunResultSchema })
+const taskResultEventSchema = taskEvent("task.result", { result: zooRunResultSchema })
 
 export const zooStreamEventSchema = z.discriminatedUnion("type", [
 	systemInitEventSchema,
@@ -162,6 +172,56 @@ export function validateStreamLifecycle(
 	const results = events.filter((event) => event.type === "task.result")
 	if (results.length !== 1 || events.at(-1)?.type !== "task.result") {
 		return { ok: false, code: "task_failed", message: "Accepted stream must end with exactly one task.result" }
+	}
+	const resultEvent = results[0]!
+	const rootTaskId = resultEvent.result.rootTaskId
+	if (resultEvent.rootTaskId !== rootTaskId || resultEvent.taskId !== rootTaskId) {
+		return { ok: false, code: "task_failed", message: "task.result must identify the authoritative root task" }
+	}
+
+	const pendingAsks = new Set<string>()
+	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
+	const terminalStates = new Set(["interrupted", "completed", "failed"])
+	for (const streamEvent of events) {
+		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
+			return { ok: false, code: "task_failed", message: "All task events must identify the authoritative root task" }
+		}
+		if (!("taskId" in streamEvent) || streamEvent.type === "task.result") continue
+
+		const previousState = taskStates.get(streamEvent.taskId)
+		if (previousState !== undefined && terminalStates.has(previousState)) {
+			return { ok: false, code: "task_failed", message: `Task ${streamEvent.taskId} emitted an event after termination` }
+		}
+		if (streamEvent.type === "task.lifecycle") {
+			taskStates.set(streamEvent.taskId, streamEvent.state)
+		}
+		if (streamEvent.type === "ask.required") {
+			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
+			if (pendingAsks.has(askKey)) {
+				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} is already pending` }
+			}
+			pendingAsks.add(askKey)
+		}
+		if (streamEvent.type === "ask.resolved") {
+			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
+			if (!pendingAsks.delete(askKey)) {
+				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
+			}
+		}
+	}
+	if (pendingAsks.size > 0 && resultEvent.result.outcome !== "needs_input") {
+		return { ok: false, code: "task_failed", message: "Terminal stream contains unresolved asks" }
+	}
+	const expectedState = {
+		completed: "completed",
+		needs_input: "waiting",
+		cancelled: "interrupted",
+		timed_out: "interrupted",
+		failed: "failed",
+	} as const
+	const rootState = taskStates.get(rootTaskId)
+	if (rootState !== undefined && rootState !== expectedState[resultEvent.result.outcome]) {
+		return { ok: false, code: "task_failed", message: "Root lifecycle state contradicts task.result" }
 	}
 	return { ok: true }
 }

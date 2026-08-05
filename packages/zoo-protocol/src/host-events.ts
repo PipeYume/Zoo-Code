@@ -12,12 +12,39 @@ const base = {
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict()
 
+const taskReferenceSchema = strictObject({
+	rootTaskId: z.string().min(1),
+	taskId: z.string().min(1),
+})
+
+const taskSummarySchema = strictObject({
+	rootTaskId: z.string().min(1),
+	currentTaskId: z.string().min(1),
+	workspace: z.string().min(1),
+	state: z.enum(["running", "waiting", "interrupted", "completed", "failed"]),
+})
+
+export const commandDoneDataSchema = z.discriminatedUnion("commandType", [
+	strictObject({ commandType: z.literal("task.start"), task: taskReferenceSchema }),
+	strictObject({ commandType: z.literal("task.resume"), task: taskReferenceSchema }),
+	strictObject({ commandType: z.literal("task.input"), taskId: z.string().min(1) }),
+	strictObject({ commandType: z.literal("ask.respond"), taskId: z.string().min(1), askId: z.string().min(1) }),
+	strictObject({ commandType: z.literal("task.cancel"), rootTaskId: z.string().min(1) }),
+	strictObject({ commandType: z.literal("history.list"), tasks: z.array(taskSummarySchema) }),
+	strictObject({
+		commandType: z.literal("host.snapshot"),
+		lastSeq: z.number().int().nonnegative(),
+		activeRootTaskId: z.string().min(1).optional(),
+	}),
+	strictObject({ commandType: z.literal("host.shutdown") }),
+])
+
 const commandAckSchema = strictObject({ ...base, type: z.literal("command.ack"), commandId: z.string().min(1) })
 const commandDoneSchema = strictObject({
 	...base,
 	type: z.literal("command.done"),
 	commandId: z.string().min(1),
-	data: z.unknown().optional(),
+	data: commandDoneDataSchema,
 })
 const commandErrorSchema = strictObject({
 	...base,

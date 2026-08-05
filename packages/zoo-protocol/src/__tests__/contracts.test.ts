@@ -11,6 +11,7 @@ import {
 	parityScenarios,
 	redactText,
 	redactValue,
+	runDeterministicFakeProvider,
 	validateCommandLifecycle,
 	validateMonotonicSequence,
 	validateStreamLifecycle,
@@ -69,10 +70,28 @@ describe("strict host contracts", () => {
 	it("models one ACK and terminal command response independently", () => {
 		const events = [
 			hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId: "cmd" }),
-			hostEventSchema.parse({ v: 1, seq: 2, hostId: "host", type: "command.done", commandId: "cmd" }),
+			hostEventSchema.parse({
+				v: 1,
+				seq: 2,
+				hostId: "host",
+				type: "command.done",
+				commandId: "cmd",
+				data: { commandType: "host.shutdown" },
+			}),
 		]
 		expect(validateCommandLifecycle(["cmd"], events)).toEqual({ ok: true })
 		expect(validateCommandLifecycle(["cmd"], [...events, events[1]!])).toMatchObject({ ok: false })
+	})
+
+	it("rejects missing and mismatched command completion payloads", () => {
+		const done = { v: 1, seq: 1, hostId: "host", type: "command.done", commandId: "cmd" }
+		expect(hostEventSchema.safeParse(done).success).toBe(false)
+		expect(
+			hostEventSchema.safeParse({
+				...done,
+				data: { commandType: "task.start", task: { rootTaskId: "root" } },
+			}).success,
+		).toBe(false)
 	})
 })
 
@@ -91,6 +110,12 @@ describe("public automation contracts", () => {
 		}
 		expect(zooRunResultSchema.parse(result)).toEqual(result)
 		expect(zooRunResultSchema.safeParse({ ...result, success: false }).success).toBe(false)
+		expect(
+			zooRunResultSchema.safeParse({
+				...result,
+				error: { code: "task_failed", message: "contradiction" },
+			}).success,
+		).toBe(false)
 	})
 
 	it("validates strict, ordered stream records", () => {
@@ -100,6 +125,7 @@ describe("public automation contracts", () => {
 			timestamp,
 			hostId: "host",
 			type: "message.upsert",
+			rootTaskId: "root",
 			taskId: "root",
 			messageId: "message-1",
 			role: "assistant",
@@ -109,6 +135,7 @@ describe("public automation contracts", () => {
 		expect(zooStreamEventSchema.parse(event)).toEqual(event)
 		expect(zooStreamEventSchema.safeParse({ ...event, seq: 0 }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, rawSecret: "no" }).success).toBe(false)
+		expect(zooStreamEventSchema.safeParse({ ...event, taskId: undefined }).success).toBe(false)
 	})
 
 	it("requires init, contiguous sequence, and exactly one terminal root result", () => {
@@ -130,6 +157,7 @@ describe("public automation contracts", () => {
 			hostId: "host",
 			type: "task.result",
 			rootTaskId: "root",
+			taskId: "root",
 			result: {
 				schemaVersion: 1,
 				protocol: "zoo-run-result",
@@ -144,6 +172,36 @@ describe("public automation contracts", () => {
 		expect(validateStreamLifecycle([init, result])).toEqual({ ok: true })
 		expect(validateStreamLifecycle([{ ...init, seq: 2 }, result])).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([init])).toMatchObject({ ok: false })
+		expect(validateStreamLifecycle([init, { ...result, taskId: "child" }])).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle([
+				init,
+				zooStreamEventSchema.parse({
+					v: 1,
+					seq: 2,
+					timestamp,
+					hostId: "host",
+					type: "ask.required",
+					rootTaskId: "root",
+					taskId: "root",
+					askId: "ask-1",
+					category: "tool",
+					subject: "Run command",
+				}),
+				{ ...result, seq: 3 },
+			]),
+		).toMatchObject({ ok: false })
+		const completedLifecycle = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 2,
+			timestamp,
+			hostId: "host",
+			type: "task.lifecycle",
+			rootTaskId: "root",
+			taskId: "root",
+			state: "failed",
+		})
+		expect(validateStreamLifecycle([init, completedLifecycle, { ...result, seq: 3 }])).toMatchObject({ ok: false })
 	})
 
 	it("maps every terminal outcome deterministically", () => {
@@ -172,6 +230,8 @@ describe("redaction contracts", () => {
 			nested: { authorization: "[REDACTED]", command: "[REDACTED] run" },
 		})
 		expect(redactText("Authorization: Bearer abcdefgh")).not.toContain("abcdefgh")
+		expect(redactText("Authorization: abc123\nCookie: session=abc")).not.toMatch(/abc123|session=abc/)
+		expect(redactText('{"password":"hunter2"}')).toBe('{"password":"[REDACTED]"}')
 	})
 
 	it("handles cycles without throwing", () => {
@@ -183,7 +243,14 @@ describe("redaction contracts", () => {
 
 describe("deterministic parity oracle", () => {
 	it.each(parityScenarios)("accepts the $id golden semantic trace", (scenario) => {
-		expect(compareSemanticTraces(scenario.expected, scenario.expected)).toEqual({ ok: true })
+		expect(compareSemanticTraces(scenario.expected, runDeterministicFakeProvider(scenario))).toEqual({ ok: true })
+	})
+
+	it("includes the prompt in fake-provider semantics", () => {
+		const scenario = { ...parityScenarios[0]!, prompt: "Changed prompt" }
+		expect(compareSemanticTraces(parityScenarios[0]!.expected, runDeterministicFakeProvider(scenario))).toMatchObject({
+			ok: false,
+		})
 	})
 
 	it("detects child completion incorrectly settling the root", () => {
