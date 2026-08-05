@@ -59,8 +59,18 @@ export function compareSemanticTraces(
 	expected: readonly SemanticTraceEntry[],
 	actual: readonly SemanticTraceEntry[],
 ): { ok: true } | { ok: false; difference: string } {
-	const expectedJson = JSON.stringify(expected)
-	const actualJson = JSON.stringify(actual)
+	const canonicalize = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(canonicalize)
+		if (value === null || typeof value !== "object") return value
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([, entry]) => entry !== undefined)
+				.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+				.map(([key, entry]) => [key, canonicalize(entry)]),
+		)
+	}
+	const expectedJson = JSON.stringify(canonicalize(expected))
+	const actualJson = JSON.stringify(canonicalize(actual))
 	return expectedJson === actualJson
 		? { ok: true }
 		: { ok: false, difference: `Expected ${expectedJson}\nReceived ${actualJson}` }

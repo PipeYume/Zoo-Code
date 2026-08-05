@@ -1,10 +1,11 @@
 const REDACTED = "[REDACTED]" as const
 const sensitiveKey = /(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)/i
-const doubleQuotedSecret = /("(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)"\s*:\s*)"(?:\\.|[^"\\])*"/gi
-const singleQuotedSecret = /('(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)'\s*:\s*)'(?:\\.|[^'\\])*'/gi
+const sensitiveKeyName = String.raw`[A-Za-z0-9_-]*(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)[A-Za-z0-9_-]*`
+const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
+const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
-	/(?<!["'])\b(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)\s*[:=]\s*[^\s,;}]+/gi,
+	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*[:=]\\s*[^\\s,;}]+`, "gi"),
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
 	/\b[A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[^\s]+/gi,

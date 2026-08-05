@@ -23,7 +23,7 @@ export const hostHelloSchema = z
 		type: z.literal("hello"),
 		hostId: z.string().min(1),
 		supportedVersions: z.array(z.number().int().positive()).nonempty(),
-		capabilities: z.array(zooCapabilitySchema),
+		capabilities: z.array(z.string().min(1)),
 		buildVersion: z.string().min(1),
 	})
 	.strict()

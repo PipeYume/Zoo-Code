@@ -51,10 +51,10 @@ const eventBase = {
 	requestId: z.string().min(1).optional(),
 }
 
-const event = <T extends z.ZodRawShape>(type: string, shape: T) =>
+const event = <const Type extends string, T extends z.ZodRawShape>(type: Type, shape: T) =>
 	strictObject({ ...eventBase, type: z.literal(type), ...shape })
 
-const taskEvent = <T extends z.ZodRawShape>(type: string, shape: T) =>
+const taskEvent = <const Type extends string, T extends z.ZodRawShape>(type: Type, shape: T) =>
 	strictObject({
 		...eventBase,
 		type: z.literal(type),
@@ -162,6 +162,10 @@ export function validateStreamLifecycle(
 ): { ok: true } | { ok: false; code: "protocol_gap" | "task_failed"; message: string } {
 	if (events[0]?.type !== "system.init") {
 		return { ok: false, code: "task_failed", message: "Stream must start with system.init" }
+	}
+	const hostId = events[0].hostId
+	if (events.some((streamEvent) => streamEvent.hostId !== hostId)) {
+		return { ok: false, code: "protocol_gap", message: "Stream cannot span multiple hosts" }
 	}
 	for (let index = 1; index < events.length; index += 1) {
 		const expected = events[index - 1]!.seq + 1

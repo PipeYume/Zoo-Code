@@ -54,7 +54,7 @@ describe("strict host contracts", () => {
 			type: "hello",
 			hostId: "host-1",
 			supportedVersions: [1],
-			capabilities: ["task:start", "host:shutdown"],
+			capabilities: ["task:start", "host:shutdown", "future:additive-capability"],
 			buildVersion: "1.0.0",
 		})
 		expect(negotiateProtocol(hello, [1], ["task:start"])).toEqual({ ok: true, version: 1 })
@@ -68,6 +68,7 @@ describe("strict host contracts", () => {
 	})
 
 	it("models one ACK and terminal command response independently", () => {
+		const command = hostCommandSchema.parse({ v: 1, id: "cmd", type: "host.shutdown" })
 		const events = [
 			hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId: "cmd" }),
 			hostEventSchema.parse({
@@ -79,8 +80,56 @@ describe("strict host contracts", () => {
 				data: { commandType: "host.shutdown" },
 			}),
 		]
-		expect(validateCommandLifecycle(["cmd"], events)).toEqual({ ok: true })
-		expect(validateCommandLifecycle(["cmd"], [...events, events[1]!])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], events)).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [...events, events[1]!])).toMatchObject({ ok: false })
+	})
+
+	it("correlates terminal responses with commands and hosts", () => {
+		const command = hostCommandSchema.parse({
+			v: 1,
+			id: "cmd",
+			type: "ask.respond",
+			taskId: "task",
+			askId: "ask",
+			response: "approve",
+		})
+		const acknowledgement = hostEventSchema.parse({
+			v: 1,
+			seq: 1,
+			hostId: "host-a",
+			type: "command.ack",
+			commandId: "cmd",
+		})
+		const completion = hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host-a",
+			type: "command.done",
+			commandId: "cmd",
+			data: { commandType: "ask.respond", taskId: "task", askId: "ask" },
+		})
+		const mismatchedIdentity = hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host-a",
+			type: "command.done",
+			commandId: "cmd",
+			data: { commandType: "ask.respond", taskId: "task", askId: "other" },
+		})
+		const mismatchedType = hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host-a",
+			type: "command.done",
+			commandId: "cmd",
+			data: { commandType: "host.shutdown" },
+		})
+		expect(validateCommandLifecycle([command], [acknowledgement, completion])).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedIdentity])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedType])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [acknowledgement, { ...completion, hostId: "host-b" }])).toMatchObject({
+			ok: false,
+		})
 	})
 
 	it("rejects missing and mismatched command completion payloads", () => {
@@ -169,10 +218,12 @@ describe("public automation contracts", () => {
 				elapsedMs: 10,
 			},
 		})
+		const childResult = zooStreamEventSchema.parse({ ...result, taskId: "child" })
 		expect(validateStreamLifecycle([init, result])).toEqual({ ok: true })
+		expect(validateStreamLifecycle([init, { ...result, hostId: "other-host" }])).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([{ ...init, seq: 2 }, result])).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([init])).toMatchObject({ ok: false })
-		expect(validateStreamLifecycle([init, { ...result, taskId: "child" }])).toMatchObject({ ok: false })
+		expect(validateStreamLifecycle([init, childResult])).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle([
 				init,
@@ -232,6 +283,9 @@ describe("redaction contracts", () => {
 		expect(redactText("Authorization: Bearer abcdefgh")).not.toContain("abcdefgh")
 		expect(redactText("Authorization: abc123\nCookie: session=abc")).not.toMatch(/abc123|session=abc/)
 		expect(redactText('{"password":"hunter2"}')).toBe('{"password":"[REDACTED]"}')
+		expect(redactText('{"client_secret":"secret-value","access_token":"token-value"}')).toBe(
+			'{"client_secret":"[REDACTED]","access_token":"[REDACTED]"}',
+		)
 	})
 
 	it("handles cycles without throwing", () => {
@@ -266,5 +320,12 @@ describe("deterministic parity oracle", () => {
 		const expected = parityScenarios[0]!.expected
 		const result = compareSemanticTraces(expected, expected.slice(0, -1))
 		expect(result).toMatchObject({ ok: false })
+	})
+
+	it("ignores object property insertion order without ignoring event order", () => {
+		const expected = [{ type: "message.upsert", taskId: "root", content: "hello" }]
+		const reordered = [{ content: "hello", taskId: "root", type: "message.upsert" }]
+		expect(compareSemanticTraces(expected, reordered)).toEqual({ ok: true })
+		expect(compareSemanticTraces(expected, [...reordered, ...reordered])).toMatchObject({ ok: false })
 	})
 })
