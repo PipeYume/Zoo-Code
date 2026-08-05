@@ -43,6 +43,14 @@ describe("Destructive Command Guard auto-approval precedence", () => {
 		})
 	})
 
+	it("uses empty command lists when DCG state omits them", async () => {
+		const { allowedCommands: _allowedCommands, deniedCommands: _deniedCommands, ...state } = baseState
+
+		expect(await checkAutoApproval({ state, ask: "command", text: "unlisted-command" })).toEqual({
+			decision: "approve",
+		})
+	})
+
 	it("does not auto-approve via DCG when execute auto-approval is off", async () => {
 		const state = { ...baseState, alwaysAllowExecute: false }
 
