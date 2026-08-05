@@ -197,9 +197,6 @@ importers:
 
   apps/zoo:
     dependencies:
-      '@roo-code/zoo-host':
-        specifier: workspace:^
-        version: link:../../packages/zoo-host
       '@roo-code/zoo-protocol':
         specifier: workspace:^
         version: link:../../packages/zoo-protocol

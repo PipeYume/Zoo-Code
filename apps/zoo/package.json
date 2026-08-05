@@ -18,7 +18,6 @@
 		"clean": "rimraf dist .turbo"
 	},
 	"dependencies": {
-		"@roo-code/zoo-host": "workspace:^",
 		"@roo-code/zoo-protocol": "workspace:^",
 		"commander": "^12.1.0"
 	},
