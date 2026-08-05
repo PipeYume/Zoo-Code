@@ -24,6 +24,7 @@ export type SemanticTraceEntry = {
 	prompt?: string
 	outcome?: ZooOutcome
 	errorCode?: ZooErrorCode
+	resumable?: boolean
 }
 
 export type ParityScenario = {
@@ -156,6 +157,18 @@ export const parityScenarios: readonly ParityScenario[] = [
 			},
 		],
 	},
+	{
+		id: "needs-input",
+		prompt: "Wait for deterministic input.",
+		providerTurns: ["ask:ask-1", "needs_input"],
+		expected: [
+			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Wait for deterministic input." },
+			{ type: "task.started", rootTaskId: "root", taskId: "root" },
+			{ type: "ask.required", rootTaskId: "root", taskId: "root", askId: "ask-1" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "waiting" },
+			{ type: "task.result", rootTaskId: "root", taskId: "root", outcome: "needs_input", resumable: true },
+		],
+	},
 ]
 
 export function compareSemanticTraces(
@@ -189,8 +202,11 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
 	let terminalReached = false
 	const activeChildren = new Set<string>()
-	const knownChildren = new Set<string>()
+	const usedTaskIds = new Set(["root"])
 	const pendingAsks = new Set<string>()
+	const usedAskIds = new Set<string>()
+	const usedToolCallIds = new Set<string>()
+	const usedRequestIds = new Set<string>()
 	const requireSettledState = () => {
 		if (activeChildren.size > 0 || pendingAsks.size > 0) {
 			throw new Error("Fake-provider terminal outcomes require settled descendants and asks")
@@ -206,7 +222,10 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			const operation = turn.slice(separator1 + 1, separator2)
 			const toolCallId = turn.slice(separator2 + 1, separator3)
 			const argument = turn.slice(separator3 + 1)
-			if (operation !== "read_file" || !toolCallId || !argument) throw new Error(`Invalid tool fixture: ${turn}`)
+			if (operation !== "read_file" || !toolCallId || !argument || usedToolCallIds.has(toolCallId)) {
+				throw new Error(`Invalid tool fixture: ${turn}`)
+			}
+			usedToolCallIds.add(toolCallId)
 			const tool = {
 				rootTaskId: "root",
 				taskId: "root",
@@ -220,12 +239,12 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		}
 		if (turn.startsWith("delegate:")) {
 			const taskId = turn.slice("delegate:".length)
-			if (!taskId || knownChildren.has(taskId)) throw new Error(`Invalid delegation fixture: ${turn}`)
+			if (!taskId || usedTaskIds.has(taskId)) throw new Error(`Invalid delegation fixture: ${turn}`)
 			trace.push({ type: "task.created", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.delegated", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.started", rootTaskId: "root", taskId })
 			activeChildren.add(taskId)
-			knownChildren.add(taskId)
+			usedTaskIds.add(taskId)
 			continue
 		}
 		if (turn.endsWith(":done")) {
@@ -237,15 +256,19 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		}
 		if (turn.startsWith("ask:")) {
 			const askId = turn.slice(4)
-			if (!askId || pendingAsks.has(askId)) throw new Error(`Invalid ask fixture: ${turn}`)
+			if (!askId || usedAskIds.has(askId)) throw new Error(`Invalid ask fixture: ${turn}`)
 			pendingAsks.add(askId)
+			usedAskIds.add(askId)
 			trace.push({ type: "ask.required", rootTaskId: "root", taskId: "root", askId })
 			continue
 		}
 		if (turn.startsWith("approve:")) {
 			const [, askId, source, requestId] = turn.split(":")
-			if (!askId || source !== "user" || !requestId) throw new Error(`Invalid approval fixture: ${turn}`)
+			if (!askId || source !== "user" || !requestId || usedRequestIds.has(requestId)) {
+				throw new Error(`Invalid approval fixture: ${turn}`)
+			}
 			if (!pendingAsks.delete(askId)) throw new Error(`Approval references unknown ask: ${turn}`)
+			usedRequestIds.add(requestId)
 			trace.push({
 				type: "ask.resolved",
 				rootTaskId: "root",
@@ -260,8 +283,13 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		if (turn.startsWith("cancel:")) {
 			requireSettledState()
 			const [, requestId, cancellationReason] = turn.split(":")
-			if (!requestId || !["user", "signal", "timeout"].includes(cancellationReason ?? ""))
+			if (
+				!requestId ||
+				usedRequestIds.has(requestId) ||
+				!["user", "signal", "timeout"].includes(cancellationReason ?? "")
+			)
 				throw new Error(`Invalid cancellation fixture: ${turn}`)
+			usedRequestIds.add(requestId)
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
 			result = {
 				type: "task.result",
@@ -290,6 +318,21 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			}
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
 			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "timed_out", errorCode }
+			terminalReached = true
+			continue
+		}
+		if (turn === "needs_input") {
+			if (activeChildren.size > 0 || pendingAsks.size === 0) {
+				throw new Error("needs_input requires a pending ask and settled descendants")
+			}
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "waiting" })
+			result = {
+				type: "task.result",
+				rootTaskId: "root",
+				taskId: "root",
+				outcome: "needs_input",
+				resumable: true,
+			}
 			terminalReached = true
 			continue
 		}

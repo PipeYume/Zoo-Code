@@ -46,6 +46,7 @@ const initEvent = zooStreamEventSchema.parse({
 	clientVersion: "1.0.0",
 	hostVersion: "1.0.0",
 })
+if (initEvent.type !== "system.init") throw new Error("Expected system.init fixture")
 
 function taskEvent(seq: number, type: string, fields: Record<string, unknown> = {}) {
 	return zooStreamEventSchema.parse({
@@ -83,36 +84,45 @@ function resultEvent(seq: number, result: Record<string, unknown> = {}, event: R
 }
 
 function cancellationDone(commandId = "cancel", hostId = "host") {
-	return hostEventSchema.parse({
-		v: 1,
-		seq: 1,
-		hostId,
-		type: "command.done",
-		commandId,
-		data: { commandType: "task.cancel", rootTaskId: "root" },
-	})
+	return [
+		hostEventSchema.parse({ v: 1, seq: 1, hostId, type: "command.ack", commandId }),
+		hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId,
+			type: "command.done",
+			commandId,
+			data: { commandType: "task.cancel", rootTaskId: "root" },
+		}),
+	]
 }
 
 function cancellationError(commandId = "cancel") {
-	return hostEventSchema.parse({
-		v: 1,
-		seq: 1,
-		hostId: "host",
-		type: "command.error",
-		commandId,
-		error: { code: "cancel_failed", message: "Task already completed" },
-	})
+	return [
+		hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId }),
+		hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host",
+			type: "command.error",
+			commandId,
+			error: { code: "cancel_failed", message: "Task already completed" },
+		}),
+	]
 }
 
 function askResponseDone(commandId = "respond", hostId = "host") {
-	return hostEventSchema.parse({
-		v: 1,
-		seq: 1,
-		hostId,
-		type: "command.done",
-		commandId,
-		data: { commandType: "ask.respond", taskId: "root", askId: "ask" },
-	})
+	return [
+		hostEventSchema.parse({ v: 1, seq: 1, hostId, type: "command.ack", commandId }),
+		hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId,
+			type: "command.done",
+			commandId,
+			data: { commandType: "ask.respond", taskId: "root", askId: "ask" },
+		}),
+	]
 }
 
 describe("strict host contracts", () => {
@@ -455,6 +465,37 @@ describe("strict host contracts", () => {
 		).toBe("[REDACTED]")
 	})
 
+	it("releases blocked envelopes on deadline and byte pressure", () => {
+		let now = 0
+		const terminalEnvelope = (seq: number, delta: string) => ({
+			v: 1,
+			seq,
+			hostId: "host",
+			type: "event",
+			event: {
+				v: 1,
+				seq,
+				timestamp,
+				hostId: "host",
+				rootTaskId: "root",
+				taskId: "root",
+				type: "terminal.output",
+				toolCallId: "terminal",
+				stream: "stdout",
+				delta,
+			},
+		})
+		const deadlineParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		expect(deadlineParser.push(terminalEnvelope(1, "unterminated"))).toEqual([])
+		now = 10
+		expect(deadlineParser.tick()).toMatchObject([{ seq: 1, event: { delta: "[REDACTED]" } }])
+
+		const byteParser = createHostEventStreamParser({ maxQueuedBytes: 1 })
+		expect(byteParser.push(terminalEnvelope(1, "unterminated"))).toMatchObject([
+			{ seq: 1, event: { delta: "[REDACTED]" } },
+		])
+	})
+
 	it("preserves host envelopes across concurrent root streams", () => {
 		const parser = createHostEventStreamParser()
 		const envelope = (hostSeq: number, rootTaskId: string, delta: string) => ({
@@ -734,7 +775,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
 				[startCommand, response],
-				[askResponseDone()],
+				askResponseDone(),
 			),
 		).toEqual({
 			ok: true,
@@ -755,7 +796,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyOverride, completed, resultEvent(7)],
 				[startCommand, response],
-				[askResponseDone()],
+				askResponseDone(),
 			),
 		).toMatchObject({ ok: false })
 		const policyReportedResponse = zooStreamEventSchema.parse({ ...resolved, source: "policy" })
@@ -763,7 +804,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyReportedResponse, completed, resultEvent(7)],
 				[startCommand, response],
-				[askResponseDone()],
+				askResponseDone(),
 			),
 		).toEqual({ ok: true })
 		expect(
@@ -776,7 +817,14 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
 				[startCommand, response],
-				[askResponseDone("respond", "other")],
+				askResponseDone().slice(1),
+			),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[startCommand, response],
+				askResponseDone("respond", "other"),
 			),
 		).toMatchObject({ ok: false })
 	})
@@ -813,9 +861,9 @@ describe("public automation contracts", () => {
 			interrupted,
 			cancelled,
 		]
-		expect(validateStreamLifecycle(stream, [startCommand, command], [cancellationDone()])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [startCommand, command], cancellationDone())).toEqual({ ok: true })
 		expect(
-			validateStreamLifecycle(stream, [startCommand, command], [cancellationDone("cancel", "other")]),
+			validateStreamLifecycle(stream, [startCommand, command], cancellationDone("cancel", "other")),
 		).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream, [{ ...command, reason: "signal" }])).toMatchObject({ ok: false })
@@ -903,7 +951,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, created, started, required, abandoned, interrupted, cancelled],
 				[startCommand, command],
-				[cancellationDone()],
+				cancellationDone(),
 			),
 		).toEqual({ ok: true })
 		expect(
@@ -982,7 +1030,7 @@ describe("public automation contracts", () => {
 			taskEvent(6, "task.lifecycle", { state: "interrupted" }),
 			resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
 		]
-		expect(validateStreamLifecycle(stream, [resume, cancel], [cancellationDone()])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [resume, cancel], cancellationDone())).toEqual({ ok: true })
 	})
 
 	it("requires accepted cancellations to own cancelled results", () => {
@@ -1000,10 +1048,10 @@ describe("public automation contracts", () => {
 			taskEvent(4, "task.lifecycle", { state: "completed" }),
 			resultEvent(5),
 		]
-		expect(validateStreamLifecycle(completed, [startCommand, cancel], [cancellationDone()])).toMatchObject({
+		expect(validateStreamLifecycle(completed, [startCommand, cancel], cancellationDone())).toMatchObject({
 			ok: false,
 		})
-		expect(validateStreamLifecycle(completed, [startCommand, cancel], [cancellationError()])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(completed, [startCommand, cancel], cancellationError())).toEqual({ ok: true })
 		expect(validateStreamLifecycle(completed, [startCommand, cancel])).toMatchObject({ ok: false })
 	})
 
@@ -1141,7 +1189,7 @@ describe("public automation contracts", () => {
 					resultEvent(8),
 				],
 				[startCommand, response],
-				[askResponseDone()],
+				askResponseDone(),
 			),
 		).toMatchObject({ ok: false })
 
@@ -1294,6 +1342,14 @@ describe("redaction contracts", () => {
 		expect(redactText('{"max_tokens":4096} tokenizer=bpe --max-tokens 4096')).toBe(
 			'{"max_tokens":4096} tokenizer=bpe --max-tokens 4096',
 		)
+		expect(redactValue({ "set-cookie": "session=abc", setCookie: "session=def", proxyAuthorization: "Basic abc" })).toEqual({
+			"set-cookie": "[REDACTED]",
+			setCookie: "[REDACTED]",
+			proxyAuthorization: "[REDACTED]",
+		})
+		expect(redactText("password: abc,def")).toBe("[REDACTED]")
+		expect(redactText('{"api\\u005fkey":"hunter2"}')).toBe('{"api_key":"[REDACTED]"}')
+		expect(redactText("API_\u001b[31mTOKEN=abcdefgh")).toBe("[REDACTED]")
 	})
 
 	it("redacts public event and result payloads during parsing", () => {
@@ -1379,6 +1435,8 @@ describe("redaction contracts", () => {
 		expect(mixed.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
 			"Build succeeded\n[REDACTED]\n",
 		)
+		const empty = zooStreamSchema.parse([{ ...terminal, seq: 1, delta: "" }])
+		expect(empty).toMatchObject([{ type: "terminal.output", delta: "" }])
 	})
 
 	it("buffers multiline secrets and fails closed when bounded memory is exceeded", () => {
@@ -1650,6 +1708,16 @@ describe("deterministic parity oracle", () => {
 				expected: [],
 			}),
 		).toThrow()
+		for (const providerTurns of [
+			["delegate:root"],
+			["tool:read_file:call-1:a", "tool:read_file:call-1:b"],
+			["ask:ask-1", "approve:ask-1:user:request-1", "ask:ask-1"],
+			["ask:ask-1", "approve:ask-1:user:request-1", "ask:ask-2", "approve:ask-2:user:request-1"],
+		]) {
+			expect(() =>
+				runDeterministicFakeProvider({ id: "reused", prompt: "Reuse", providerTurns, expected: [] }),
+			).toThrow()
+		}
 	})
 
 	it("ignores object property insertion order without ignoring event order", () => {

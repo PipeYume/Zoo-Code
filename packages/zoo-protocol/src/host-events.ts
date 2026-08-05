@@ -118,6 +118,7 @@ export type HostEvent = z.infer<typeof hostEventSchema>
 
 export type HostEventStreamParser = {
 	push: (event: unknown) => HostEvent[]
+	tick: () => HostEvent[]
 	flush: () => HostEvent[]
 }
 
@@ -127,16 +128,24 @@ export function createHostEventStreamParser(
 		maxPendingEvents?: number
 		maxPendingStreams?: number
 		maxQueuedEvents?: number
+		maxQueuedBytes?: number
 		maxPendingMs?: number
 		now?: () => number
 	} = {},
 ): HostEventStreamParser {
 	const redactor = createZooStreamRedactor(options)
 	const maxQueuedEvents = options.maxQueuedEvents ?? 512
+	const maxQueuedBytes = options.maxQueuedBytes ?? 1024 * 1024
 	const maxPendingMs = options.maxPendingMs ?? 1_000
 	const now = options.now ?? Date.now
-	type QueueEntry = { envelope?: z.infer<typeof rawNormalizedEventSchema>; output?: HostEvent; enqueuedAt: number }
+	type QueueEntry = {
+		envelope?: z.infer<typeof rawNormalizedEventSchema>
+		output?: HostEvent
+		enqueuedAt: number
+		bytes: number
+	}
 	const queue: QueueEntry[] = []
+	let queuedBytes = 0
 	const envelopes = new Map<string, QueueEntry[]>()
 	let pinnedHostId: string | undefined
 	let lastSeq: number | undefined
@@ -171,7 +180,11 @@ export function createHostEventStreamParser(
 	}
 	const drain = (): HostEvent[] => {
 		const ready: HostEvent[] = []
-		while (queue[0]?.output !== undefined) ready.push(queue.shift()!.output!)
+		while (queue[0]?.output !== undefined) {
+			const entry = queue.shift()!
+			queuedBytes -= entry.bytes
+			ready.push(entry.output!)
+		}
 		return ready
 	}
 	const releaseBlockedQueue = (): HostEvent[] => {
@@ -179,7 +192,9 @@ export function createHostEventStreamParser(
 		if (
 			oldest !== undefined &&
 			(oldest.output === undefined &&
-				(queue.length >= maxQueuedEvents || now() - oldest.enqueuedAt >= maxPendingMs))
+				(queue.length >= maxQueuedEvents ||
+					queuedBytes >= maxQueuedBytes ||
+					now() - oldest.enqueuedAt >= maxPendingMs))
 		) {
 			assign(redactor.failClosed())
 		}
@@ -209,8 +224,15 @@ export function createHostEventStreamParser(
 			pinnedHostId ??= event.hostId
 			lastSeq = event.seq
 			const released = releaseBlockedQueue()
-			const entry: QueueEntry = { enqueuedAt: now() }
+			let bytes: number
+			try {
+				bytes = new TextEncoder().encode(JSON.stringify(event)).byteLength
+			} catch {
+				bytes = maxQueuedBytes
+			}
+			const entry: QueueEntry = { enqueuedAt: now(), bytes }
 			queue.push(entry)
+			queuedBytes += bytes
 			if (event.type !== "event") {
 				entry.output = sanitizeNonEvent(event)
 				return [...released, ...releaseBlockedQueue()]
@@ -224,6 +246,7 @@ export function createHostEventStreamParser(
 			assign(redactor.push(event.event))
 			return [...released, ...releaseBlockedQueue()]
 		},
+		tick: releaseBlockedQueue,
 		flush() {
 			assign(redactor.flush())
 			const output = drain()

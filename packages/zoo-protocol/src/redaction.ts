@@ -1,6 +1,6 @@
 const REDACTED = "[REDACTED]" as const
 const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret|passphrase|passwd|pwd)[A-Za-z0-9_.-]*|[A-Za-z0-9_.-]*(?:api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|bearer[-_. ]?token|client[-_. ]?secret|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)|authorization|cookie|credentials?|token)`
-const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
+const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
@@ -8,6 +8,7 @@ const quotedUnquotedSecret = new RegExp(
 	`((?:"${sensitiveKeyName}"|'${sensitiveKeyName}')\\s*:\\s*)(?!["'])[^\\s,;}]+`,
 	"gi",
 )
+const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g")
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
 	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${cliSecretValue}`, "gi"),
@@ -29,7 +30,7 @@ function isSensitiveKey(key: string): boolean {
 		.toLowerCase()
 	if (
 		/\b(?:password|secret|passphrase|passwd|pwd)\b/.test(words) ||
-		/^(?:authorization|cookie|credentials?)$/.test(words)
+		/^(?:(?:proxy )?authorization|(?:set )?cookie|credentials?)$/.test(words)
 	)
 		return true
 	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
@@ -38,7 +39,10 @@ function isSensitiveKey(key: string): boolean {
 }
 
 export function redactText(value: string): string {
-	const structured = value
+	const canonical = value
+		.replace(ansiEscape, "")
+		.replace(/\\u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+	const structured = canonical
 		.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/?#]+/g, (authority) => {
 			const schemeEnd = authority.indexOf("//") + 2
 			const credentialsEnd = authority.lastIndexOf("@")

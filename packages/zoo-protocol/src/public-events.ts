@@ -352,6 +352,7 @@ export function createZooStreamRedactor(
 						: []
 				return [...finalized, redactStreamEvent(event)]
 			}
+			if (event.delta.length === 0) return [{ ...event, delta: "" }]
 			const key = outputKey(event)
 			if (failClosed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 			let pending = pendingOutputs.get(key)
@@ -444,6 +445,15 @@ export function validateStreamLifecycle(
 	if (events.some((streamEvent) => streamEvent.hostId !== hostId)) {
 		return { ok: false, code: "protocol_gap", message: "Stream cannot span multiple hosts" }
 	}
+	if (commandEvents.some((event) => event.hostId !== hostId)) {
+		return { ok: false, code: "protocol_gap", message: "Command lifecycle cannot span multiple hosts" }
+	}
+	for (let index = 1; index < commandEvents.length; index += 1) {
+		const expected = commandEvents[index - 1]!.seq + 1
+		if (commandEvents[index]!.seq !== expected) {
+			return { ok: false, code: "protocol_gap", message: `Expected host sequence ${expected}` }
+		}
+	}
 	for (let index = 1; index < events.length; index += 1) {
 		const expected = events[index - 1]!.seq + 1
 		if (events[index]!.seq !== expected) {
@@ -533,6 +543,23 @@ export function validateStreamLifecycle(
 			current = taskParents.get(current)
 		}
 		return false
+	}
+	const causalTerminal = (commandId: string): HostEvent | undefined => {
+		const lifecycle = commandEvents.filter(
+			(event) =>
+				(event.type === "command.ack" || event.type === "command.done" || event.type === "command.error") &&
+				event.commandId === commandId,
+		)
+		const acknowledgements = lifecycle.filter((event) => event.type === "command.ack")
+		const terminals = lifecycle.filter((event) => event.type === "command.done" || event.type === "command.error")
+		if (
+			acknowledgements.length !== 1 ||
+			terminals.length !== 1 ||
+			acknowledgements[0]!.seq >= terminals[0]!.seq
+		) {
+			return undefined
+		}
+		return terminals[0]
 	}
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
@@ -752,19 +779,9 @@ export function validateStreamLifecycle(
 					response?.type === "ask.respond"
 						? { approve: "approve", reject: "reject", message: "needs_input" }[response.response]
 						: undefined
-				const terminals =
-					response === undefined
-						? []
-						: commandEvents.filter(
-								(event) =>
-									(event.type === "command.done" || event.type === "command.error") &&
-									event.hostId === hostId &&
-									event.commandId === response.id,
-							)
-				const completion = terminals[0]
+				const completion = response === undefined ? undefined : causalTerminal(response.id)
 				if (
 					expectedDecision !== streamEvent.decision ||
-					terminals.length !== 1 ||
 					completion?.type !== "command.done" ||
 					completion.data.commandType !== "ask.respond" ||
 					completion.data.taskId !== streamEvent.taskId ||
@@ -926,22 +943,21 @@ export function validateStreamLifecycle(
 		return { ok: false, code: "task_failed", message: "Every ask response command must settle its matching ask" }
 	}
 	const cancelCommands = commands.filter((command) => command.type === "task.cancel" && command.rootTaskId === rootTaskId)
-	const cancellationTerminals = cancelCommands.map((command) =>
-		commandEvents.filter(
-			(event) =>
-				event.hostId === hostId &&
-				((event.type === "command.error" && event.commandId === command.id) ||
-					(event.type === "command.done" &&
-						event.commandId === command.id &&
-						event.data.commandType === "task.cancel" &&
-						event.data.rootTaskId === rootTaskId)),
-		),
-	)
-	if (cancellationTerminals.some((terminals) => terminals.length !== 1)) {
-		return { ok: false, code: "task_failed", message: "Every cancellation command requires a terminal response" }
+	const cancellationTerminals = cancelCommands.map((command) => causalTerminal(command.id))
+	if (cancellationTerminals.some((terminal) => terminal === undefined)) {
+		return { ok: false, code: "task_failed", message: "Every cancellation command requires ACK and one terminal response" }
+	}
+	if (
+		cancellationTerminals.some(
+			(terminal) =>
+				terminal?.type === "command.done" &&
+				(terminal.data.commandType !== "task.cancel" || terminal.data.rootTaskId !== rootTaskId),
+		)
+	) {
+		return { ok: false, code: "task_failed", message: "Cancellation completion does not match its command" }
 	}
 	const acceptedCancellations = cancelCommands.filter(
-		(_command, index) => cancellationTerminals[index]?.[0]?.type === "command.done",
+		(_command, index) => cancellationTerminals[index]?.type === "command.done",
 	)
 	if (acceptedCancellations.length > 0 && resultEvent.result.outcome !== "cancelled") {
 		return { ok: false, code: "task_failed", message: "An accepted cancellation must interrupt the result" }
