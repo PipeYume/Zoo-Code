@@ -189,7 +189,13 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
 	let terminalReached = false
 	const activeChildren = new Set<string>()
+	const knownChildren = new Set<string>()
 	const pendingAsks = new Set<string>()
+	const requireSettledState = () => {
+		if (activeChildren.size > 0 || pendingAsks.size > 0) {
+			throw new Error("Fake-provider terminal outcomes require settled descendants and asks")
+		}
+	}
 	for (const turn of scenario.providerTurns) {
 		if (terminalReached) throw new Error("Fake-provider terminal directives must be the final turn")
 		if (turn.startsWith("tool:")) {
@@ -213,16 +219,17 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		}
 		if (turn.startsWith("delegate:")) {
 			const taskId = turn.slice("delegate:".length)
-			if (!taskId) throw new Error(`Invalid delegation fixture: ${turn}`)
+			if (!taskId || knownChildren.has(taskId)) throw new Error(`Invalid delegation fixture: ${turn}`)
 			trace.push({ type: "task.created", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.delegated", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.started", rootTaskId: "root", taskId })
 			activeChildren.add(taskId)
+			knownChildren.add(taskId)
 			continue
 		}
 		if (turn.endsWith(":done")) {
 			const taskId = turn.slice(0, -":done".length)
-			if (!taskId) throw new Error(`Invalid completion fixture: ${turn}`)
+			if (!taskId || !activeChildren.has(taskId)) throw new Error(`Invalid completion fixture: ${turn}`)
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId, state: "completed" })
 			activeChildren.delete(taskId)
 			continue
@@ -250,6 +257,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			continue
 		}
 		if (turn.startsWith("cancel:")) {
+			requireSettledState()
 			const [, requestId, cancellationReason] = turn.split(":")
 			if (!requestId || !["user", "signal", "timeout"].includes(cancellationReason ?? ""))
 				throw new Error(`Invalid cancellation fixture: ${turn}`)
@@ -266,6 +274,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			continue
 		}
 		if (turn.startsWith("fail:")) {
+			requireSettledState()
 			const errorCode = failedErrorCodeSchema.parse(turn.slice(5))
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "failed" })
 			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "failed", errorCode }
@@ -273,6 +282,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			continue
 		}
 		if (turn.startsWith("timeout:")) {
+			requireSettledState()
 			const errorCode = zooErrorCodeSchema.parse(turn.slice(8))
 			if (errorCode !== "task_timed_out" && errorCode !== "cleanup_timed_out") {
 				throw new Error(`Invalid timeout fixture: ${turn}`)
@@ -285,9 +295,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		trace.push({ type: "message.upsert", rootTaskId: "root", taskId: "root", content: turn })
 	}
 	if (result.outcome === "completed") {
-		if (activeChildren.size > 0 || pendingAsks.size > 0) {
-			throw new Error("Fake-provider scenarios cannot complete with unresolved descendants or asks")
-		}
+		requireSettledState()
 		trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" })
 	}
 	trace.push(result)

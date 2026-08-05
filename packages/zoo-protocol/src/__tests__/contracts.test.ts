@@ -80,6 +80,28 @@ function resultEvent(seq: number, result: Record<string, unknown> = {}, event: R
 	return parsed
 }
 
+function cancellationDone(commandId = "cancel") {
+	return hostEventSchema.parse({
+		v: 1,
+		seq: 1,
+		hostId: "host",
+		type: "command.done",
+		commandId,
+		data: { commandType: "task.cancel", rootTaskId: "root" },
+	})
+}
+
+function cancellationError(commandId = "cancel") {
+	return hostEventSchema.parse({
+		v: 1,
+		seq: 1,
+		hostId: "host",
+		type: "command.error",
+		commandId,
+		error: { code: "cancel_failed", message: "Task already completed" },
+	})
+}
+
 describe("strict host contracts", () => {
 	it("accepts a valid start and rejects unknown fields", () => {
 		const command = {
@@ -359,6 +381,57 @@ describe("strict host contracts", () => {
 		]
 		expect(events.map((event) => (event.type === "event" && event.event.type === "terminal.output" ? event.event.delta : "")).join(""))
 			.toBe("Build succeeded\n[REDACTED]")
+
+		const interleavedParser = createHostEventStreamParser()
+		const interleaved = [
+			...interleavedParser.push(envelope(1, "API_TOKEN=")),
+			...interleavedParser.push({ v: 1, seq: 2, hostId: "host", type: "host.heartbeat", monotonicMs: 1 }),
+			...interleavedParser.push(envelope(3, "abcdefgh")),
+			...interleavedParser.flush(),
+		]
+		expect(interleaved.map((event) => event.seq)).toEqual([1, 2, 3])
+		expect(
+			interleaved
+				.filter((event) => event.type === "event" && event.event.type === "terminal.output")
+				.map((event) => (event.type === "event" && event.event.type === "terminal.output" ? event.event.delta : ""))
+				.join(""),
+		).toBe("[REDACTED]")
+	})
+
+	it("preserves host envelopes across concurrent root streams", () => {
+		const parser = createHostEventStreamParser()
+		const envelope = (hostSeq: number, rootTaskId: string, delta: string) => ({
+			v: 1,
+			seq: hostSeq,
+			hostId: "host",
+			type: "event",
+			event: {
+				v: 1,
+				seq: 1,
+				timestamp,
+				hostId: "host",
+				rootTaskId,
+				taskId: rootTaskId,
+				type: "terminal.output",
+				toolCallId: "terminal",
+				stream: "stdout",
+				delta,
+			},
+		})
+		const events = [
+			...parser.push(envelope(1, "root-a", "first\n")),
+			...parser.push(envelope(2, "root-b", "second\n")),
+			...parser.flush(),
+		]
+		expect(
+			events.map((event) => [
+				event.seq,
+				event.type === "event" && "rootTaskId" in event.event ? event.event.rootTaskId : undefined,
+			]),
+		).toEqual([
+			[1, "root-a"],
+			[2, "root-b"],
+		])
 	})
 
 	it("binds history completion data to its requested workspace", () => {
@@ -419,6 +492,15 @@ describe("public automation contracts", () => {
 				error: { code: "task_failed", message: "contradiction" },
 			}).success,
 		).toBe(false)
+		expect(zooRunResultSchema.safeParse({ ...result, resumable: true }).success).toBe(false)
+		expect(
+			zooRunResultSchema.safeParse({
+				...result,
+				success: false,
+				outcome: "needs_input",
+				resumable: true,
+			}).success,
+		).toBe(true)
 		expect(
 			zooRunResultSchema.safeParse({
 				...result,
@@ -610,6 +692,20 @@ describe("public automation contracts", () => {
 		expect(
 			validateStreamLifecycle([initEvent, rootCreated, required, deniedApproval, completed, resultEvent(6)]),
 		).toMatchObject({ ok: false })
+		const policyOverride = zooStreamEventSchema.parse({ ...resolved, source: "policy", decision: "reject" })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, policyOverride, completed, resultEvent(7)],
+				[startCommand, response],
+			),
+		).toMatchObject({ ok: false })
+		const policyReportedResponse = zooStreamEventSchema.parse({ ...resolved, source: "policy" })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, policyReportedResponse, completed, resultEvent(7)],
+				[startCommand, response],
+			),
+		).toEqual({ ok: true })
 	})
 
 	it("correlates cancellation and settles operation lifecycles", () => {
@@ -644,7 +740,7 @@ describe("public automation contracts", () => {
 			interrupted,
 			cancelled,
 		]
-		expect(validateStreamLifecycle(stream, [startCommand, command])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [startCommand, command], [cancellationDone()])).toEqual({ ok: true })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream, [{ ...command, reason: "signal" }])).toMatchObject({ ok: false })
 		expect(
@@ -728,7 +824,11 @@ describe("public automation contracts", () => {
 			reason: "user",
 		})
 		expect(
-			validateStreamLifecycle([initEvent, created, started, required, abandoned, interrupted, cancelled], [startCommand, command]),
+			validateStreamLifecycle(
+				[initEvent, created, started, required, abandoned, interrupted, cancelled],
+				[startCommand, command],
+				[cancellationDone()],
+			),
 		).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle(
@@ -806,7 +906,29 @@ describe("public automation contracts", () => {
 			taskEvent(6, "task.lifecycle", { state: "interrupted" }),
 			resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
 		]
-		expect(validateStreamLifecycle(stream, [resume, cancel])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [resume, cancel], [cancellationDone()])).toEqual({ ok: true })
+	})
+
+	it("requires accepted cancellations to own cancelled results", () => {
+		const cancel = hostCommandSchema.parse({
+			v: 1,
+			id: "cancel",
+			type: "task.cancel",
+			rootTaskId: "root",
+			reason: "user",
+		})
+		const completed = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.started"),
+			taskEvent(4, "task.lifecycle", { state: "completed" }),
+			resultEvent(5),
+		]
+		expect(validateStreamLifecycle(completed, [startCommand, cancel], [cancellationDone()])).toMatchObject({
+			ok: false,
+		})
+		expect(validateStreamLifecycle(completed, [startCommand, cancel], [cancellationError()])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(completed, [startCommand, cancel])).toMatchObject({ ok: false })
 	})
 
 	it("resumes a correlated descendant from its reconstructed predecessor", () => {
@@ -1080,6 +1202,15 @@ describe("redaction contracts", () => {
 			secretAccessKey: "[REDACTED]",
 		})
 		expect(redactText("https://opaque-token@example.com/path")).toBe("https://[REDACTED]@example.com/path")
+		expect(redactText("postgres://alice:hunter2@db/prod")).toBe("postgres://[REDACTED]@db/prod")
+		expect(redactText("redis://:secret@cache/0")).toBe("redis://[REDACTED]@cache/0")
+		expect(redactText("API_TOKEN=abc,def")).toBe("[REDACTED]")
+		expect(redactValue({ credentials: "value", passphrase: "value", passwd: "value", pwd: "value" })).toEqual({
+			credentials: "[REDACTED]",
+			passphrase: "[REDACTED]",
+			passwd: "[REDACTED]",
+			pwd: "[REDACTED]",
+		})
 		expect(redactText('{"max_tokens":4096} tokenizer=bpe --max-tokens 4096')).toBe(
 			'{"max_tokens":4096} tokenizer=bpe --max-tokens 4096',
 		)
@@ -1161,6 +1292,13 @@ describe("redaction contracts", () => {
 		expect(output.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
 			"Build succeeded\n[REDACTED]",
 		)
+		const mixed = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "Build succeeded\nAPI_TOKEN=" },
+			{ ...terminal, seq: 2, delta: "abcdefgh\n" },
+		])
+		expect(mixed.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
+			"Build succeeded\n[REDACTED]\n",
+		)
 	})
 
 	it("buffers multiline secrets and fails closed when bounded memory is exceeded", () => {
@@ -1192,6 +1330,53 @@ describe("redaction contracts", () => {
 		})
 		expect(overflow[0]?.type === "event" && overflow[0].event.type === "terminal.output" && overflow[0].event.delta)
 			.toBe("[REDACTED]")
+		const cappedParser = createHostEventStreamParser({ maxPendingStreams: 1 })
+		const pending = (seq: number, toolCallId: string) => ({
+			v: 1,
+			seq,
+			hostId: "host",
+			type: "event",
+			event: { ...terminal, seq, toolCallId, delta: "unterminated" },
+		})
+		const capped = [
+			...cappedParser.push(pending(1, "first")),
+			...cappedParser.push(pending(2, "second")),
+			...cappedParser.push(pending(3, "third")),
+			...cappedParser.flush(),
+		]
+		expect(
+			capped.every(
+				(event) => event.type === "event" && event.event.type === "terminal.output" && event.event.delta === "[REDACTED]",
+			),
+		).toBe(true)
+
+		const unterminated = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "-----BEGIN PRIVATE KEY-----\n" },
+			{ ...terminal, seq: 2, delta: "super-secret-body" },
+		])
+		expect(unterminated.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
+			"[REDACTED]",
+		)
+
+		const interleaved = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "API_TOKEN=" },
+			{ ...terminal, seq: 2, stream: "stderr", delta: "harmless\n" },
+			{ ...terminal, seq: 3, delta: "abcdefgh\n" },
+		])
+		expect(
+			interleaved
+				.filter((event) => event.type === "terminal.output" && event.stream === "stdout")
+				.map((event) => (event.type === "terminal.output" ? event.delta : ""))
+				.join(""),
+		).toBe("[REDACTED]\n")
+	})
+
+	it("preserves prototype-like keys as redacted record data", () => {
+		const input = JSON.parse('{"__proto__":{"polluted":true},"safe":"value"}') as Record<string, unknown>
+		const output = redactValue(input)
+		expect(output).toEqual(input)
+		expect(Object.prototype.hasOwnProperty.call(output, "__proto__")).toBe(true)
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined()
 	})
 
 	it("handles cycles without throwing", () => {
@@ -1317,7 +1502,13 @@ describe("deterministic parity oracle", () => {
 	})
 
 	it("rejects unresolved fake-provider state and events after the authoritative result", () => {
-		for (const providerTurns of [["delegate:child"], ["ask:ask-1"]]) {
+		for (const providerTurns of [
+			["delegate:child"],
+			["ask:ask-1"],
+			["delegate:child", "fail:provider_failed"],
+			["ask:ask-1", "cancel:cancel-1:user"],
+			["delegate:child", "timeout:task_timed_out"],
+		]) {
 			expect(() =>
 				runDeterministicFakeProvider({ id: "unresolved", prompt: "Unresolved", providerTurns, expected: [] }),
 			).toThrow()
@@ -1331,6 +1522,22 @@ describe("deterministic parity oracle", () => {
 				"root",
 			),
 		).toBe(false)
+		expect(() =>
+			runDeterministicFakeProvider({
+				id: "ghost",
+				prompt: "Ghost",
+				providerTurns: ["ghost:done"],
+				expected: [],
+			}),
+		).toThrow()
+		expect(() =>
+			runDeterministicFakeProvider({
+				id: "duplicate",
+				prompt: "Duplicate",
+				providerTurns: ["delegate:child", "delegate:child"],
+				expected: [],
+			}),
+		).toThrow()
 	})
 
 	it("ignores object property insertion order without ignoring event order", () => {

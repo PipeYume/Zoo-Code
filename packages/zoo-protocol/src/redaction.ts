@@ -1,5 +1,5 @@
 const REDACTED = "[REDACTED]" as const
-const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret)[A-Za-z0-9_.-]*|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|cookie|credential|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token|token)`
+const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret|passphrase|passwd|pwd)[A-Za-z0-9_.-]*|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|cookie|credentials?|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token|token)`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
@@ -11,7 +11,8 @@ const quotedUnquotedSecret = new RegExp(
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
 	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${cliSecretValue}`, "gi"),
-	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*[:=]\\s*${secretValue}`, "gi"),
+	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*:\\s*${secretValue}`, "gi"),
+	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*=\\s*${cliSecretValue}`, "gi"),
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
 	/\b[A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[^\s]+/gi,
@@ -26,7 +27,11 @@ function isSensitiveKey(key: string): boolean {
 		.replace(/[^A-Za-z0-9]+/g, " ")
 		.trim()
 		.toLowerCase()
-	if (/\b(?:password|secret)\b/.test(words) || /^(?:authorization|cookie|credential)$/.test(words)) return true
+	if (
+		/\b(?:password|secret|passphrase|passwd|pwd)\b/.test(words) ||
+		/^(?:authorization|cookie|credentials?)$/.test(words)
+	)
+		return true
 	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
 		words,
 	)
@@ -34,7 +39,7 @@ function isSensitiveKey(key: string): boolean {
 
 export function redactText(value: string): string {
 	const structured = value
-		.replace(/\bhttps?:\/\/[^\s/?#]+/gi, (authority) => {
+		.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/?#]+/g, (authority) => {
 			const schemeEnd = authority.indexOf("//") + 2
 			const credentialsEnd = authority.lastIndexOf("@")
 			if (credentialsEnd < schemeEnd) return authority
@@ -60,7 +65,12 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): Redac
 	} else {
 		const entries: Record<string, RedactedValue> = {}
 		for (const [key, entry] of Object.entries(value)) {
-			entries[key] = isSensitiveKey(key) ? REDACTED : redactValue(entry, seen)
+			Object.defineProperty(entries, key, {
+				value: isSensitiveKey(key) ? REDACTED : redactValue(entry, seen),
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			})
 		}
 		result = entries
 	}

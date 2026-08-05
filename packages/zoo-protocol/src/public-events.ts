@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import type { HostCommand } from "./host-commands.js"
+import type { HostEvent } from "./host-events.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
 import { REDACTED, redactValue, type RedactedValue } from "./redaction.js"
 import { ZOO_PUBLIC_SCHEMA_VERSION } from "./version.js"
@@ -58,6 +59,9 @@ const rawZooRunResultSchema = strictObject({
 	}
 	if ((result.outcome === "cancelled") !== (result.cancellationReason !== undefined)) {
 		context.addIssue({ code: z.ZodIssueCode.custom, message: "cancelled results require a cancellation reason" })
+	}
+	if (result.resumable && !["needs_input", "cancelled", "timed_out"].includes(result.outcome)) {
+		context.addIssue({ code: z.ZodIssueCode.custom, message: `${result.outcome} results cannot be resumed` })
 	}
 })
 
@@ -252,82 +256,138 @@ export const zooStreamEventSchema = rawZooStreamEventSchema.transform(redactStre
 export type ZooStreamEvent = z.infer<typeof zooStreamEventSchema>
 export type RawZooStreamEvent = z.infer<typeof rawZooStreamEventSchema>
 
+const streamEventKey = (event: RawZooStreamEvent) =>
+	JSON.stringify([
+		event.hostId,
+		event.seq,
+		event.timestamp,
+		event.type,
+		event.requestId,
+		"rootTaskId" in event ? event.rootTaskId : undefined,
+		"taskId" in event ? event.taskId : undefined,
+		"messageId" in event ? event.messageId : undefined,
+		"askId" in event ? event.askId : undefined,
+		"toolCallId" in event ? event.toolCallId : undefined,
+		"operationId" in event ? event.operationId : undefined,
+		"stream" in event ? event.stream : undefined,
+	])
+
 export type ZooStreamRedactor = {
 	push: (event: RawZooStreamEvent) => ZooStreamEvent[]
 	flush: () => ZooStreamEvent[]
 }
 
-export function createZooStreamRedactor(options: { maxPendingBytes?: number; maxPendingEvents?: number } = {}): ZooStreamRedactor {
+export function createZooStreamRedactor(
+	options: { maxPendingBytes?: number; maxPendingEvents?: number; maxPendingStreams?: number } = {},
+): ZooStreamRedactor {
 	const maxPendingBytes = options.maxPendingBytes ?? 64 * 1024
 	const maxPendingEvents = options.maxPendingEvents ?? 256
-	type PendingOutput = { events: Array<z.infer<typeof terminalOutputEventSchema>>; text: string; pem: boolean }
-	let pending: PendingOutput | undefined
-	const overflowedKeys = new Set<string>()
+	const maxPendingStreams = options.maxPendingStreams ?? 256
+	type PendingOutput = {
+		events: Array<z.infer<typeof terminalOutputEventSchema>>
+		text: string
+		pem: boolean
+		overflowed: boolean
+	}
+	const pendingOutputs = new Map<string, PendingOutput>()
+	let failClosed = false
 	const outputKey = (event: z.infer<typeof terminalOutputEventSchema>) =>
 		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId, event.stream])
-	let pendingKey: string | undefined
 
-	const emit = (replacement?: string): ZooStreamEvent[] => {
+	const emit = (key: string, replacement?: string): ZooStreamEvent[] => {
+		const pending = pendingOutputs.get(key)
 		if (pending === undefined) return []
+		if (pending.events.length === 0) {
+			pendingOutputs.delete(key)
+			return []
+		}
 		const [first, ...rest] = pending.events
-		const delta = replacement ?? String(redactValue(pending.text))
-		pending = undefined
-		pendingKey = undefined
+		const unterminatedSecret =
+			pending.pem ||
+			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)\s*[:=]\s*$/i.test(
+				pending.text,
+			)
+		const delta = replacement ?? (unterminatedSecret ? REDACTED : String(redactValue(pending.text)))
+		pendingOutputs.delete(key)
 		return first === undefined
 			? []
 			: [{ ...first, delta }, ...rest.map((event) => ({ ...event, delta: "" }))]
 	}
+	const emitOperation = (event: z.infer<typeof terminalStatusEventSchema>): ZooStreamEvent[] =>
+		[...pendingOutputs.keys()]
+			.filter((key) => {
+				const [hostId, rootTaskId, taskId, toolCallId] = JSON.parse(key) as string[]
+				return (
+					hostId === event.hostId &&
+					rootTaskId === event.rootTaskId &&
+					taskId === event.taskId &&
+					toolCallId === event.toolCallId
+				)
+			})
+			.flatMap((key) => emit(key))
 
 	return {
 		push(event) {
 			if (event.type !== "terminal.output") {
-				if (event.type === "terminal.status" && (event.state === "exited" || event.state === "killed")) {
-					for (const key of overflowedKeys) {
-						const [hostId, rootTaskId, taskId, toolCallId] = JSON.parse(key) as string[]
-						if (
-							hostId === event.hostId &&
-							rootTaskId === event.rootTaskId &&
-							taskId === event.taskId &&
-							toolCallId === event.toolCallId
-						) {
-							overflowedKeys.delete(key)
-						}
-					}
-				}
-				return [...emit(), redactStreamEvent(event)]
+				const finalized =
+					event.type === "terminal.status" && (event.state === "exited" || event.state === "killed")
+						? emitOperation(event)
+						: []
+				return [...finalized, redactStreamEvent(event)]
 			}
 			const key = outputKey(event)
-			const preceding = pendingKey !== undefined && pendingKey !== key ? emit() : []
-			if (overflowedKeys.has(key)) return [...preceding, { ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
+			if (failClosed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
+			let pending = pendingOutputs.get(key)
 			if (pending === undefined) {
-				pending = { events: [], text: "", pem: false }
-				pendingKey = key
+				if (pendingOutputs.size >= maxPendingStreams) {
+					failClosed = true
+					const buffered = [...pendingOutputs.keys()].flatMap((pendingKey) => emit(pendingKey, REDACTED))
+					return [...buffered, { ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
+				}
+				pending = { events: [], text: "", pem: false, overflowed: false }
+				pendingOutputs.set(key, pending)
 			}
+			if (pending.overflowed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 			pending.events.push(event)
 			pending.text += event.delta
-			pending.pem ||= /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(pending.text)
+			if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(pending.text)) pending.pem = true
+			if (/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) pending.pem = false
 			if (pending.text.length > maxPendingBytes || pending.events.length > maxPendingEvents) {
-				overflowedKeys.add(key)
-				return [...preceding, ...emit(REDACTED)]
+				pending.overflowed = true
+				const redacted = emit(key, REDACTED)
+				pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: true })
+				return redacted
 			}
-			if (pending.pem && !/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) return preceding
+			if (pending.pem && !/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) return []
 			const boundary = pending.text.lastIndexOf("\n")
-			return boundary >= 0 || (pending.pem && /-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text))
-				? [...preceding, ...emit()]
-				: preceding
+			const allEventsEndAtBoundary = boundary === pending.text.length - 1
+			return allEventsEndAtBoundary || (pending.pem && /-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text))
+				? emit(key)
+				: []
 		},
-		flush: () => emit(),
+		flush: () => [...pendingOutputs.keys()].flatMap((key) => emit(key)),
 	}
 }
 
 export const zooStreamSchema = z.array(rawZooStreamEventSchema).transform((events): ZooStreamEvent[] => {
 	const redactor = createZooStreamRedactor()
+	const positions = new Map<string, number[]>()
+	for (const [index, event] of events.entries()) {
+		const key = streamEventKey(event)
+		const indices = positions.get(key) ?? []
+		indices.push(index)
+		positions.set(key, indices)
+	}
 	return [...events.flatMap((streamEvent) => redactor.push(streamEvent)), ...redactor.flush()]
+		.map((event) => ({ event, index: positions.get(streamEventKey(event))?.shift() ?? Number.MAX_SAFE_INTEGER }))
+		.sort((left, right) => left.index - right.index)
+		.map(({ event }) => event)
 })
 
 export function validateStreamLifecycle(
 	events: readonly ZooStreamEvent[],
 	commands: readonly HostCommand[] = [],
+	commandEvents: readonly HostEvent[] = [],
 ): { ok: true } | { ok: false; code: "protocol_gap" | "task_failed"; message: string } {
 	if (events[0]?.type !== "system.init") {
 		return { ok: false, code: "task_failed", message: "Stream must start with system.init" }
@@ -631,14 +691,17 @@ export function validateStreamLifecycle(
 			) {
 				return { ok: false, code: "task_failed", message: "Ask decision contradicts its resolution source" }
 			}
-			if (streamEvent.source === "user") {
-				const response = commands.find(
+			const responseCommands = commands.filter(
+				(command) =>
+					command.type === "ask.respond" &&
+					command.taskId === streamEvent.taskId &&
+					command.askId === streamEvent.askId,
+			)
+			if (streamEvent.source === "user" || responseCommands.length > 0) {
+				const response = responseCommands.find(
 					(command) =>
-						command.type === "ask.respond" &&
 						!consumedResponseCommands.has(command.id) &&
-						command.id === streamEvent.requestId &&
-						command.taskId === streamEvent.taskId &&
-						command.askId === streamEvent.askId,
+						command.id === streamEvent.requestId,
 				)
 				const expectedDecision =
 					response?.type === "ask.respond"
@@ -791,8 +854,40 @@ export function validateStreamLifecycle(
 	if (resultEvent.result.outcome === "completed" && values(messageStates).some((message) => !message.complete)) {
 		return { ok: false, code: "task_failed", message: "Completed streams cannot contain partial messages" }
 	}
+	const unconsumedResponses = commands.some(
+		(command) =>
+			command.type === "ask.respond" &&
+			settledAsks.get(command.taskId)?.has(command.askId) === true &&
+			!consumedResponseCommands.has(command.id),
+	)
+	if (unconsumedResponses) {
+		return { ok: false, code: "task_failed", message: "Every ask response command must settle its matching ask" }
+	}
+	const cancelCommands = commands.filter((command) => command.type === "task.cancel" && command.rootTaskId === rootTaskId)
+	const cancellationTerminals = cancelCommands.map((command) =>
+		commandEvents.filter(
+			(event) =>
+				((event.type === "command.error" && event.commandId === command.id) ||
+					(event.type === "command.done" &&
+						event.commandId === command.id &&
+						event.data.commandType === "task.cancel" &&
+						event.data.rootTaskId === rootTaskId)),
+		),
+	)
+	if (cancellationTerminals.some((terminals) => terminals.length !== 1)) {
+		return { ok: false, code: "task_failed", message: "Every cancellation command requires a terminal response" }
+	}
+	const acceptedCancellations = cancelCommands.filter(
+		(_command, index) => cancellationTerminals[index]?.[0]?.type === "command.done",
+	)
+	if (acceptedCancellations.length > 0 && resultEvent.result.outcome !== "cancelled") {
+		return { ok: false, code: "task_failed", message: "An accepted cancellation must interrupt the result" }
+	}
+	if (acceptedCancellations.length > 1) {
+		return { ok: false, code: "task_failed", message: "A task can accept only one cancellation command" }
+	}
 	if (resultEvent.result.outcome === "cancelled") {
-		const cancellation = commands.find(
+		const cancellation = acceptedCancellations.find(
 			(command) =>
 				command.type === "task.cancel" &&
 				command.id === resultEvent.requestId &&

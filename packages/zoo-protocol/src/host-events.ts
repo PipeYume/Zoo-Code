@@ -122,18 +122,46 @@ export type HostEventStreamParser = {
 }
 
 export function createHostEventStreamParser(
-	options: { maxPendingBytes?: number; maxPendingEvents?: number } = {},
+	options: { maxPendingBytes?: number; maxPendingEvents?: number; maxPendingStreams?: number } = {},
 ): HostEventStreamParser {
 	const redactor = createZooStreamRedactor(options)
-	const envelopes = new Map<string, z.infer<typeof rawNormalizedEventSchema>>()
-	const eventKey = (event: RawZooStreamEvent) => JSON.stringify([event.hostId, event.seq])
-	const wrap = (events: ReturnType<typeof redactor.flush>): HostEvent[] =>
-		events.map((event) => {
-			const envelope = envelopes.get(eventKey(event))
-			if (envelope === undefined) throw new Error("Missing host envelope for buffered Zoo stream event")
-			envelopes.delete(eventKey(event))
-			return { ...envelope, event }
-		})
+	type QueueEntry = { envelope?: z.infer<typeof rawNormalizedEventSchema>; output?: HostEvent }
+	const queue: QueueEntry[] = []
+	const envelopes = new Map<string, QueueEntry[]>()
+	const eventKey = (event: RawZooStreamEvent) =>
+		JSON.stringify([
+			event.hostId,
+			event.seq,
+			event.timestamp,
+			event.type,
+			event.requestId,
+			"rootTaskId" in event ? event.rootTaskId : undefined,
+			"taskId" in event ? event.taskId : undefined,
+			"messageId" in event ? event.messageId : undefined,
+			"askId" in event ? event.askId : undefined,
+			"toolCallId" in event ? event.toolCallId : undefined,
+			"operationId" in event ? event.operationId : undefined,
+			"stream" in event ? event.stream : undefined,
+		])
+	const assign = (events: ReturnType<typeof redactor.flush>) => {
+		for (const event of events) {
+			const key = eventKey(event)
+			const entries = envelopes.get(key)
+			const entry = entries?.shift()
+			if (entry === undefined) throw new Error("Missing host envelope for buffered Zoo stream event")
+			if (entries?.length === 0) envelopes.delete(key)
+			const envelope = entry.envelope
+			if (envelope === undefined) {
+				throw new Error("Missing host envelope for buffered Zoo stream event")
+			}
+			entry.output = { ...envelope, event }
+		}
+	}
+	const drain = (): HostEvent[] => {
+		const ready: HostEvent[] = []
+		while (queue[0]?.output !== undefined) ready.push(queue.shift()!.output!)
+		return ready
+	}
 	const sanitizeNonEvent = (event: z.infer<typeof rawHostEventDiscriminatedSchema>): HostEvent =>
 		event.type === "command.error"
 			? {
@@ -149,12 +177,27 @@ export function createHostEventStreamParser(
 	return {
 		push(input) {
 			const event = rawHostEventDiscriminatedSchema.parse(input)
-			if (event.type !== "event") return [...wrap(redactor.flush()), sanitizeNonEvent(event)]
+			const entry: QueueEntry = {}
+			queue.push(entry)
+			if (event.type !== "event") {
+				entry.output = sanitizeNonEvent(event)
+				return drain()
+			}
 			if (event.event.hostId !== event.hostId) throw new Error("Normalized event hostId must match its host envelope")
-			envelopes.set(eventKey(event.event), event)
-			return wrap(redactor.push(event.event))
+			entry.envelope = event
+			const key = eventKey(event.event)
+			const entries = envelopes.get(key) ?? []
+			entries.push(entry)
+			envelopes.set(key, entries)
+			assign(redactor.push(event.event))
+			return drain()
 		},
-		flush: () => wrap(redactor.flush()),
+		flush() {
+			assign(redactor.flush())
+			const output = drain()
+			if (queue.length > 0 || envelopes.size > 0) throw new Error("Host event stream contains unflushed events")
+			return output
+		},
 	}
 }
 
