@@ -55,7 +55,7 @@ vi.mock("../rulesMessageHandler", () => ({
 	handleOpenRulesDirectory: vi.fn(),
 }))
 
-import type { ModelRecord } from "@roo-code/types"
+import type { ModelRecord, WebviewMessage } from "@roo-code/types"
 
 import { webviewMessageHandler } from "../webviewMessageHandler"
 import type { ClineProvider } from "../ClineProvider"
@@ -1216,12 +1216,15 @@ describe("webviewMessageHandler - hookDefinitions", () => {
 	})
 
 	it("rejects malformed phases and command values", async () => {
-		await webviewMessageHandler(mockClineProvider, {
+		// This test deliberately crosses the typed webview boundary with a malformed runtime payload.
+		const message = {
 			type: "updateSettings",
 			updatedSettings: {
-				hookDefinitions: [{ ...validHook, phase: "postToolUse", executable: " node " }] as any,
+				hookDefinitions: [{ ...validHook, phase: "postToolUse", executable: " node " }],
 			},
-		})
+		} as unknown as WebviewMessage
+
+		await webviewMessageHandler(mockClineProvider, message)
 
 		expect(mockClineProvider.contextProxy.setValue).not.toHaveBeenCalled()
 		expect(vscode.window.showErrorMessage).toHaveBeenCalled()
