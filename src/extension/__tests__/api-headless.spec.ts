@@ -74,7 +74,14 @@ describe("API headless facade", () => {
 			taskId: "root-1",
 			rootTaskId: "root-1",
 		})
-		expect(createTaskMock).toHaveBeenCalledWith("  preserve whitespace  ", undefined, undefined, {}, undefined)
+		expect(createTaskMock).toHaveBeenCalledWith(
+			"  preserve whitespace  ",
+			undefined,
+			undefined,
+			{},
+			undefined,
+			undefined,
+		)
 		expect(vscode.commands.executeCommand).not.toHaveBeenCalled()
 	})
 
@@ -99,6 +106,18 @@ describe("API headless facade", () => {
 			rootTaskId: "root-1",
 		})
 		expect(provider.createTaskWithHistoryItem).toHaveBeenCalledWith(historyItem)
+	})
+
+	it("forwards run overrides separately from persistent configuration", async () => {
+		await api.startHeadlessTask({
+			text: "task",
+			overrides: { provider: "openrouter", model: "model-1", approval: "safe" },
+		})
+		expect(createTaskMock).toHaveBeenCalledWith("task", undefined, undefined, {}, undefined, {
+			provider: "openrouter",
+			model: "model-1",
+			approval: "safe",
+		})
 	})
 
 	it("routes a response only to the matching task and ask", async () => {
