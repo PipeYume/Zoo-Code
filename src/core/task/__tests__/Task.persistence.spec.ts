@@ -4,12 +4,13 @@ import * as os from "os"
 import * as path from "path"
 import * as vscode from "vscode"
 
-import type { GlobalState, ProviderSettings } from "@roo-code/types"
+import type { GlobalState, HookDefinition, ProviderSettings } from "@roo-code/types"
 import { TelemetryService } from "@roo-code/telemetry"
 
 import { Task } from "../Task"
 import { ClineProvider } from "../../webview/ClineProvider"
 import { ContextProxy } from "../../config/ContextProxy"
+import type { HookRunner } from "../../hooks/HookRunner"
 
 // ─── Hoisted mocks ───────────────────────────────────────────────────────────
 
@@ -207,6 +208,11 @@ describe("Task persistence", () => {
 	let mockApiConfig: ProviderSettings
 	let mockOutputChannel: vscode.OutputChannel
 	let mockExtensionContext: vscode.ExtensionContext
+
+	async function mockHookDefinitions(hookDefinitions: HookDefinition[]): Promise<void> {
+		const state = await mockProvider.getState()
+		vi.spyOn(mockProvider, "getState").mockResolvedValue({ ...state, hookDefinitions })
+	}
 
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -543,8 +549,7 @@ describe("Task persistence", () => {
 				startTask: false,
 			})
 			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
-			const internals = task as any
-			const ts = await internals.addHookMessage({
+			const ts = await task["addHookMessage"]({
 				hookRunId: "run-1",
 				hookId: "hook-1",
 				name: "Session hook",
@@ -555,7 +560,7 @@ describe("Task persistence", () => {
 			mockSaveTaskMessages.mockClear()
 			vi.mocked(mockProvider.postMessageToWebview).mockClear()
 
-			await internals.updateHookMessage({
+			await task["updateHookMessage"]({
 				hookRunId: "run-1",
 				hookId: "hook-1",
 				phase: "sessionStart",
@@ -580,8 +585,7 @@ describe("Task persistence", () => {
 				task: "test task",
 				startTask: false,
 			})
-			const internals = task as any
-			await internals.addHookMessage({
+			await task["addHookMessage"]({
 				hookRunId: "late-run",
 				hookId: "hook-1",
 				name: "Session hook",
@@ -595,7 +599,7 @@ describe("Task persistence", () => {
 			} as Task)
 			mockSaveTaskMessages.mockClear()
 
-			await internals.updateHookMessage({
+			await task["updateHookMessage"]({
 				hookRunId: "late-run",
 				hookId: "hook-1",
 				phase: "sessionStart",
@@ -617,7 +621,7 @@ describe("Task persistence", () => {
 				task: "test task",
 				startTask: false,
 			})
-			const repaired = (task as any).interruptStaleHookMessages([
+			const repaired = task["interruptStaleHookMessages"]([
 				{
 					ts: 42,
 					type: "say",
@@ -647,7 +651,7 @@ describe("Task persistence", () => {
 					argv: [],
 				},
 			]
-			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: definitions } as any)
+			await mockHookDefinitions(definitions)
 			const task = new Task({
 				provider: mockProvider,
 				apiConfiguration: mockApiConfig,
@@ -655,7 +659,7 @@ describe("Task persistence", () => {
 				startTask: false,
 			})
 			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
-			const run = vi.fn().mockImplementation(async (_definition, invocation) => ({
+			const run = vi.fn<HookRunner["run"]>().mockImplementation(async (_definition, invocation) => ({
 				hookRunId: invocation.hookRunId,
 				hookId: "hook-1",
 				phase: "sessionStart",
@@ -665,11 +669,11 @@ describe("Task persistence", () => {
 				startedAt: 1,
 				completedAt: 2,
 			}))
-			;(task as any).hookRunner = { run }
+			task["hookRunner"].run = run
 
-			const first = await (task as any).runSessionStartHooks()
+			const first = await task["runSessionStartHooks"]()
 			definitions[0].enabled = false
-			const second = await (task as any).runSessionStartHooks()
+			const second = await task["runSessionStartHooks"]()
 
 			expect(run).toHaveBeenCalledTimes(1)
 			expect(first).toEqual([
@@ -693,7 +697,7 @@ describe("Task persistence", () => {
 				executable: process.execPath,
 				argv: [],
 			}
-			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: [definition] } as any)
+			await mockHookDefinitions([definition])
 			const task = new Task({
 				provider: mockProvider,
 				apiConfiguration: mockApiConfig,
@@ -701,26 +705,24 @@ describe("Task persistence", () => {
 				startTask: false,
 			})
 			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
-			const internals = task as any
-			internals.hookRunner = {
-				run: vi.fn().mockImplementation(async (_definition, invocation) => ({
-					hookRunId: invocation.hookRunId,
-					hookId: "hook-1",
-					phase: "sessionStart",
-					status: "succeeded",
-					stdoutSummary: "new task context",
-					truncated: false,
-					startedAt: 1,
-					completedAt: 2,
-				})),
-			}
-			vi.spyOn(internals, "getEnabledMcpToolsCount").mockResolvedValue({
+			task["hookRunner"].run = vi.fn<HookRunner["run"]>().mockImplementation(async (_definition, invocation) => ({
+				hookRunId: invocation.hookRunId,
+				hookId: "hook-1",
+				phase: "sessionStart",
+				status: "succeeded",
+				stdoutSummary: "new task context",
+				truncated: false,
+				startedAt: 1,
+				completedAt: 2,
+			}))
+			task["getEnabledMcpToolsCount"] = vi.fn().mockResolvedValue({
 				enabledToolCount: 0,
 				enabledServerCount: 0,
 			})
-			const initiate = vi.spyOn(internals, "initiateTaskLoop").mockResolvedValue(undefined)
+			const initiate = vi.fn().mockResolvedValue(undefined)
+			task["initiateTaskLoop"] = initiate
 
-			await internals.startTask("test task")
+			await task["startTask"]("test task")
 
 			expect(task.clineMessages.map((message) => message.say)).toEqual(["text", "hook"])
 			expect(initiate).toHaveBeenCalledOnce()
@@ -740,7 +742,7 @@ describe("Task persistence", () => {
 				executable: process.execPath,
 				argv: [],
 			}
-			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: [definition] } as any)
+			await mockHookDefinitions([definition])
 			mockReadTaskMessages.mockResolvedValue([{ ts: 1, type: "say", say: "text", text: "original task" }])
 			mockReadApiMessages.mockResolvedValue([
 				{ role: "assistant", content: [{ type: "text", text: "prior response" }] },
@@ -760,26 +762,24 @@ describe("Task persistence", () => {
 				startTask: false,
 			})
 			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
-			const internals = task as any
-			internals.hookRunner = {
-				run: vi.fn().mockImplementation(async (_definition, invocation) => ({
-					hookRunId: invocation.hookRunId,
-					hookId: "hook-1",
-					phase: "sessionStart",
-					status: "succeeded",
-					stdoutSummary: "resume context",
-					truncated: false,
-					startedAt: 1,
-					completedAt: 2,
-				})),
-			}
+			task["hookRunner"].run = vi.fn<HookRunner["run"]>().mockImplementation(async (_definition, invocation) => ({
+				hookRunId: invocation.hookRunId,
+				hookId: "hook-1",
+				phase: "sessionStart",
+				status: "succeeded",
+				stdoutSummary: "resume context",
+				truncated: false,
+				startedAt: 1,
+				completedAt: 2,
+			}))
 			vi.spyOn(task, "ask").mockImplementation(async () => {
 				task.clineMessages.push({ ts: 2, type: "ask", ask: "resume_task" })
 				return { response: "yesButtonClicked" }
 			})
-			const initiate = vi.spyOn(internals, "initiateTaskLoop").mockResolvedValue(undefined)
+			const initiate = vi.fn().mockResolvedValue(undefined)
+			task["initiateTaskLoop"] = initiate
 
-			await internals.resumeTaskFromHistory()
+			await task["resumeTaskFromHistory"]()
 
 			expect(task.clineMessages.at(-2)?.ask).toBe("resume_task")
 			expect(task.clineMessages.at(-1)?.hook?.status).toBe("succeeded")
