@@ -307,12 +307,21 @@ describe("strict host contracts", () => {
 	})
 
 	it("pins host identity and sequence in the streaming parser", () => {
-		const parser = createHostEventStreamParser()
+		const parser = createHostEventStreamParser({ hostId: "host" })
+		expect(() =>
+			createHostEventStreamParser({ hostId: "negotiated-host" }).push({
+				v: 1,
+				seq: 1,
+				hostId: "other",
+				type: "host.heartbeat",
+				monotonicMs: 1,
+			}),
+		).toThrow("cannot span multiple hosts")
 		parser.push({ v: 1, seq: 4, hostId: "host", type: "host.heartbeat", monotonicMs: 1 })
 		expect(() =>
 			parser.push({ v: 1, seq: 6, hostId: "host", type: "host.heartbeat", monotonicMs: 2 }),
 		).toThrow("Expected host sequence 5")
-		const otherHost = createHostEventStreamParser()
+		const otherHost = createHostEventStreamParser({ hostId: "host" })
 		otherHost.push({ v: 1, seq: 1, hostId: "host", type: "host.heartbeat", monotonicMs: 1 })
 		expect(() =>
 			otherHost.push({ v: 1, seq: 2, hostId: "other", type: "host.heartbeat", monotonicMs: 2 }),
@@ -324,7 +333,7 @@ describe("strict host contracts", () => {
 	})
 
 	it("does not mutate parser state for an invalid nested event", () => {
-		const parser = createHostEventStreamParser()
+		const parser = createHostEventStreamParser({ hostId: "host" })
 		const invalid = {
 			v: 1,
 			seq: 1,
@@ -363,10 +372,10 @@ describe("strict host contracts", () => {
 				data: { commandType: "host.shutdown" },
 			}),
 		]
-		expect(validateCommandLifecycle([command], events)).toEqual({ ok: true })
-		expect(validateCommandLifecycle([command], [...events, events[1]!])).toMatchObject({ ok: false })
-		expect(validateCommandLifecycle([command], [events[1]!, events[0]!])).toMatchObject({ ok: false })
-		expect(validateCommandLifecycle([command], [events[0]!, { ...events[1]!, seq: 3 }])).toMatchObject({
+		expect(validateCommandLifecycle([command], events, "host")).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [...events, events[1]!], "host")).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [events[1]!, events[0]!], "host")).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [events[0]!, { ...events[1]!, seq: 3 }], "host")).toMatchObject({
 			ok: false,
 		})
 	})
@@ -411,11 +420,11 @@ describe("strict host contracts", () => {
 			commandId: "cmd",
 			data: { commandType: "host.shutdown" },
 		})
-		expect(validateCommandLifecycle([command], [acknowledgement, completion])).toEqual({ ok: true })
-		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedIdentity])).toMatchObject({ ok: false })
-		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedType])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [acknowledgement, completion], "host-a")).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedIdentity], "host-a")).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedType], "host-a")).toMatchObject({ ok: false })
 		expect(
-			validateCommandLifecycle([command], [acknowledgement, { ...completion, hostId: "host-b" }]),
+			validateCommandLifecycle([command], [acknowledgement, { ...completion, hostId: "host-b" }], "host-a"),
 		).toMatchObject({
 			ok: false,
 		})
@@ -449,7 +458,7 @@ describe("strict host contracts", () => {
 			seq: 2,
 			data: { commandType: "task.start", task: { rootTaskId: "root", taskId: "child" } },
 		})
-		expect(validateCommandLifecycle([start], [acknowledgement, childCompletion])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([start], [acknowledgement, childCompletion], "host")).toMatchObject({ ok: false })
 	})
 
 	it("does not reuse root identities across successful starts", () => {
@@ -473,7 +482,7 @@ describe("strict host contracts", () => {
 				data: { commandType: "task.start", task: { rootTaskId: "root", taskId: "root" } },
 			}),
 		])
-		expect(validateCommandLifecycle(commands, events)).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle(commands, events, "host")).toMatchObject({ ok: false })
 	})
 
 	it("redacts command errors before they cross the host boundary", () => {
@@ -490,7 +499,7 @@ describe("strict host contracts", () => {
 	})
 
 	it("statefully redacts normalized terminal output at the host boundary", () => {
-		const parser = createHostEventStreamParser()
+		const parser = createHostEventStreamParser({ hostId: "host" })
 		const envelope = (seq: number, delta: string) => ({
 			v: 1,
 			seq,
@@ -518,7 +527,7 @@ describe("strict host contracts", () => {
 		expect(events.map((event) => (event.type === "event" && event.event.type === "terminal.output" ? event.event.delta : "")).join(""))
 			.toBe("Build succeeded\n[REDACTED]")
 
-		const interleavedParser = createHostEventStreamParser()
+		const interleavedParser = createHostEventStreamParser({ hostId: "host" })
 		const interleaved = [
 			...interleavedParser.push(envelope(1, "API_TOKEN=")),
 			...interleavedParser.push({ v: 1, seq: 2, hostId: "host", type: "host.heartbeat", monotonicMs: 1 }),
@@ -554,17 +563,17 @@ describe("strict host contracts", () => {
 				delta,
 			},
 		})
-		const deadlineParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		const deadlineParser = createHostEventStreamParser({ hostId: "host", maxPendingMs: 10, now: () => now })
 		expect(deadlineParser.push(terminalEnvelope(1, "unterminated"))).toEqual([])
 		now = 10
 		expect(deadlineParser.tick()).toMatchObject([{ seq: 1, event: { delta: "[REDACTED]" } }])
 
-		const byteParser = createHostEventStreamParser({ maxQueuedBytes: 1 })
+		const byteParser = createHostEventStreamParser({ hostId: "host", maxQueuedBytes: 1 })
 		expect(byteParser.push(terminalEnvelope(1, "unterminated"))).toMatchObject([
 			{ seq: 1, event: { delta: "[REDACTED]" } },
 		])
 
-		const scopedParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		const scopedParser = createHostEventStreamParser({ hostId: "host", maxPendingMs: 10, now: () => now })
 		now = 0
 		expect(scopedParser.push(terminalEnvelope(1, "unterminated"))).toEqual([])
 		now = 10
@@ -575,10 +584,25 @@ describe("strict host contracts", () => {
 				event: { ...terminalEnvelope(2, "harmless\n").event, toolCallId: "other-terminal" },
 			}),
 		).toMatchObject([{ seq: 2, event: { delta: "harmless\n" } }])
+
+		now = 0
+		const multipleParser = createHostEventStreamParser({ hostId: "host", maxPendingMs: 10, now: () => now })
+		expect(multipleParser.push(terminalEnvelope(1, "first"))).toEqual([])
+		expect(
+			multipleParser.push({
+				...terminalEnvelope(2, "second"),
+				event: { ...terminalEnvelope(2, "second").event, toolCallId: "other-terminal" },
+			}),
+		).toEqual([])
+		now = 10
+		expect(multipleParser.tick()).toMatchObject([
+			{ seq: 1, event: { delta: "[REDACTED]" } },
+			{ seq: 2, event: { delta: "[REDACTED]" } },
+		])
 	})
 
 	it("preserves host envelopes across concurrent root streams", () => {
-		const parser = createHostEventStreamParser()
+		const parser = createHostEventStreamParser({ hostId: "host" })
 		const envelope = (hostSeq: number, rootTaskId: string, delta: string) => ({
 			v: 1,
 			seq: hostSeq,
@@ -643,8 +667,8 @@ describe("strict host contracts", () => {
 			commandId: "history",
 			data: { commandType: "history.list", workspace: "/other", tasks: [] },
 		})
-		expect(validateCommandLifecycle([command], [acknowledgement, completion])).toEqual({ ok: true })
-		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedCompletion])).toMatchObject({
+		expect(validateCommandLifecycle([command], [acknowledgement, completion], "host")).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedCompletion], "host")).toMatchObject({
 			ok: false,
 		})
 	})
@@ -754,6 +778,25 @@ describe("public automation contracts", () => {
 		expect(validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand], startDone())).toEqual({
 			ok: true,
 		})
+		const history = hostCommandSchema.parse({
+			v: 1,
+			id: "history",
+			type: "history.list",
+			workspace: "/workspace",
+		})
+		expect(
+			validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand, history], startDone()),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, created, started, completed, result],
+				[startCommand],
+				[
+					...startDone(),
+					hostEventSchema.parse({ v: 1, seq: 3, hostId: "host", type: "command.ack", commandId: "unknown" }),
+				],
+			),
+		).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle(
 				[initEvent, created, started, completed, resultEvent(5, { workspace: "/other" })],
@@ -1686,8 +1729,10 @@ describe("redaction contracts", () => {
 			proxyAuthorization: "[REDACTED]",
 		})
 		expect(redactText("password: abc,def")).toBe("[REDACTED]")
-		expect(redactText('{"api\\u005fkey":"hunter2"}')).toBe('{"api_key":"[REDACTED]"}')
+		expect(redactText('{"api\\u005fkey":"hunter2"}')).toBe("[REDACTED]")
 		expect(redactText("API_\u001b[31mTOKEN=abcdefgh")).toBe("[REDACTED]")
+		expect(redactText('{"literal":"\\u0061"}')).toBe('{"literal":"\\u0061"}')
+		expect(redactText("safe\u001b[31m text")).toBe("safe\u001b[31m text")
 		expect(redactText("github_pat_1234567890abcdef")).toBe("[REDACTED]")
 		expect(redactValue({ sessionCookie: "abc", cookieJar: "def", privateKeyPem: "ghi" })).toEqual({
 			sessionCookie: "[REDACTED]",
@@ -1820,7 +1865,7 @@ describe("redaction contracts", () => {
 			"[REDACTED]\n",
 		)
 
-		const parser = createHostEventStreamParser({ maxPendingBytes: 4 })
+		const parser = createHostEventStreamParser({ hostId: "host", maxPendingBytes: 4 })
 		const overflow = parser.push({
 			v: 1,
 			seq: 1,
@@ -1830,7 +1875,7 @@ describe("redaction contracts", () => {
 		})
 		expect(overflow[0]?.type === "event" && overflow[0].event.type === "terminal.output" && overflow[0].event.delta)
 			.toBe("[REDACTED]")
-		const cappedParser = createHostEventStreamParser({ maxPendingStreams: 1 })
+		const cappedParser = createHostEventStreamParser({ hostId: "host", maxPendingStreams: 1 })
 		const pending = (seq: number, toolCallId: string) => ({
 			v: 1,
 			seq,
@@ -1850,7 +1895,7 @@ describe("redaction contracts", () => {
 			),
 		).toBe(true)
 		let now = 0
-		const deadlineParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		const deadlineParser = createHostEventStreamParser({ hostId: "host", maxPendingMs: 10, now: () => now })
 		expect(deadlineParser.push(pending(1, "deadline"))).toEqual([])
 		now = 10
 		const released = deadlineParser.push({
@@ -1887,6 +1932,13 @@ describe("redaction contracts", () => {
 			{ ...terminal, seq: 3, delta: "harmless\n" },
 		])
 		expect(multilineQuoted.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED][REDACTED]harmless\n")
+		const multilineCookie = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: 'cookie="first\n' },
+			{ ...terminal, seq: 2, delta: 'second"\n' },
+			{ ...terminal, seq: 3, delta: "harmless\n" },
+		])
+		expect(multilineCookie.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
 			.toBe("[REDACTED][REDACTED]harmless\n")
 		const ansiPem = zooStreamSchema.parse([
 			{ ...terminal, seq: 1, delta: "-----BEGIN\u001b[31m PRIVATE KEY-----\n" },
@@ -2037,6 +2089,10 @@ describe("deterministic parity oracle", () => {
 			expected: [],
 		})
 		expect(timeout.at(-1)).toMatchObject({ outcome: "timed_out", errorCode: "task_timed_out" })
+		expect(timeout.find((entry) => entry.type === "task.lifecycle")).toMatchObject({
+			state: "interrupted",
+			cause: "timed_out",
+		})
 		expect(
 			assertAuthoritativeRootResult(
 				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "timed_out" }],

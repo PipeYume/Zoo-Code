@@ -1,9 +1,10 @@
 import { z } from "zod"
 
+import { validateCommandLifecycle } from "./command-lifecycle.js"
 import type { HostCommand } from "./host-commands.js"
 import type { HostEvent } from "./host-events.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
-import { canonicalizeRedactionText, REDACTED, redactValue, type JsonValue } from "./redaction.js"
+import { canonicalizeRedactionText, isSensitiveKey, REDACTED, redactValue, type JsonValue } from "./redaction.js"
 import {
 	ZOO_HOST_PROTOCOL_VERSION,
 	ZOO_PUBLIC_SCHEMA_VERSION,
@@ -318,14 +319,12 @@ export function createZooStreamRedactor(
 		return openLabels.length > 0
 	}
 	const incompleteSecretQuote = (text: string): '"' | "'" | undefined => {
-		const match = text.match(
-			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)["']?\s*[:=]\s*(["'])(?:\\.|[^\\])*$/i,
-		)
-		if (match?.[1] !== '"' && match?.[1] !== "'") return undefined
+		const match = text.match(/(?:^|[,{;\s])["']?([A-Za-z0-9_. -]+)["']?\s*[:=]\s*(["'])(?:\\.|[^\\])*$/i)
+		if (match === null || !isSensitiveKey(match[1] ?? "") || (match[2] !== '"' && match[2] !== "'")) return undefined
 		const opening = /[:=]\s*(["'])/.exec(match[0])
 		if (opening === null) return undefined
 		const value = match[0].slice(opening.index + opening[0].length)
-		return new RegExp(`(?:^|[^\\\\])${match[1]}`).test(value) ? undefined : match[1]
+		return new RegExp(`(?:^|[^\\\\])${match[2]}`).test(value) ? undefined : match[2]
 	}
 	const closesSecretQuote = (text: string, quote: '"' | "'"): boolean =>
 		new RegExp(`(?:^|[^\\\\])${quote}`).test(text)
@@ -394,7 +393,7 @@ export function createZooStreamRedactor(
 			pending.events.push(event)
 			pending.text += event.delta
 			pending.pem = hasUnmatchedPem(canonicalizeRedactionText(pending.text))
-			if (pending.text.length > maxPendingBytes || pending.events.length > maxPendingEvents) {
+			if (new TextEncoder().encode(pending.text).byteLength > maxPendingBytes || pending.events.length > maxPendingEvents) {
 				pending.overflowed = true
 				const redacted = emit(key, REDACTED)
 				pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: true })
@@ -489,6 +488,10 @@ export function validateStreamLifecycle(
 		if (events[index]!.seq !== expected) {
 			return { ok: false, code: "protocol_gap", message: `Expected sequence ${expected}` }
 		}
+	}
+	const commandLifecycle = validateCommandLifecycle(commands, commandEvents, hostId)
+	if (!commandLifecycle.ok) {
+		return { ok: false, code: "protocol_gap", message: commandLifecycle.message }
 	}
 	const results = events.filter((event) => event.type === "task.result")
 	if (results.length !== 1 || events.at(-1)?.type !== "task.result") {

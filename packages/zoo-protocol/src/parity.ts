@@ -15,6 +15,7 @@ export type SemanticTraceEntry = {
 	toolName?: string
 	toolArguments?: Record<string, unknown>
 	state?: "running" | "waiting" | "interrupted" | "completed" | "failed"
+	cause?: "cancelled" | "timed_out" | "failed"
 	askId?: string
 	decision?: "approve" | "reject" | "needs_input"
 	source?: "policy" | "user" | "auto" | "deny"
@@ -129,7 +130,7 @@ export const parityScenarios: readonly ParityScenario[] = [
 		expected: [
 			{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: "Cancel deterministically." },
 			{ type: "task.started", rootTaskId: "root", taskId: "root" },
-			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" },
+			{ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted", cause: "cancelled" },
 			{
 				type: "task.result",
 				rootTaskId: "root",
@@ -294,7 +295,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			)
 				throw new Error(`Invalid cancellation fixture: ${turn}`)
 			usedRequestIds.add(requestId)
-			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted", cause: "cancelled" })
 			result = {
 				type: "task.result",
 				rootTaskId: "root",
@@ -320,7 +321,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			if (errorCode !== "task_timed_out" && errorCode !== "cleanup_timed_out") {
 				throw new Error(`Invalid timeout fixture: ${turn}`)
 			}
-			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted", cause: "timed_out" })
 			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "timed_out", errorCode }
 			terminalReached = true
 			continue

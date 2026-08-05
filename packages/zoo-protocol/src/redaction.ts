@@ -27,7 +27,7 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
-function isSensitiveKey(key: string): boolean {
+export function isSensitiveKey(key: string): boolean {
 	const words = key
 		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
 		.replace(/[^A-Za-z0-9]+/g, " ")
@@ -79,7 +79,9 @@ export function redactText(value: string): string {
 		.replace(doubleQuotedSecret, `$1"${REDACTED}"`)
 		.replace(singleQuotedSecret, `$1'${REDACTED}'`)
 		.replace(quotedUnquotedSecret, `$1${REDACTED}`)
-	return secretPatterns.reduce((redacted, pattern) => redacted.replace(pattern, REDACTED), structured)
+	const redacted = secretPatterns.reduce((text, pattern) => text.replace(pattern, REDACTED), structured)
+	if (canonical !== value) return redacted === canonical ? value : REDACTED
+	return redacted
 }
 
 export function redactValue(value: Record<string, JsonValue>): Record<string, JsonValue>
