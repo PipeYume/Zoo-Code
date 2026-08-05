@@ -42,7 +42,7 @@ export type HeadlessCancelSettlement = {
 export type HeadlessTaskResult = {
 	rootTaskId: string
 	currentTaskId: string
-	outcome: "completed" | "cancelled" | "failed"
+	outcome: "completed" | "needs_input" | "cancelled" | "failed"
 	resumable: boolean
 	cancellationReason?: "user" | "signal" | "timeout"
 	content?: string
@@ -66,6 +66,7 @@ export interface RooCodeAPI extends EventEmitter<RooCodeAPIEvents> {
 	}): Promise<HeadlessTaskReference>
 	resumeHeadlessTask(taskId: string, overrides?: RunOverrides): Promise<HeadlessTaskReference>
 	respondToHeadlessAsk(input: { taskId: string; askId: string; response: HeadlessAskResponse }): Promise<void>
+	settleHeadlessNeedsInput(input: { rootTaskId: string; taskId: string; content?: string }): Promise<void>
 	cancelHeadlessTask(input: {
 		rootTaskId: string
 		reason: "user" | "signal" | "timeout"

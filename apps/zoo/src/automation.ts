@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import {
 	exitCodeFor,
 	ZOO_PUBLIC_SCHEMA_VERSION,
+	zooErrorCodeSchema,
 	zooRunResultSchema,
 	type HostCommand,
 	type ZooErrorCode,
@@ -49,6 +50,7 @@ export async function runAutomation(
 		}
 	})
 	let lastEvent: ZooStreamEvent | undefined
+	let finalRendered = false
 	const makeResult = (
 		outcome: "needs_input" | "cancelled" | "timed_out" | "failed",
 		rootTaskId: string,
@@ -93,23 +95,53 @@ export async function runAutomation(
 					: event
 			lastEvent = normalizedEvent
 			projection = reduceSession(projection, normalizedEvent)
-			renderer.event(normalizedEvent)
+			if (normalizedEvent.type !== "task.result") renderer.event(normalizedEvent)
 			if (normalizedEvent.type === "task.result") settleResult?.(normalizedEvent.result)
-			if (normalizedEvent.type === "ask.required" && options.approval !== "auto") {
-				settleResult?.(
-					makeResult("needs_input", normalizedEvent.rootTaskId, {
-						currentTaskId: normalizedEvent.taskId,
-						resumable: true,
-						content: normalizedEvent.subject,
-					}),
-				)
-			}
 		},
 	})
 	let signal: "SIGINT" | "SIGTERM" | undefined
 	let notifySignal: ((value: "SIGINT" | "SIGTERM") => void) | undefined
 	const signalPromise = new Promise<"SIGINT" | "SIGTERM">((resolve) => (notifySignal = resolve))
 	let rootTaskId: string | undefined
+	let clientStopped = false
+	const deadline = options.timeout === undefined ? undefined : startedAt + options.timeout
+	const remainingDeadline = () => (deadline === undefined ? 7_000 : Math.max(0, deadline - Date.now()))
+	const renderFinal = (result: ZooRunResult) => {
+		if (finalRendered) return
+		finalRendered = true
+		if (options.format === "stream-json") {
+			const event: ZooStreamEvent =
+				lastEvent?.type === "task.result"
+					? { ...lastEvent, result }
+					: {
+							v: 1,
+							seq: (lastEvent?.seq ?? 0) + 1,
+							timestamp: new Date().toISOString(),
+							hostId: lastEvent?.hostId ?? "parent",
+							type: "task.result",
+							rootTaskId: result.rootTaskId,
+							taskId: result.rootTaskId,
+							result,
+						}
+			renderer.event(event)
+		}
+		renderer.result(result)
+	}
+	const resultExitCode = (result: ZooRunResult) => {
+		const failedCode =
+			result.error?.code === "task_timed_out" || result.error?.code === "cleanup_timed_out"
+				? "task_failed"
+				: (result.error?.code ?? "task_failed")
+		return exitCodeFor(
+			result.outcome === "failed"
+				? { outcome: "failed", errorCode: failedCode }
+				: result.outcome === "cancelled"
+					? { outcome: "cancelled", signal }
+					: result.outcome === "timed_out"
+						? { outcome: "timed_out", errorCode: result.error?.code === "cleanup_timed_out" ? "cleanup_timed_out" : "task_timed_out" }
+						: { outcome: result.outcome },
+		)
+	}
 	const onSignal = (received: "SIGINT" | "SIGTERM") => {
 		if (signal) {
 			void client.stop()
@@ -167,10 +199,8 @@ export async function runAutomation(
 		rootTaskId = accepted.data.task.rootTaskId
 		if (signal) void client.command({ type: "task.cancel", rootTaskId, reason: "signal" }).catch(() => undefined)
 		const localSettlement = Promise.race([
-			timeoutPromise.then(async () => {
-				await client
-					.command({ type: "task.cancel", rootTaskId: rootTaskId!, reason: "timeout" }, 5_000)
-					.catch(() => undefined)
+			timeoutPromise.then(() => {
+				void client.command({ type: "task.cancel", rootTaskId: rootTaskId!, reason: "timeout" }, 1).catch(() => undefined)
 				return makeResult("timed_out", rootTaskId!, {
 					currentTaskId: projection.currentTaskId,
 					resumable: true,
@@ -209,38 +239,50 @@ export async function runAutomation(
 			),
 		])
 		const result = await Promise.race([resultPromise, localSettlement])
-		if (options.format === "stream-json" && lastEvent?.type !== "task.result") {
-			const event: ZooStreamEvent = {
-				v: 1,
-				seq: (lastEvent?.seq ?? 0) + 1,
-				timestamp: new Date().toISOString(),
-				hostId: lastEvent?.hostId ?? "parent",
-				type: "task.result",
-				rootTaskId: result.rootTaskId,
-				taskId: result.rootTaskId,
-				result,
-			}
-			renderer.event(event)
-		}
-		renderer.result(result)
-		const failedCode =
-			result.error?.code === "task_timed_out" || result.error?.code === "cleanup_timed_out"
-				? "task_failed"
-				: (result.error?.code ?? "task_failed")
-		return exitCodeFor(
-			result.outcome === "failed"
-				? { outcome: "failed", errorCode: failedCode }
-				: result.outcome === "cancelled"
-					? { outcome: "cancelled", signal }
-					: result.outcome === "timed_out"
-						? { outcome: "timed_out", errorCode: "task_timed_out" }
-						: { outcome: result.outcome },
-		)
+		const cleanupCompleted = await client.stop(remainingDeadline())
+		clientStopped = true
+		const finalResult =
+			!cleanupCompleted && result.outcome !== "timed_out"
+				? makeResult("timed_out", result.rootTaskId, {
+						currentTaskId: result.currentTaskId,
+						resumable: result.resumable,
+						code: "cleanup_timed_out",
+						message: "Task cleanup exceeded the deadline",
+					})
+				: result
+		renderFinal(finalResult)
+		return resultExitCode(finalResult)
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error)
+		const parsedCode = zooErrorCodeSchema.safeParse(message.split(":", 1)[0])
+		const code: ZooErrorCode = parsedCode.success
+			? parsedCode.data
+			: message.includes("protocol") || message.includes("negotiat")
+				? "protocol_incompatible"
+				: rootTaskId
+					? "task_failed"
+					: "host_start_failed"
+		const result =
+			message.includes("deadline")
+				? makeResult("timed_out", rootTaskId ?? "unavailable", {
+						resumable: Boolean(rootTaskId),
+						code: "task_timed_out",
+						message,
+					})
+				: signal
+					? makeResult("cancelled", rootTaskId ?? "unavailable", { resumable: false })
+					: makeResult("failed", rootTaskId ?? "unavailable", {
+							resumable: false,
+							code,
+							message,
+						})
+		renderFinal(result)
+		return resultExitCode(result)
 	} finally {
 		if (timeout) clearTimeout(timeout)
 		process.removeListener("SIGINT", onSignal)
 		process.removeListener("SIGTERM", onSignal)
-		await client.stop()
+		if (!clientStopped) await client.stop(remainingDeadline())
 		renderer.dispose()
 		if (options.ephemeral) fs.rmSync(storageRoot, { recursive: true, force: true })
 	}

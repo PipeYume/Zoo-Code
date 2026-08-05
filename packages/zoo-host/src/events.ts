@@ -9,6 +9,22 @@ export class HostEventBridge {
 	private readonly roots = new Map<string, string>()
 	private readonly startedAt = new Map<string, number>()
 	private readonly pendingCreated = new Set<string>()
+	private readonly initiatingRequests = new Map<string, string>()
+	private readonly approvalModes = new Map<string, "interactive" | "safe" | "auto">()
+	private readonly pendingAsks = new Map<string, { askId: string; subject: string }>()
+	private readonly pendingResponses = new Map<string, { requestId: string; askId: string; decision: "approve" | "reject" | "needs_input" }>()
+	private readonly cancellationRequests = new Map<string, string>()
+	private pendingInitiation:
+		| { type: "start"; requestId: string; approval: "interactive" | "safe" | "auto" }
+		| {
+				type: "resume"
+				requestId: string
+				approval: "interactive" | "safe" | "auto"
+				taskId: string
+				rootTaskId: string
+				previousState: "waiting" | "interrupted"
+			}
+		| undefined
 
 	constructor(
 		private readonly api: RooCodeAPI,
@@ -17,6 +33,33 @@ export class HostEventBridge {
 		private readonly clientVersion: string,
 		private readonly hostVersion: string,
 	) {}
+
+	public prepareStart(requestId: string, approval: "interactive" | "safe" | "auto"): void {
+		this.pendingInitiation = { type: "start", requestId, approval }
+	}
+
+	public prepareResume(
+		requestId: string,
+		taskId: string,
+		rootTaskId: string,
+		approval: "interactive" | "safe" | "auto",
+		previousState: "waiting" | "interrupted",
+	): void {
+		this.pendingInitiation = { type: "resume", requestId, taskId, rootTaskId, approval, previousState }
+	}
+
+	public prepareAskResponse(
+		requestId: string,
+		taskId: string,
+		askId: string,
+		decision: "approve" | "reject" | "needs_input",
+	): void {
+		this.pendingResponses.set(taskId, { requestId, askId, decision })
+	}
+
+	public prepareCancellation(requestId: string, rootTaskId: string): void {
+		this.cancellationRequests.set(rootTaskId, requestId)
+	}
 
 	public async initialize(): Promise<void> {
 		await this.emit({
@@ -42,12 +85,30 @@ export class HostEventBridge {
 		})
 		this.api.on(RooCodeEventName.TaskStarted, (taskId) => {
 			if (this.pendingCreated.delete(taskId)) {
-				this.roots.set(taskId, taskId)
-				void this.emitTask("task.created", taskId, {})
+				const initiation = this.pendingInitiation
+				const rootTaskId = initiation?.type === "resume" ? initiation.rootTaskId : taskId
+				this.roots.set(taskId, rootTaskId)
+				if (initiation) {
+					this.initiatingRequests.set(rootTaskId, initiation.requestId)
+					this.approvalModes.set(rootTaskId, initiation.approval)
+				}
+				void (async () => {
+					await this.emitTask("task.created", taskId, { requestId: initiation?.requestId }, rootTaskId)
+					if (initiation?.type === "resume") {
+						await this.emitTask("task.lifecycle", taskId, { state: initiation.previousState }, rootTaskId)
+						await this.emitTask(
+							"task.resumed",
+							taskId,
+							{ requestId: initiation.requestId, previousState: initiation.previousState },
+							rootTaskId,
+						)
+					}
+					await this.emitTask("task.started", taskId, {}, rootTaskId)
+					await this.emitTask("task.lifecycle", taskId, { state: "running" }, rootTaskId)
+				})()
+				this.pendingInitiation = undefined
 			}
 			this.startedAt.set(this.roots.get(taskId) ?? taskId, Date.now())
-			void this.emitTask("task.started", taskId, {})
-			void this.emitTask("task.lifecycle", taskId, { state: "running" })
 		})
 		this.api.on(RooCodeEventName.TaskDelegated, (parentTaskId, childTaskId) => {
 			const rootTaskId = this.roots.get(parentTaskId) ?? parentTaskId
@@ -69,6 +130,7 @@ export class HostEventBridge {
 		})
 		this.api.on(RooCodeEventName.HeadlessAsk, (ask) => {
 			this.roots.set(ask.taskId, ask.rootTaskId)
+			this.pendingAsks.set(ask.taskId, { askId: ask.askId, subject: ask.text ?? ask.ask })
 			void (async () => {
 				await this.emitTask(
 					"ask.required",
@@ -77,6 +139,28 @@ export class HostEventBridge {
 					ask.rootTaskId,
 				)
 				await this.emitTask("task.lifecycle", ask.taskId, { state: "waiting" }, ask.rootTaskId)
+				if (this.approvalModes.get(ask.rootTaskId) !== "interactive") {
+					await this.api.settleHeadlessNeedsInput({
+						rootTaskId: ask.rootTaskId,
+						taskId: ask.taskId,
+						content: ask.text ?? ask.ask,
+					})
+				}
+			})()
+		})
+		this.api.on(RooCodeEventName.TaskAskResponded, (taskId) => {
+			const response = this.pendingResponses.get(taskId)
+			if (!response) return
+			this.pendingResponses.delete(taskId)
+			this.pendingAsks.delete(taskId)
+			void (async () => {
+				await this.emitTask("ask.resolved", taskId, {
+					requestId: response.requestId,
+					askId: response.askId,
+					decision: response.decision,
+					source: "user",
+				})
+				await this.emitTask("task.lifecycle", taskId, { state: "running", requestId: response.requestId })
 			})()
 		})
 		this.api.on(RooCodeEventName.HeadlessTaskResult, (result) => void this.emitResult(result))
@@ -85,24 +169,40 @@ export class HostEventBridge {
 	private async emitResult(event: {
 		rootTaskId: string
 		currentTaskId: string
-		outcome: "completed" | "cancelled" | "failed"
+		outcome: "completed" | "needs_input" | "cancelled" | "failed"
 		resumable: boolean
 		cancellationReason?: "user" | "signal" | "timeout"
 		content?: string
 	}): Promise<void> {
 		const detailed = (await this.api.getHeadlessTaskResult(event.rootTaskId)) as HeadlessTaskResult | undefined
 		const outcome = event.outcome
-		await this.emitTask(
-			"task.lifecycle",
-			event.currentTaskId,
-			{
-				state: outcome === "completed" ? "completed" : outcome === "failed" ? "failed" : "interrupted",
-				cause: outcome === "cancelled" ? "cancelled" : outcome === "failed" ? "failed" : undefined,
-			},
-			event.rootTaskId,
-		)
+		const pendingAsk = this.pendingAsks.get(event.currentTaskId)
+		if (pendingAsk && outcome !== "needs_input") {
+			await this.emitTask(
+				"ask.abandoned",
+				event.currentTaskId,
+				{
+					askId: pendingAsk.askId,
+					reason: outcome === "failed" ? "failed" : "cancelled",
+				},
+				event.rootTaskId,
+			)
+			this.pendingAsks.delete(event.currentTaskId)
+		}
+		if (outcome !== "needs_input") {
+			await this.emitTask(
+				"task.lifecycle",
+				event.currentTaskId,
+				{
+					state: outcome === "completed" ? "completed" : outcome === "failed" ? "failed" : "interrupted",
+					cause: outcome === "cancelled" ? "cancelled" : outcome === "failed" ? "failed" : undefined,
+				},
+				event.rootTaskId,
+			)
+		}
 		await this.emit({
 			type: "task.result",
+			requestId: this.cancellationRequests.get(event.rootTaskId) ?? this.initiatingRequests.get(event.rootTaskId),
 			rootTaskId: event.rootTaskId,
 			taskId: event.rootTaskId,
 			result: {
@@ -143,6 +243,7 @@ export class HostEventBridge {
 			},
 		})
 		this.startedAt.delete(event.rootTaskId)
+		this.cancellationRequests.delete(event.rootTaskId)
 	}
 
 	private emitTask(type: string, taskId: string, data: Record<string, unknown>, rootTaskId?: string): Promise<void> {

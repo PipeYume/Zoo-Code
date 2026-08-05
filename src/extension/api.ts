@@ -255,6 +255,26 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 		if (!accepted) throw new Error(`Ask ${askId} is not pending on task ${taskId}`)
 	}
 
+	public async settleHeadlessNeedsInput({
+		rootTaskId,
+		taskId,
+		content,
+	}: {
+		rootTaskId: string
+		taskId: string
+		content?: string
+	}): Promise<void> {
+		const run = this.headlessRuns.get(rootTaskId)
+		if (!run || run.result) return
+		this.settleHeadlessRun(run, {
+			rootTaskId,
+			currentTaskId: taskId,
+			outcome: "needs_input",
+			resumable: true,
+			content,
+		})
+	}
+
 	public async cancelHeadlessTask({
 		rootTaskId,
 		reason,

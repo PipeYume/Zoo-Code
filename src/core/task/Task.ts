@@ -71,7 +71,7 @@ import { combineCommandSequences } from "../../shared/combineCommandSequences"
 import { t } from "../../i18n"
 import { getApiMetrics, hasTokenUsageChanged, hasToolUsageChanged } from "../../shared/getApiMetrics"
 import { ClineAskResponse } from "../../shared/WebviewMessage"
-import { defaultModeSlug, getModeBySlug } from "../../shared/modes"
+import { type Mode, defaultModeSlug, getModeBySlug } from "../../shared/modes"
 import { DiffStrategy, type ToolUse, type ToolParamName, toolParamNames } from "../../shared/tools"
 import { getModelMaxOutputTokens } from "../../shared/api"
 
@@ -819,6 +819,15 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	 */
 	public async waitForModeInitialization(): Promise<void> {
 		return this.taskModeReady
+	}
+
+	public async switchMode(newMode: string): Promise<void> {
+		if (!this.isolateRunConfiguration) {
+			await this.providerRef.deref()?.handleModeSwitch(newMode as Mode)
+			return
+		}
+		this._taskMode = newMode
+		this.emit(RooCodeEventName.TaskModeSwitched, this.taskId, newMode)
 	}
 
 	/**
@@ -2718,7 +2727,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 					const state = await this.getEffectiveState()
 					const targetMode = getModeBySlug(slashCommandMode, state?.customModes)
 					if (targetMode) {
-						await provider.handleModeSwitch(slashCommandMode)
+						await this.switchMode(slashCommandMode)
 					}
 				}
 			}

@@ -79,7 +79,7 @@ export async function runChild(config: ChildConfig): Promise<void> {
 		config.buildVersion,
 	)
 	await bridge.initialize()
-	const dispatcher = new HostCommandDispatcher(extension.api, transport, roots.workspaceRoot)
+	const dispatcher = new HostCommandDispatcher(extension.api, transport, roots.workspaceRoot, bridge)
 	transport.startHeartbeat()
 	process.on("message", (message) => {
 		void dispatcher.dispatch(message).catch(async (error) => {

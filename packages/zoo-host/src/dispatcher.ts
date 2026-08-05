@@ -2,6 +2,7 @@ import type { RooCodeAPI } from "@roo-code/types"
 import { hostCommandSchema, type HostCommand } from "@roo-code/zoo-protocol"
 
 import { HostTransport } from "./transport.js"
+import { HostEventBridge } from "./events.js"
 
 export class HostCommandDispatcher {
 	private queue = Promise.resolve()
@@ -11,6 +12,7 @@ export class HostCommandDispatcher {
 		private readonly api: RooCodeAPI,
 		private readonly transport: HostTransport,
 		private readonly workspace: string,
+		private readonly bridge?: HostEventBridge,
 	) {}
 
 	public dispatch(input: unknown): Promise<void> {
@@ -43,6 +45,7 @@ export class HostCommandDispatcher {
 		switch (command.type) {
 			case "task.start": {
 				if (command.workspace !== this.workspace) throw new Error("Host workspace identity cannot change")
+				this.bridge?.prepareStart(command.id, command.overrides?.approval ?? "safe")
 				const task = await this.api.startHeadlessTask({ text: command.prompt, overrides: command.overrides })
 				this.activeRootTaskId = task.rootTaskId
 				return { commandType: command.type, task }
@@ -53,6 +56,13 @@ export class HostCommandDispatcher {
 				if (history.workspace !== this.workspace) {
 					throw new Error(`Session ${command.taskId} belongs to workspace ${history.workspace ?? "unknown"}`)
 				}
+				this.bridge?.prepareResume(
+					command.id,
+					command.taskId,
+					command.rootTaskId,
+					command.overrides?.approval ?? "safe",
+					history.status === "delegated" ? "waiting" : "interrupted",
+				)
 				const task = await this.api.resumeHeadlessTask(command.taskId, command.overrides)
 				this.activeRootTaskId = task.rootTaskId
 				return { commandType: command.type, task }
@@ -61,6 +71,12 @@ export class HostCommandDispatcher {
 				await this.api.sendMessage(command.text, command.images)
 				return { commandType: command.type, taskId: command.taskId }
 			case "ask.respond":
+				this.bridge?.prepareAskResponse(
+					command.id,
+					command.taskId,
+					command.askId,
+					command.response === "approve" ? "approve" : command.response === "reject" ? "reject" : "needs_input",
+				)
 				await this.api.respondToHeadlessAsk({
 					taskId: command.taskId,
 					askId: command.askId,
@@ -71,6 +87,7 @@ export class HostCommandDispatcher {
 				})
 				return { commandType: command.type, taskId: command.taskId, askId: command.askId }
 			case "task.cancel":
+				this.bridge?.prepareCancellation(command.id, command.rootTaskId)
 				await this.api.cancelHeadlessTask({ rootTaskId: command.rootTaskId, reason: command.reason })
 				return { commandType: command.type, rootTaskId: command.rootTaskId }
 			case "host.snapshot":

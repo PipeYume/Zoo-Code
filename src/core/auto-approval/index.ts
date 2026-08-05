@@ -121,6 +121,9 @@ export async function checkAutoApproval({
 		}
 
 		if (state.alwaysAllowExecute === true) {
+			const decision = getCommandDecision(text, state.allowedCommands || [], state.deniedCommands || [])
+			if (decision === "auto_deny") return { decision: "deny" }
+
 			// Execute commands immediately when DCG allows them. ExecuteCommandTool
 			// marks commands blocked by DCG as protected before reaching this check,
 			// which keeps the explicit user approval prompt for those commands. When
@@ -129,8 +132,6 @@ export async function checkAutoApproval({
 			if (state.destructiveCommandGuardEnabled === true) {
 				return { decision: "approve" }
 			}
-
-			const decision = getCommandDecision(text, state.allowedCommands || [], state.deniedCommands || [])
 
 			if (decision === "auto_approve") {
 				return { decision: "approve" }

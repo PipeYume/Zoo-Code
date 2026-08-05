@@ -6,11 +6,13 @@ import { fileURLToPath } from "node:url"
 
 import {
 	createHostEventStreamParser,
+	createTextRedactor,
 	hostCommandSchema,
 	hostHelloSchema,
 	negotiateProtocol,
 	parentHelloSchema,
 	validateNegotiatedStreamSession,
+	validateStreamLifecycle,
 	ZOO_HOST_PROTOCOL_VERSION,
 	type HostCommand,
 	type HostEvent,
@@ -18,7 +20,6 @@ import {
 	type ParentHello,
 	type ZooCapability,
 	type ZooStreamEvent,
-	redactText,
 } from "@roo-code/zoo-protocol"
 
 type PendingCommand = {
@@ -60,6 +61,11 @@ export class HostClient {
 	private initialized = new Promise<void>((resolve) => (this.resolveInitialized = resolve))
 	private lastHeartbeat = Date.now()
 	private watchdog: NodeJS.Timeout | undefined
+	private readonly commands: HostCommand[] = []
+	private readonly hostEvents: HostEvent[] = []
+	private readonly publicEvents: ZooStreamEvent[] = []
+	private initiatingCommandId: string | undefined
+	private pendingResult: ZooStreamEvent | undefined
 
 	constructor(private readonly options: HostClientOptions) {}
 
@@ -82,8 +88,12 @@ export class HostClient {
 		})
 		this.child = child
 		child.stdout?.resume()
+		const stderrRedactor = createTextRedactor()
 		child.stderr?.on("data", (chunk: Buffer) => {
-			if (this.options.debug) process.stderr.write(redactText(chunk.subarray(0, 16 * 1024).toString("utf8")))
+			if (this.options.debug) process.stderr.write(stderrRedactor.push(chunk.toString("utf8")))
+		})
+		child.stderr?.once("end", () => {
+			if (this.options.debug) process.stderr.write(stderrRedactor.flush())
 		})
 		child.once("exit", (code, signal) => this.fail(new Error(`Zoo host exited (${signal ?? code ?? "unknown"})`)))
 		child.once("error", (error) => this.fail(error))
@@ -127,6 +137,8 @@ export class HostClient {
 		if (!this.child?.connected) throw this.failure ?? new Error("Zoo host is unavailable")
 		const id = randomUUID()
 		const command = hostCommandSchema.parse({ v: ZOO_HOST_PROTOCOL_VERSION, id, ...input })
+		this.commands.push(command)
+		if (command.type === "task.start" || command.type === "task.resume") this.initiatingCommandId = command.id
 		return new Promise<Extract<HostEvent, { type: "command.done" }>>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id)
@@ -149,23 +161,35 @@ export class HostClient {
 		})
 	}
 
-	public async stop(): Promise<void> {
+	public async stop(timeoutMs = 7_000): Promise<boolean> {
 		const child = this.child
-		if (!child) return
+		if (!child) return true
 		if (this.watchdog) clearInterval(this.watchdog)
 		this.watchdog = undefined
+		const deadline = Date.now() + Math.max(0, timeoutMs)
+		if (timeoutMs <= 0) {
+			child.kill("SIGKILL")
+			return false
+		}
 		if (child.connected && !this.failure)
-			await this.command({ type: "host.shutdown" }, 5_000).catch(() => undefined)
+			await this.command({ type: "host.shutdown" }, Math.max(1, Math.min(5_000, deadline - Date.now()))).catch(
+				() => undefined,
+			)
 		child.disconnect()
-		await new Promise<void>((resolve) => {
-			if (child.exitCode !== null || child.signalCode !== null) return resolve()
+		return new Promise<boolean>((resolve) => {
+			if (child.exitCode !== null || child.signalCode !== null) return resolve(true)
+			const remaining = Math.max(0, deadline - Date.now())
+			if (remaining === 0) {
+				child.kill("SIGKILL")
+				return resolve(false)
+			}
 			const timer = setTimeout(() => {
 				child.kill("SIGKILL")
-				resolve()
-			}, 2_000)
+				resolve(false)
+			}, remaining)
 			child.once("exit", () => {
 				clearTimeout(timer)
-				resolve()
+				resolve(true)
 			})
 		})
 	}
@@ -187,8 +211,10 @@ export class HostClient {
 	private receive(input: unknown): void {
 		try {
 			for (const event of this.parser?.push(input) ?? []) {
+				this.hostEvents.push(event)
 				if (event.type === "host.heartbeat") this.lastHeartbeat = Date.now()
 				if (event.type === "event") {
+					this.publicEvents.push(event.event)
 					if (event.event.type === "system.init") {
 						if (!this.hello || !this.selection)
 							throw new Error("Host initialized before protocol negotiation")
@@ -196,7 +222,13 @@ export class HostClient {
 						if (!validation.ok) throw new Error(validation.message)
 						this.resolveInitialized?.()
 					}
-					this.options.onEvent(event.event)
+					if (event.event.type === "task.result") {
+						if (this.pendingResult) throw new Error("Stream emitted multiple task results")
+						this.pendingResult = event.event
+						this.flushResult()
+					} else {
+						this.options.onEvent(event.event)
+					}
 				}
 				if (event.type === "command.ack") {
 					const pending = this.pending.get(event.commandId)
@@ -208,6 +240,7 @@ export class HostClient {
 					if (!pending?.acknowledged) throw new Error(`DONE preceded ACK for command ${event.commandId}`)
 					pending.resolve(event)
 					this.pending.delete(event.commandId)
+					this.flushResult()
 				}
 				if (event.type === "command.error") {
 					const pending = this.pending.get(event.commandId)
@@ -219,6 +252,19 @@ export class HostClient {
 		} catch (error) {
 			this.fail(error instanceof Error ? error : new Error(String(error)))
 		}
+	}
+
+	private flushResult(): void {
+		if (!this.pendingResult || !this.initiatingCommandId) return
+		if (this.commands.some((command) => this.pending.has(command.id))) return
+		const validation = validateStreamLifecycle(this.publicEvents, this.commands, this.hostEvents, {
+			initiatingCommandId: this.initiatingCommandId,
+			commandIds: this.commands.map((command) => command.id),
+		})
+		if (!validation.ok) throw new Error(`${validation.code}: ${validation.message}`)
+		const result = this.pendingResult
+		this.pendingResult = undefined
+		this.options.onEvent(result)
 	}
 
 	private fail(error: Error): void {

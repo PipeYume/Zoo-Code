@@ -54,6 +54,9 @@ process.on("message", (message) => {
 			commandId: message.id,
 			data: { commandType: "task.start", task: { rootTaskId: "root-1", taskId: "root-1" } },
 		})
+		stream({ type: "task.created", requestId: message.id, rootTaskId: "root-1", taskId: "root-1" })
+		stream({ type: "task.started", rootTaskId: "root-1", taskId: "root-1" })
+		stream({ type: "task.lifecycle", rootTaskId: "root-1", taskId: "root-1", state: "running" })
 		if (scenario === "crash") {
 			setImmediate(() => process.exit(70))
 			return
@@ -68,10 +71,31 @@ process.on("message", (message) => {
 				category: "followup",
 				subject: "Choose a target",
 			})
+			stream({ type: "task.lifecycle", rootTaskId: "root-1", taskId: "root-1", state: "waiting" })
+			stream({
+				type: "task.result",
+				requestId: message.id,
+				rootTaskId: "root-1",
+				taskId: "root-1",
+				result: {
+					schemaVersion: 1,
+					protocol: "zoo-run-result",
+					success: false,
+					outcome: "needs_input",
+					rootTaskId: "root-1",
+					currentTaskId: "root-1",
+					workspace: message.workspace,
+					resumable: true,
+					content: "Choose a target",
+					elapsedMs: 5,
+				},
+			})
 			return
 		}
+		stream({ type: "task.lifecycle", rootTaskId: "root-1", taskId: "root-1", state: "completed" })
 		stream({
 			type: "task.result",
+			requestId: message.id,
 			rootTaskId: "root-1",
 			taskId: "root-1",
 			result: {
@@ -91,7 +115,15 @@ process.on("message", (message) => {
 		send({ type: "command.done", commandId: message.id, data: { commandType: "task.cancel", rootTaskId: message.rootTaskId } })
 		if (scenario === "hang") {
 			stream({
+				type: "task.lifecycle",
+				rootTaskId: message.rootTaskId,
+				taskId: message.rootTaskId,
+				state: "interrupted",
+				cause: "cancelled",
+			})
+			stream({
 				type: "task.result",
+				requestId: message.id,
 				rootTaskId: message.rootTaskId,
 				taskId: message.rootTaskId,
 				result: {
@@ -124,8 +156,20 @@ process.on("message", (message) => {
 			commandId: message.id,
 			data: { commandType: "task.resume", task: { rootTaskId: message.rootTaskId, taskId: message.taskId } },
 		})
+		stream({ type: "task.created", rootTaskId: message.rootTaskId, taskId: message.taskId })
+		stream({ type: "task.lifecycle", rootTaskId: message.rootTaskId, taskId: message.taskId, state: "interrupted" })
+		stream({
+			type: "task.resumed",
+			requestId: message.id,
+			rootTaskId: message.rootTaskId,
+			taskId: message.taskId,
+			previousState: "interrupted",
+		})
+		stream({ type: "task.started", rootTaskId: message.rootTaskId, taskId: message.taskId })
+		stream({ type: "task.lifecycle", rootTaskId: message.rootTaskId, taskId: message.taskId, state: "completed" })
 		stream({
 			type: "task.result",
+			requestId: message.id,
 			rootTaskId: message.rootTaskId,
 			taskId: message.rootTaskId,
 			result: {
