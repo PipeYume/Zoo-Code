@@ -19,9 +19,9 @@ describe("Destructive Command Guard auto-approval precedence", () => {
 		mcpServers: [],
 	}
 
-	it("auto-approves commands allowed by DCG without consulting Zoo's deny list", async () => {
+	it("enforces Zoo's deny list before DCG approval", async () => {
 		expect(await checkAutoApproval({ state: baseState, ask: "command", text: "rm file" })).toEqual({
-			decision: "approve",
+			decision: "deny",
 		})
 	})
 
