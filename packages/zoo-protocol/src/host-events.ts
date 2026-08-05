@@ -155,10 +155,14 @@ export function validateCommandLifecycle(
 			const data = terminal.data
 			const matches = (() => {
 				switch (command.type) {
-					case "task.start":
-						return data.commandType === command.type
+				case "task.start":
+						return data.commandType === command.type && data.task.taskId === data.task.rootTaskId
 					case "task.resume":
-						return data.commandType === command.type && data.task.taskId === command.taskId
+						return (
+							data.commandType === command.type &&
+							data.task.taskId === command.taskId &&
+							data.task.rootTaskId === command.rootTaskId
+						)
 					case "task.input":
 						return data.commandType === command.type && data.taskId === command.taskId
 					case "ask.respond":

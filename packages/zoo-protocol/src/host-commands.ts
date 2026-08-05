@@ -52,6 +52,7 @@ const taskResumeCommandSchema = commandBaseSchema
 	.extend({
 		type: z.literal("task.resume"),
 		taskId: z.string().min(1),
+		rootTaskId: z.string().min(1),
 		overrides: runOverridesSchema.optional(),
 	})
 	.strict()
@@ -60,7 +61,7 @@ const taskInputCommandSchema = commandBaseSchema
 	.extend({
 		type: z.literal("task.input"),
 		taskId: z.string().min(1),
-		text: z.string().min(1).optional(),
+		text: z.string().refine((text) => text.trim().length > 0, "Input cannot be blank").optional(),
 		images: z.array(z.string().min(1)).min(1).optional(),
 	})
 	.strict()
@@ -71,7 +72,7 @@ const askRespondCommandSchema = commandBaseSchema
 		taskId: z.string().min(1),
 		askId: z.string().min(1),
 		response: z.enum(["approve", "reject", "message"]),
-		text: z.string().min(1).optional(),
+		text: z.string().refine((text) => text.trim().length > 0, "Response cannot be blank").optional(),
 	})
 	.strict()
 

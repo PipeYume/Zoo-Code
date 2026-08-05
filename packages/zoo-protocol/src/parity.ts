@@ -163,7 +163,9 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		{ type: "task.created", rootTaskId: "root", taskId: "root", prompt: scenario.prompt },
 	]
 	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
+	let terminalReached = false
 	for (const turn of scenario.providerTurns) {
+		if (terminalReached) throw new Error("Fake-provider terminal directives must be the final turn")
 		if (turn.startsWith("tool:")) {
 			const [, operation, toolCallId, argument] = turn.split(":")
 			if (operation !== "read_file" || !toolCallId || !argument) throw new Error(`Invalid tool fixture: ${turn}`)
@@ -215,12 +217,24 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 				requestId,
 				cancellationReason: cancellationReason as "user" | "signal" | "timeout",
 			}
+			terminalReached = true
 			continue
 		}
 		if (turn.startsWith("fail:")) {
-			const errorCode = zooErrorCodeSchema.parse(turn.slice(5))
+			const errorCode = failedErrorCodeSchema.parse(turn.slice(5))
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "failed" })
 			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "failed", errorCode }
+			terminalReached = true
+			continue
+		}
+		if (turn.startsWith("timeout:")) {
+			const errorCode = zooErrorCodeSchema.parse(turn.slice(8))
+			if (errorCode !== "task_timed_out" && errorCode !== "cleanup_timed_out") {
+				throw new Error(`Invalid timeout fixture: ${turn}`)
+			}
+			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "interrupted" })
+			result = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "timed_out", errorCode }
+			terminalReached = true
 			continue
 		}
 		trace.push({ type: "message.upsert", rootTaskId: "root", taskId: "root", content: turn })

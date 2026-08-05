@@ -2,16 +2,16 @@ import { z } from "zod"
 
 import type { HostCommand } from "./host-commands.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
-import { redactValue } from "./redaction.js"
+import { redactValue, type RedactedValue } from "./redaction.js"
 import { ZOO_PUBLIC_SCHEMA_VERSION, zooCapabilitySchema } from "./version.js"
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict()
 
 export const usageSchema = strictObject({
-	inputTokens: z.number().int().nonnegative().optional(),
-	outputTokens: z.number().int().nonnegative().optional(),
-	cacheReads: z.number().int().nonnegative().optional(),
-	cacheWrites: z.number().int().nonnegative().optional(),
+	inputTokens: z.number().int().safe().nonnegative().optional(),
+	outputTokens: z.number().int().safe().nonnegative().optional(),
+	cacheReads: z.number().int().safe().nonnegative().optional(),
+	cacheWrites: z.number().int().safe().nonnegative().optional(),
 })
 
 export const changedFileSchema = strictObject({ path: z.string().min(1), status: z.string().min(1) })
@@ -28,8 +28,8 @@ const rawZooRunResultSchema = strictObject({
 	content: z.string().optional(),
 	error: zooErrorSchema.optional(),
 	usage: usageSchema.optional(),
-	cost: z.number().nonnegative().optional(),
-	elapsedMs: z.number().int().nonnegative(),
+	cost: z.number().finite().nonnegative().optional(),
+	elapsedMs: z.number().int().safe().nonnegative(),
 	changedFiles: z.array(changedFileSchema).optional(),
 	cancellationReason: z.enum(["user", "signal", "timeout"]).optional(),
 }).superRefine((result, context) => {
@@ -61,7 +61,15 @@ const rawZooRunResultSchema = strictObject({
 	}
 })
 
-export const zooRunResultSchema = z.preprocess((value) => redactValue(value), rawZooRunResultSchema)
+const redactError = <T extends { message: string }>(error: T): T => ({ ...error, message: String(redactValue(error.message)) })
+const redactRecord = (value: Record<string, unknown>): Record<string, RedactedValue> =>
+	redactValue(value) as Record<string, RedactedValue>
+
+export const zooRunResultSchema = rawZooRunResultSchema.transform((result) => ({
+	...result,
+	content: result.content === undefined ? undefined : String(redactValue(result.content)),
+	error: result.error === undefined ? undefined : redactError(result.error),
+}))
 
 export type ZooRunResult = z.infer<typeof zooRunResultSchema>
 
@@ -97,7 +105,9 @@ const taskStartedEventSchema = taskEvent("task.started", {})
 const taskLifecycleEventSchema = taskEvent("task.lifecycle", {
 	state: z.enum(["running", "waiting", "interrupted", "completed", "failed"]),
 })
-const taskResumedEventSchema = taskEvent("task.resumed", {})
+const taskResumedEventSchema = taskEvent("task.resumed", {
+	previousState: z.enum(["waiting", "interrupted"]),
+})
 const taskDelegatedEventSchema = taskEvent("task.delegated", {
 	parentTaskId: z.string().min(1),
 	childTaskId: z.string().min(1),
@@ -153,7 +163,7 @@ const mcpCompletedEventSchema = taskEvent("mcp.completed", mcpEventState)
 const mcpFailedEventSchema = taskEvent("mcp.failed", { ...mcpEventState, error: zooErrorSchema })
 const usageUpdatedEventSchema = taskEvent("usage.updated", {
 	usage: usageSchema,
-	cost: z.number().nonnegative().optional(),
+	cost: z.number().finite().nonnegative().optional(),
 })
 const taskResultEventSchema = taskEvent("task.result", { result: zooRunResultSchema })
 
@@ -191,7 +201,47 @@ const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	}
 })
 
-export const zooStreamEventSchema = z.preprocess((value) => redactValue(value), rawZooStreamEventSchema)
+export const zooStreamEventSchema = rawZooStreamEventSchema.transform((streamEvent) => {
+	switch (streamEvent.type) {
+		case "system.warning":
+			return { ...streamEvent, message: String(redactValue(streamEvent.message)) }
+		case "message.upsert":
+			return { ...streamEvent, content: String(redactValue(streamEvent.content)) }
+		case "ask.required":
+			return { ...streamEvent, subject: String(redactValue(streamEvent.subject)) }
+		case "tool.started":
+		case "tool.updated":
+		case "tool.completed":
+			return {
+				...streamEvent,
+				arguments: streamEvent.arguments === undefined ? undefined : redactRecord(streamEvent.arguments),
+				output: streamEvent.output === undefined ? undefined : String(redactValue(streamEvent.output)),
+			}
+		case "tool.failed":
+			return {
+				...streamEvent,
+				arguments: streamEvent.arguments === undefined ? undefined : redactRecord(streamEvent.arguments),
+				output: streamEvent.output === undefined ? undefined : String(redactValue(streamEvent.output)),
+				error: redactError(streamEvent.error),
+			}
+		case "terminal.output":
+			return { ...streamEvent, delta: String(redactValue(streamEvent.delta)) }
+		case "mcp.started":
+		case "mcp.completed":
+			return {
+				...streamEvent,
+				output: streamEvent.output === undefined ? undefined : String(redactValue(streamEvent.output)),
+			}
+		case "mcp.failed":
+			return {
+				...streamEvent,
+				output: streamEvent.output === undefined ? undefined : String(redactValue(streamEvent.output)),
+				error: redactError(streamEvent.error),
+			}
+		default:
+			return streamEvent
+	}
+})
 
 export type ZooStreamEvent = z.infer<typeof zooStreamEventSchema>
 
@@ -232,6 +282,7 @@ export function validateStreamLifecycle(
 	const taskParents = new Map<string, string | null>()
 	const createdTasks = new Set<string>()
 	const delegatedTasks = new Set<string>()
+	const resumedTasks = new Set<string>()
 	const toolStates = new Map<string, { state: "active" | "terminal"; name: string }>()
 	const terminalOperationStates = new Map<string, "active" | "terminal">()
 	const mcpStates = new Map<string, { state: "active" | "terminal"; server: string; operation: string }>()
@@ -295,6 +346,14 @@ export function validateStreamLifecycle(
 		} else if (!taskParents.has(streamEvent.taskId)) {
 			return { ok: false, code: "task_failed", message: `Event references unknown task ${streamEvent.taskId}` }
 		}
+		if (
+			streamEvent.taskId !== rootTaskId &&
+			streamEvent.type !== "task.created" &&
+			streamEvent.type !== "task.delegated" &&
+			!delegatedTasks.has(streamEvent.taskId)
+		) {
+			return { ok: false, code: "task_failed", message: `Task ${streamEvent.taskId} emitted an event before delegation` }
+		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
 		if (previousState !== undefined && terminalStates.has(previousState)) {
@@ -305,7 +364,25 @@ export function validateStreamLifecycle(
 			}
 		}
 		if (streamEvent.type === "task.lifecycle") {
+			const hasPendingAsk = [...pendingAsks].some((askKey) => askKey.startsWith(`${streamEvent.taskId}\u0000`))
+			if (hasPendingAsk && terminalStates.has(streamEvent.state)) {
+				return { ok: false, code: "task_failed", message: "A task with a pending ask cannot terminate" }
+			}
 			taskStates.set(streamEvent.taskId, streamEvent.state)
+		}
+		if (streamEvent.type === "task.resumed") {
+			const resume = commands.find(
+				(command) =>
+					command.type === "task.resume" &&
+					command.id === streamEvent.requestId &&
+					command.taskId === streamEvent.taskId &&
+					command.rootTaskId === streamEvent.rootTaskId,
+			)
+			if (resume === undefined || resumedTasks.size > 0 || streamEvent.taskId !== rootTaskId) {
+				return { ok: false, code: "task_failed", message: "task.resumed must uniquely match the root resume command" }
+			}
+			resumedTasks.add(streamEvent.taskId)
+			taskStates.set(streamEvent.taskId, "running")
 		}
 		if (streamEvent.type === "ask.required") {
 			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
@@ -411,6 +488,16 @@ export function validateStreamLifecycle(
 	}
 	if (pendingAsks.size > 0 && resultEvent.result.outcome !== "needs_input") {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains unresolved asks" }
+	}
+	if (
+		resultEvent.result.outcome === "needs_input" &&
+		[...pendingAsks].some((askKey) => taskStates.get(askKey.slice(0, askKey.indexOf("\u0000"))) !== "waiting")
+	) {
+		return { ok: false, code: "task_failed", message: "Pending asks must belong to waiting tasks" }
+	}
+	const resumeCommands = commands.filter((command) => command.type === "task.resume")
+	if (resumeCommands.length !== resumedTasks.size) {
+		return { ok: false, code: "task_failed", message: "Every resume command must reconstruct one resumed root" }
 	}
 	if ([...abandonedAsks.values()].some((reason) => reason !== resultEvent.result.outcome)) {
 		return { ok: false, code: "task_failed", message: "Ask abandonment contradicts task.result" }
