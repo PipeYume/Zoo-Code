@@ -105,7 +105,7 @@ describe("API headless facade", () => {
 			taskId: "child-1",
 			rootTaskId: "root-1",
 		})
-		expect(provider.createTaskWithHistoryItem).toHaveBeenCalledWith(historyItem)
+		expect(provider.createTaskWithHistoryItem).toHaveBeenCalledWith(historyItem, { runOverrides: undefined })
 	})
 
 	it("forwards run overrides separately from persistent configuration", async () => {
