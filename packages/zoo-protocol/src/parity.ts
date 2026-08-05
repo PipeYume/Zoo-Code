@@ -188,6 +188,8 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 	]
 	let result: SemanticTraceEntry = { type: "task.result", rootTaskId: "root", taskId: "root", outcome: "completed" }
 	let terminalReached = false
+	const activeChildren = new Set<string>()
+	const pendingAsks = new Set<string>()
 	for (const turn of scenario.providerTurns) {
 		if (terminalReached) throw new Error("Fake-provider terminal directives must be the final turn")
 		if (turn.startsWith("tool:")) {
@@ -215,21 +217,27 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			trace.push({ type: "task.created", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.delegated", rootTaskId: "root", taskId, parentTaskId: "root" })
 			trace.push({ type: "task.started", rootTaskId: "root", taskId })
+			activeChildren.add(taskId)
 			continue
 		}
 		if (turn.endsWith(":done")) {
 			const taskId = turn.slice(0, -":done".length)
 			if (!taskId) throw new Error(`Invalid completion fixture: ${turn}`)
 			trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId, state: "completed" })
+			activeChildren.delete(taskId)
 			continue
 		}
 		if (turn.startsWith("ask:")) {
-			trace.push({ type: "ask.required", rootTaskId: "root", taskId: "root", askId: turn.slice(4) })
+			const askId = turn.slice(4)
+			if (!askId || pendingAsks.has(askId)) throw new Error(`Invalid ask fixture: ${turn}`)
+			pendingAsks.add(askId)
+			trace.push({ type: "ask.required", rootTaskId: "root", taskId: "root", askId })
 			continue
 		}
 		if (turn.startsWith("approve:")) {
 			const [, askId, source, requestId] = turn.split(":")
 			if (!askId || source !== "user" || !requestId) throw new Error(`Invalid approval fixture: ${turn}`)
+			if (!pendingAsks.delete(askId)) throw new Error(`Approval references unknown ask: ${turn}`)
 			trace.push({
 				type: "ask.resolved",
 				rootTaskId: "root",
@@ -277,6 +285,9 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 		trace.push({ type: "message.upsert", rootTaskId: "root", taskId: "root", content: turn })
 	}
 	if (result.outcome === "completed") {
+		if (activeChildren.size > 0 || pendingAsks.size > 0) {
+			throw new Error("Fake-provider scenarios cannot complete with unresolved descendants or asks")
+		}
 		trace.push({ type: "task.lifecycle", rootTaskId: "root", taskId: "root", state: "completed" })
 	}
 	trace.push(result)
@@ -287,6 +298,7 @@ export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry
 	const results = trace.filter((entry) => entry.type === "task.result")
 	if (results.length !== 1) return false
 	const result = results[0]!
+	if (trace.at(-1) !== result) return false
 	if (
 		result.taskId !== rootTaskId ||
 		result.rootTaskId !== rootTaskId ||

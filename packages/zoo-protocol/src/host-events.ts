@@ -2,7 +2,12 @@ import { z } from "zod"
 
 import type { HostCommand } from "./host-commands.js"
 import { zooErrorSchema } from "./outcomes.js"
-import { zooStreamEventSchema } from "./public-events.js"
+import {
+	createZooStreamRedactor,
+	rawZooStreamEventSchema,
+	zooStreamEventSchema,
+	type RawZooStreamEvent,
+} from "./public-events.js"
 import { redactText } from "./redaction.js"
 import { ZOO_HOST_PROTOCOL_VERSION } from "./version.js"
 
@@ -70,6 +75,7 @@ const snapshotSchema = strictObject({
 	activeRootTaskId: z.string().min(1).optional(),
 })
 const normalizedEventSchema = strictObject({ ...base, type: z.literal("event"), event: zooStreamEventSchema })
+const rawNormalizedEventSchema = strictObject({ ...base, type: z.literal("event"), event: rawZooStreamEventSchema })
 
 const hostEventDiscriminatedSchema = z.discriminatedUnion("type", [
 	commandAckSchema,
@@ -78,6 +84,15 @@ const hostEventDiscriminatedSchema = z.discriminatedUnion("type", [
 	heartbeatSchema,
 	snapshotSchema,
 	normalizedEventSchema,
+])
+
+const rawHostEventDiscriminatedSchema = z.discriminatedUnion("type", [
+	commandAckSchema,
+	commandDoneSchema,
+	commandErrorSchema,
+	heartbeatSchema,
+	snapshotSchema,
+	rawNormalizedEventSchema,
 ])
 
 export const hostEventSchema = hostEventDiscriminatedSchema
@@ -100,6 +115,48 @@ export const hostEventSchema = hostEventDiscriminatedSchema
 	)
 
 export type HostEvent = z.infer<typeof hostEventSchema>
+
+export type HostEventStreamParser = {
+	push: (event: unknown) => HostEvent[]
+	flush: () => HostEvent[]
+}
+
+export function createHostEventStreamParser(
+	options: { maxPendingBytes?: number; maxPendingEvents?: number } = {},
+): HostEventStreamParser {
+	const redactor = createZooStreamRedactor(options)
+	const envelopes = new Map<string, z.infer<typeof rawNormalizedEventSchema>>()
+	const eventKey = (event: RawZooStreamEvent) => JSON.stringify([event.hostId, event.seq])
+	const wrap = (events: ReturnType<typeof redactor.flush>): HostEvent[] =>
+		events.map((event) => {
+			const envelope = envelopes.get(eventKey(event))
+			if (envelope === undefined) throw new Error("Missing host envelope for buffered Zoo stream event")
+			envelopes.delete(eventKey(event))
+			return { ...envelope, event }
+		})
+	const sanitizeNonEvent = (event: z.infer<typeof rawHostEventDiscriminatedSchema>): HostEvent =>
+		event.type === "command.error"
+			? {
+					...event,
+					error: {
+						...event.error,
+						message: redactText(event.error.message),
+						phase: event.error.phase === undefined ? undefined : redactText(event.error.phase),
+					},
+				}
+			: event as HostEvent
+
+	return {
+		push(input) {
+			const event = rawHostEventDiscriminatedSchema.parse(input)
+			if (event.type !== "event") return [...wrap(redactor.flush()), sanitizeNonEvent(event)]
+			if (event.event.hostId !== event.hostId) throw new Error("Normalized event hostId must match its host envelope")
+			envelopes.set(eventKey(event.event), event)
+			return wrap(redactor.push(event.event))
+		},
+		flush: () => wrap(redactor.flush()),
+	}
+}
 
 export function validateMonotonicSequence(
 	previous: number,

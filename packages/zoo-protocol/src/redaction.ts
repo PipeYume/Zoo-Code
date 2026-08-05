@@ -1,5 +1,5 @@
 const REDACTED = "[REDACTED]" as const
-const sensitiveKeyName = String.raw`[A-Za-z0-9_.-]*(?:api[-_ ]?key|access[-_ ]?token|auth[-_ ]?token|authorization|bearer[-_ ]?token|client[-_ ]?secret|cookie|credential|id[-_ ]?token|password|private[-_ ]?key|refresh[-_ ]?token|secret|session[-_ ]?token|token)[A-Za-z0-9_.-]*`
+const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret)[A-Za-z0-9_.-]*|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|cookie|credential|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token|token)`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
@@ -26,8 +26,8 @@ function isSensitiveKey(key: string): boolean {
 		.replace(/[^A-Za-z0-9]+/g, " ")
 		.trim()
 		.toLowerCase()
-	if (/^(?:authorization|cookie|credential|password|secret)$/.test(words)) return true
-	return /^(?:.* )?(?:api key|access token|auth token|bearer token|client secret|id token|private key|refresh token|session token|token)$/.test(
+	if (/\b(?:password|secret)\b/.test(words) || /^(?:authorization|cookie|credential)$/.test(words)) return true
+	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
 		words,
 	)
 }
@@ -37,7 +37,7 @@ export function redactText(value: string): string {
 		.replace(/\bhttps?:\/\/[^\s/?#]+/gi, (authority) => {
 			const schemeEnd = authority.indexOf("//") + 2
 			const credentialsEnd = authority.lastIndexOf("@")
-			if (credentialsEnd < schemeEnd || !authority.slice(schemeEnd, credentialsEnd).includes(":")) return authority
+			if (credentialsEnd < schemeEnd) return authority
 			return `${authority.slice(0, schemeEnd)}${REDACTED}@${authority.slice(credentialsEnd + 1)}`
 		})
 		.replace(doubleQuotedSecret, `$1"${REDACTED}"`)

@@ -171,7 +171,7 @@ const usageUpdatedEventSchema = taskEvent("usage.updated", {
 })
 const taskResultEventSchema = taskEvent("task.result", { result: zooRunResultSchema })
 
-const rawZooStreamEventSchema = z.discriminatedUnion("type", [
+export const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	systemInitEventSchema,
 	systemWarningEventSchema,
 	taskCreatedEventSchema,
@@ -205,7 +205,7 @@ const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	}
 })
 
-export const zooStreamEventSchema = rawZooStreamEventSchema.transform((streamEvent) => {
+const redactStreamEvent = (streamEvent: z.infer<typeof rawZooStreamEventSchema>) => {
 	switch (streamEvent.type) {
 		case "system.warning":
 			return { ...streamEvent, message: String(redactValue(streamEvent.message)) }
@@ -245,66 +245,84 @@ export const zooStreamEventSchema = rawZooStreamEventSchema.transform((streamEve
 		default:
 			return streamEvent
 	}
-})
+}
+
+export const zooStreamEventSchema = rawZooStreamEventSchema.transform(redactStreamEvent)
 
 export type ZooStreamEvent = z.infer<typeof zooStreamEventSchema>
+export type RawZooStreamEvent = z.infer<typeof rawZooStreamEventSchema>
+
+export type ZooStreamRedactor = {
+	push: (event: RawZooStreamEvent) => ZooStreamEvent[]
+	flush: () => ZooStreamEvent[]
+}
+
+export function createZooStreamRedactor(options: { maxPendingBytes?: number; maxPendingEvents?: number } = {}): ZooStreamRedactor {
+	const maxPendingBytes = options.maxPendingBytes ?? 64 * 1024
+	const maxPendingEvents = options.maxPendingEvents ?? 256
+	type PendingOutput = { events: Array<z.infer<typeof terminalOutputEventSchema>>; text: string; pem: boolean }
+	let pending: PendingOutput | undefined
+	const overflowedKeys = new Set<string>()
+	const outputKey = (event: z.infer<typeof terminalOutputEventSchema>) =>
+		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId, event.stream])
+	let pendingKey: string | undefined
+
+	const emit = (replacement?: string): ZooStreamEvent[] => {
+		if (pending === undefined) return []
+		const [first, ...rest] = pending.events
+		const delta = replacement ?? String(redactValue(pending.text))
+		pending = undefined
+		pendingKey = undefined
+		return first === undefined
+			? []
+			: [{ ...first, delta }, ...rest.map((event) => ({ ...event, delta: "" }))]
+	}
+
+	return {
+		push(event) {
+			if (event.type !== "terminal.output") {
+				if (event.type === "terminal.status" && (event.state === "exited" || event.state === "killed")) {
+					for (const key of overflowedKeys) {
+						const [hostId, rootTaskId, taskId, toolCallId] = JSON.parse(key) as string[]
+						if (
+							hostId === event.hostId &&
+							rootTaskId === event.rootTaskId &&
+							taskId === event.taskId &&
+							toolCallId === event.toolCallId
+						) {
+							overflowedKeys.delete(key)
+						}
+					}
+				}
+				return [...emit(), redactStreamEvent(event)]
+			}
+			const key = outputKey(event)
+			const preceding = pendingKey !== undefined && pendingKey !== key ? emit() : []
+			if (overflowedKeys.has(key)) return [...preceding, { ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
+			if (pending === undefined) {
+				pending = { events: [], text: "", pem: false }
+				pendingKey = key
+			}
+			pending.events.push(event)
+			pending.text += event.delta
+			pending.pem ||= /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(pending.text)
+			if (pending.text.length > maxPendingBytes || pending.events.length > maxPendingEvents) {
+				overflowedKeys.add(key)
+				return [...preceding, ...emit(REDACTED)]
+			}
+			if (pending.pem && !/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) return preceding
+			const boundary = pending.text.lastIndexOf("\n")
+			return boundary >= 0 || (pending.pem && /-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text))
+				? [...preceding, ...emit()]
+				: preceding
+		},
+		flush: () => emit(),
+	}
+}
 
 export const zooStreamSchema = z.array(rawZooStreamEventSchema).transform((events): ZooStreamEvent[] => {
-	type BufferedOutput = { pending: string; outputIndex: number }
-	const buffers = new Map<string, Map<string, Map<"stdout" | "stderr", BufferedOutput>>>()
-	const output = events.map((streamEvent) =>
-		streamEvent.type === "terminal.output"
-			? ({ ...streamEvent, delta: "" } as ZooStreamEvent)
-			: zooStreamEventSchema.parse(streamEvent),
-	)
-	const bufferFor = (streamEvent: z.infer<typeof terminalOutputEventSchema>, outputIndex: number): BufferedOutput => {
-		let taskBuffers = buffers.get(streamEvent.taskId)
-		if (taskBuffers === undefined) {
-			taskBuffers = new Map()
-			buffers.set(streamEvent.taskId, taskBuffers)
-		}
-		let operationBuffers = taskBuffers.get(streamEvent.toolCallId)
-		if (operationBuffers === undefined) {
-			operationBuffers = new Map()
-			taskBuffers.set(streamEvent.toolCallId, operationBuffers)
-		}
-		const existing = operationBuffers.get(streamEvent.stream)
-		if (existing !== undefined) return existing
-		const created = { pending: "", outputIndex }
-		operationBuffers.set(streamEvent.stream, created)
-		return created
-	}
-	const flush = (buffer: BufferedOutput) => {
-		if (buffer.pending.length === 0) return
-		const event = output[buffer.outputIndex]
-		if (event?.type === "terminal.output") event.delta += String(redactValue(buffer.pending))
-		buffer.pending = ""
-	}
-
-	events.forEach((streamEvent, index) => {
-		if (streamEvent.type === "terminal.output") {
-			const buffer = bufferFor(streamEvent, index)
-			buffer.pending += streamEvent.delta
-			buffer.outputIndex = index
-			const boundary = buffer.pending.lastIndexOf("\n")
-			if (boundary >= 0) {
-				const event = output[index]
-				if (event?.type === "terminal.output") event.delta = String(redactValue(buffer.pending.slice(0, boundary + 1)))
-				buffer.pending = buffer.pending.slice(boundary + 1)
-			}
-		} else if (
-			streamEvent.type === "terminal.status" &&
-			(streamEvent.state === "exited" || streamEvent.state === "killed")
-		) {
-			for (const buffer of buffers.get(streamEvent.taskId)?.get(streamEvent.toolCallId)?.values() ?? []) flush(buffer)
-		}
-	})
-	for (const taskBuffers of buffers.values()) {
-		for (const operationBuffers of taskBuffers.values()) {
-			for (const buffer of operationBuffers.values()) flush(buffer)
-		}
-	}
-	return output
+	const redactor = createZooStreamRedactor()
+	return [...events.flatMap((streamEvent) => redactor.push(streamEvent)), ...redactor.flush()]
 })
 
 export function validateStreamLifecycle(
@@ -542,7 +560,7 @@ export function validateStreamLifecycle(
 				resume.id !== streamEvent.requestId ||
 				resume.taskId !== streamEvent.taskId ||
 				resume.rootTaskId !== streamEvent.rootTaskId ||
-				resultEvent.requestId !== resume.id ||
+				(resultEvent.result.outcome !== "cancelled" && resultEvent.requestId !== resume.id) ||
 				resumedTasks.size > 0 ||
 				previousState !== streamEvent.previousState
 			) {
@@ -769,6 +787,9 @@ export function validateStreamLifecycle(
 		values(terminalOperationStates).includes("active")
 	) {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains active operations" }
+	}
+	if (resultEvent.result.outcome === "completed" && values(messageStates).some((message) => !message.complete)) {
+		return { ok: false, code: "task_failed", message: "Completed streams cannot contain partial messages" }
 	}
 	if (resultEvent.result.outcome === "cancelled") {
 		const cancellation = commands.find(

@@ -2,6 +2,7 @@ import {
 	EXIT_CODES,
 	ZOO_HOST_PROTOCOL_VERSION,
 	assertAuthoritativeRootResult,
+	createHostEventStreamParser,
 	compareSemanticTraces,
 	exitContextSchema,
 	exitCodeFor,
@@ -328,6 +329,36 @@ describe("strict host contracts", () => {
 		})
 		expect(parsed.type === "command.error" && parsed.error.message).toBe("[REDACTED]")
 		expect(parsed.type === "command.error" && parsed.error.phase).toBe("[REDACTED]")
+	})
+
+	it("statefully redacts normalized terminal output at the host boundary", () => {
+		const parser = createHostEventStreamParser()
+		const envelope = (seq: number, delta: string) => ({
+			v: 1,
+			seq,
+			hostId: "host",
+			type: "event",
+			event: {
+				v: 1,
+				seq,
+				timestamp,
+				hostId: "host",
+				rootTaskId: "root",
+				taskId: "root",
+				type: "terminal.output",
+				toolCallId: "terminal",
+				stream: "stdout",
+				delta,
+			},
+		})
+		const events = [
+			...parser.push(envelope(1, "Build succeeded\n")),
+			...parser.push(envelope(2, "API_TOKEN=")),
+			...parser.push(envelope(3, "abcdefgh")),
+			...parser.flush(),
+		]
+		expect(events.map((event) => (event.type === "event" && event.event.type === "terminal.output" ? event.event.delta : "")).join(""))
+			.toBe("Build succeeded\n[REDACTED]")
 	})
 
 	it("binds history completion data to its requested workspace", () => {
@@ -757,6 +788,27 @@ describe("public automation contracts", () => {
 		expect(zooStreamEventSchema.safeParse({ ...resumed, previousState: "completed" }).success).toBe(false)
 	})
 
+	it("allows a resumed run to be cancelled by a distinct command", () => {
+		const resume = hostCommandSchema.parse({ v: 1, id: "resume", type: "task.resume", rootTaskId: "root", taskId: "root" })
+		const cancel = hostCommandSchema.parse({
+			v: 1,
+			id: "cancel",
+			type: "task.cancel",
+			rootTaskId: "root",
+			reason: "user",
+		})
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.lifecycle", { state: "interrupted" }),
+			taskEvent(4, "task.resumed", { requestId: "resume", previousState: "interrupted" }),
+			taskEvent(5, "task.started"),
+			taskEvent(6, "task.lifecycle", { state: "interrupted" }),
+			resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
+		]
+		expect(validateStreamLifecycle(stream, [resume, cancel])).toEqual({ ok: true })
+	})
+
 	it("resumes a correlated descendant from its reconstructed predecessor", () => {
 		const command = hostCommandSchema.parse({
 			v: 1,
@@ -938,6 +990,37 @@ describe("public automation contracts", () => {
 		).toMatchObject({ ok: false })
 	})
 
+	it("requires completed streams to settle partial messages", () => {
+		const partial = taskEvent(4, "message.upsert", {
+			messageId: "message",
+			role: "assistant",
+			content: "partial",
+			complete: false,
+		})
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.started"),
+			partial,
+			taskEvent(5, "task.lifecycle", { state: "completed" }),
+			resultEvent(6),
+		]
+		expect(validateStreamLifecycle(stream, [startCommand])).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[
+					...stream.slice(0, -2),
+					taskEvent(5, "task.lifecycle", { state: "failed" }),
+					resultEvent(6, {
+						outcome: "failed",
+						error: { code: "task_failed", message: "failed" },
+					}),
+				],
+				[startCommand],
+			),
+		).toEqual({ ok: true })
+	})
+
 	it("maps every terminal outcome deterministically", () => {
 		expect(exitCodeFor({ outcome: "completed" })).toBe(EXIT_CODES.completed)
 		expect(exitCodeFor({ outcome: "needs_input" })).toBe(EXIT_CODES.needsInput)
@@ -991,6 +1074,15 @@ describe("redaction contracts", () => {
 			tokenizer: "bpe",
 			accessToken: "[REDACTED]",
 		})
+		expect(redactValue({ databasePassword: "pw", signingSecret: "sig", secretAccessKey: "key" })).toEqual({
+			databasePassword: "[REDACTED]",
+			signingSecret: "[REDACTED]",
+			secretAccessKey: "[REDACTED]",
+		})
+		expect(redactText("https://opaque-token@example.com/path")).toBe("https://[REDACTED]@example.com/path")
+		expect(redactText('{"max_tokens":4096} tokenizer=bpe --max-tokens 4096')).toBe(
+			'{"max_tokens":4096} tokenizer=bpe --max-tokens 4096',
+		)
 	})
 
 	it("redacts public event and result payloads during parsing", () => {
@@ -1069,6 +1161,37 @@ describe("redaction contracts", () => {
 		expect(output.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
 			"Build succeeded\n[REDACTED]",
 		)
+	})
+
+	it("buffers multiline secrets and fails closed when bounded memory is exceeded", () => {
+		const terminal = {
+			v: 1,
+			timestamp,
+			hostId: "host",
+			rootTaskId: "root",
+			taskId: "root",
+			type: "terminal.output",
+			toolCallId: "terminal",
+			stream: "stdout",
+		} as const
+		const output = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "-----BEGIN PRIVATE KEY-----\n" },
+			{ ...terminal, seq: 2, delta: "super-secret-body\n" },
+			{ ...terminal, seq: 3, delta: "-----END PRIVATE KEY-----\n" },
+		])
+		expect(output.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED]\n")
+
+		const parser = createHostEventStreamParser({ maxPendingBytes: 4 })
+		const overflow = parser.push({
+			v: 1,
+			seq: 1,
+			hostId: "host",
+			type: "event",
+			event: { ...terminal, seq: 1, delta: "secret" },
+		})
+		expect(overflow[0]?.type === "event" && overflow[0].event.type === "terminal.output" && overflow[0].event.delta)
+			.toBe("[REDACTED]")
 	})
 
 	it("handles cycles without throwing", () => {
@@ -1191,6 +1314,23 @@ describe("deterministic parity oracle", () => {
 				expected: [],
 			}),
 		).toThrow()
+	})
+
+	it("rejects unresolved fake-provider state and events after the authoritative result", () => {
+		for (const providerTurns of [["delegate:child"], ["ask:ask-1"]]) {
+			expect(() =>
+				runDeterministicFakeProvider({ id: "unresolved", prompt: "Unresolved", providerTurns, expected: [] }),
+			).toThrow()
+		}
+		expect(
+			assertAuthoritativeRootResult(
+				[
+					{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "completed" },
+					{ type: "message.upsert", taskId: "root", content: "late" },
+				],
+				"root",
+			),
+		).toBe(false)
 	})
 
 	it("ignores object property insertion order without ignoring event order", () => {
