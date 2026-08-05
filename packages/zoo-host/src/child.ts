@@ -25,7 +25,12 @@ function sendProcessMessage(message: unknown): Promise<void> {
 
 export async function runChild(config: ChildConfig): Promise<void> {
 	if (!process.send) throw new Error("zoo-host must be started with a Node IPC channel")
-	const roots = validateHostRoots(config)
+	const roots = validateHostRoots({
+		extensionRoot: config.extensionRoot,
+		workspaceRoot: config.workspaceRoot,
+		storageRoot: config.storageRoot,
+		appRoot: config.appRoot,
+	})
 	const hostId = config.hostId ?? randomUUID()
 	const hello = hostHelloSchema.parse({
 		type: "hello",
