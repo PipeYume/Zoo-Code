@@ -533,4 +533,262 @@ describe("Task persistence", () => {
 			expect(task.userMessageContent).toEqual([])
 		})
 	})
+
+	describe("hook lifecycle persistence", () => {
+		it("updates the running row at the same timestamp after saving", async () => {
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
+			const internals = task as any
+			const ts = await internals.addHookMessage({
+				hookRunId: "run-1",
+				hookId: "hook-1",
+				name: "Session hook",
+				phase: "sessionStart",
+				status: "running",
+				startedAt: 1,
+			})
+			mockSaveTaskMessages.mockClear()
+			vi.mocked(mockProvider.postMessageToWebview).mockClear()
+
+			await internals.updateHookMessage({
+				hookRunId: "run-1",
+				hookId: "hook-1",
+				phase: "sessionStart",
+				status: "succeeded",
+				stdoutSummary: "ready",
+				truncated: false,
+				startedAt: 1,
+				completedAt: 2,
+			})
+
+			expect(task.clineMessages).toHaveLength(1)
+			expect(task.clineMessages[0]).toMatchObject({ ts, say: "hook", hook: { status: "succeeded" } })
+			expect(mockSaveTaskMessages.mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(mockProvider.postMessageToWebview).mock.invocationCallOrder[0],
+			)
+		})
+
+		it("ignores a late hook completion after the live task instance is replaced", async () => {
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+			const internals = task as any
+			await internals.addHookMessage({
+				hookRunId: "late-run",
+				hookId: "hook-1",
+				name: "Session hook",
+				phase: "sessionStart",
+				status: "running",
+				startedAt: 1,
+			})
+			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue({
+				taskId: task.taskId,
+				instanceId: "replacement-instance",
+			} as Task)
+			mockSaveTaskMessages.mockClear()
+
+			await internals.updateHookMessage({
+				hookRunId: "late-run",
+				hookId: "hook-1",
+				phase: "sessionStart",
+				status: "succeeded",
+				stdoutSummary: "late output",
+				truncated: false,
+				startedAt: 1,
+				completedAt: 2,
+			})
+
+			expect(task.clineMessages[0]?.hook?.status).toBe("running")
+			expect(mockSaveTaskMessages).not.toHaveBeenCalled()
+		})
+
+		it("repairs stale running rows without changing their timestamp", () => {
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+			const repaired = (task as any).interruptStaleHookMessages([
+				{
+					ts: 42,
+					type: "say",
+					say: "hook",
+					hook: {
+						hookRunId: "old-run",
+						hookId: "hook-1",
+						name: "Session hook",
+						phase: "sessionStart",
+						status: "running",
+						startedAt: 1,
+					},
+				},
+			])
+
+			expect(repaired[0]).toMatchObject({ ts: 42, hook: { status: "interrupted" } })
+		})
+
+		it("snapshots enabled session hooks once and returns ordinary bounded text", async () => {
+			const definitions = [
+				{
+					id: "hook-1",
+					name: "Session hook",
+					enabled: true,
+					phase: "sessionStart" as const,
+					executable: process.execPath,
+					argv: [],
+				},
+			]
+			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: definitions } as any)
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
+			const run = vi.fn().mockImplementation(async (_definition, invocation) => ({
+				hookRunId: invocation.hookRunId,
+				hookId: "hook-1",
+				phase: "sessionStart",
+				status: "succeeded",
+				stdoutSummary: "session context",
+				truncated: false,
+				startedAt: 1,
+				completedAt: 2,
+			}))
+			;(task as any).hookRunner = { run }
+
+			const first = await (task as any).runSessionStartHooks()
+			definitions[0].enabled = false
+			const second = await (task as any).runSessionStartHooks()
+
+			expect(run).toHaveBeenCalledTimes(1)
+			expect(first).toEqual([
+				{
+					type: "text",
+					text: expect.stringContaining(
+						'<hook_result id="hook-1" phase="sessionStart" status="succeeded">\nsession context\n</hook_result>',
+					),
+				},
+			])
+			expect(first[0]).not.toHaveProperty("tool_use_id")
+			expect(second).toEqual([])
+		})
+
+		it("runs session hooks after the visible new-task row and before the first model turn", async () => {
+			const definition = {
+				id: "hook-1",
+				name: "Session hook",
+				enabled: true,
+				phase: "sessionStart" as const,
+				executable: process.execPath,
+				argv: [],
+			}
+			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: [definition] } as any)
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				task: "test task",
+				startTask: false,
+			})
+			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
+			const internals = task as any
+			internals.hookRunner = {
+				run: vi.fn().mockImplementation(async (_definition, invocation) => ({
+					hookRunId: invocation.hookRunId,
+					hookId: "hook-1",
+					phase: "sessionStart",
+					status: "succeeded",
+					stdoutSummary: "new task context",
+					truncated: false,
+					startedAt: 1,
+					completedAt: 2,
+				})),
+			}
+			vi.spyOn(internals, "getEnabledMcpToolsCount").mockResolvedValue({
+				enabledToolCount: 0,
+				enabledServerCount: 0,
+			})
+			const initiate = vi.spyOn(internals, "initiateTaskLoop").mockResolvedValue(undefined)
+
+			await internals.startTask("test task")
+
+			expect(task.clineMessages.map((message) => message.say)).toEqual(["text", "hook"])
+			expect(initiate).toHaveBeenCalledOnce()
+			expect(initiate.mock.calls[0][0]).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "text", text: expect.stringContaining("new task context") }),
+				]),
+			)
+		})
+
+		it("runs session hooks once after an accepted resume and before its model turn", async () => {
+			const definition = {
+				id: "hook-1",
+				name: "Session hook",
+				enabled: true,
+				phase: "sessionStart" as const,
+				executable: process.execPath,
+				argv: [],
+			}
+			vi.spyOn(mockProvider, "getState").mockResolvedValue({ hookDefinitions: [definition] } as any)
+			mockReadTaskMessages.mockResolvedValue([{ ts: 1, type: "say", say: "text", text: "original task" }])
+			mockReadApiMessages.mockResolvedValue([
+				{ role: "assistant", content: [{ type: "text", text: "prior response" }] },
+			])
+			const task = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				historyItem: {
+					id: "resumed-task",
+					number: 1,
+					ts: 1,
+					task: "original task",
+					totalCost: 0,
+					tokensIn: 0,
+					tokensOut: 0,
+				},
+				startTask: false,
+			})
+			vi.spyOn(mockProvider, "getCurrentTask").mockReturnValue(task)
+			const internals = task as any
+			internals.hookRunner = {
+				run: vi.fn().mockImplementation(async (_definition, invocation) => ({
+					hookRunId: invocation.hookRunId,
+					hookId: "hook-1",
+					phase: "sessionStart",
+					status: "succeeded",
+					stdoutSummary: "resume context",
+					truncated: false,
+					startedAt: 1,
+					completedAt: 2,
+				})),
+			}
+			vi.spyOn(task, "ask").mockImplementation(async () => {
+				task.clineMessages.push({ ts: 2, type: "ask", ask: "resume_task" })
+				return { response: "yesButtonClicked" }
+			})
+			const initiate = vi.spyOn(internals, "initiateTaskLoop").mockResolvedValue(undefined)
+
+			await internals.resumeTaskFromHistory()
+
+			expect(task.clineMessages.at(-2)?.ask).toBe("resume_task")
+			expect(task.clineMessages.at(-1)?.hook?.status).toBe("succeeded")
+			expect(initiate).toHaveBeenCalledOnce()
+			expect(initiate.mock.calls[0][0]).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "text", text: expect.stringContaining("resume context") }),
+				]),
+			)
+		})
+	})
 })
