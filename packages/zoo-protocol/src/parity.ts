@@ -354,7 +354,8 @@ export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry
 	if (
 		result.taskId !== rootTaskId ||
 		result.rootTaskId !== rootTaskId ||
-		!zooOutcomeSchema.safeParse(result.outcome).success
+		!zooOutcomeSchema.safeParse(result.outcome).success ||
+		(result.resumable === true && !["needs_input", "cancelled", "timed_out"].includes(result.outcome ?? ""))
 	) {
 		return false
 	}

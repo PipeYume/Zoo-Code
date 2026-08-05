@@ -17,7 +17,7 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
 	/\b[A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[^\s]+/gi,
-	/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+	/-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?-----END (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g,
 ]
 
 export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }

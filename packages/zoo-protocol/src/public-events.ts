@@ -145,7 +145,7 @@ const askResolvedEventSchema = taskEvent("ask.resolved", {
 })
 const askAbandonedEventSchema = taskEvent("ask.abandoned", {
 	askId: z.string().min(1),
-	reason: z.enum(["cancelled", "timed_out"]),
+	reason: z.enum(["cancelled", "timed_out", "failed"]),
 })
 const toolEventState = {
 	toolCallId: z.string().min(1),
@@ -303,7 +303,7 @@ export function createZooStreamRedactor(
 		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId, event.stream])
 	const hasUnmatchedPem = (text: string): boolean => {
 		const openLabels: string[] = []
-		for (const match of text.matchAll(/-----(BEGIN|END) ([A-Z ]*PRIVATE KEY)-----/g)) {
+		for (const match of text.matchAll(/-----(BEGIN|END) ((?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK))-----/g)) {
 			const [, boundary, label] = match
 			if (boundary === "BEGIN" && label !== undefined) openLabels.push(label)
 			else if (boundary === "END" && label !== undefined && openLabels.at(-1) === label) openLabels.pop()
@@ -321,7 +321,7 @@ export function createZooStreamRedactor(
 		const [first, ...rest] = pending.events
 		const unterminatedSecret =
 			pending.pem ||
-			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)\s*[:=]\s*$/i.test(
+			/(?:password|secret|passphrase|passwd|pwd|credentials?|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*|'(?:\\.|[^'\\])*)?$/i.test(
 				pending.text,
 			)
 		const delta = replacement ?? (unterminatedSecret ? REDACTED : String(redactValue(pending.text)))
@@ -472,6 +472,9 @@ export function validateStreamLifecycle(
 	const resumedEvents = events.filter((streamEvent) => streamEvent.type === "task.resumed")
 	const startCommands = commands.filter((command) => command.type === "task.start")
 	const resumeCommands = commands.filter((command) => command.type === "task.resume")
+	if (new Set(commands.map((command) => command.id)).size !== commands.length) {
+		return { ok: false, code: "protocol_gap", message: "Command IDs must be globally unique" }
+	}
 	if (resumedEvents.length === 0) {
 		const start = startCommands[0]
 		if (
@@ -490,7 +493,7 @@ export function validateStreamLifecycle(
 	const pendingAsks = new Map<string, Set<string>>()
 	const settledAsks = new Map<string, Set<string>>()
 	const consumedResponseCommands = new Set<string>()
-	const abandonedAsks = new Map<string, Map<string, "cancelled" | "timed_out">>()
+	const abandonedAsks = new Map<string, Map<string, "cancelled" | "timed_out" | "failed">>()
 	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
 	const endedStates = new Set(["completed", "failed"])
 	const settledStates = new Set(["interrupted", "completed", "failed"])
@@ -506,6 +509,7 @@ export function validateStreamLifecycle(
 	const terminalOperationStates = new Map<string, Map<string, "active" | "terminal">>()
 	const mcpStates = new Map<string, Map<string, McpState>>()
 	const messageStates = new Map<string, Map<string, MessageState>>()
+	const approvalResumeCauses = new Map<string, string | undefined>()
 	const scope = <T>(map: Map<string, Map<string, T>>, taskId: string): Map<string, T> => {
 		const existing = map.get(taskId)
 		if (existing !== undefined) return existing
@@ -561,6 +565,29 @@ export function validateStreamLifecycle(
 		}
 		return terminals[0]
 	}
+	const inputResumeCause = (taskId: string, requestId: string | undefined): boolean => {
+		if (requestId === undefined) return false
+		const input = commands.find(
+			(command) => command.type === "task.input" && command.id === requestId && command.taskId === taskId,
+		)
+		const terminal = causalTerminal(requestId)
+		return (
+			input !== undefined &&
+			terminal?.type === "command.done" &&
+			terminal.data.commandType === "task.input" &&
+			terminal.data.taskId === taskId
+		)
+	}
+	const approvalResumeCause = (taskId: string, requestId: string | undefined): boolean => {
+		if (!approvalResumeCauses.has(taskId) || approvalResumeCauses.get(taskId) !== requestId) return false
+		approvalResumeCauses.delete(taskId)
+		return true
+	}
+	for (const response of commands.filter((command) => command.type === "ask.respond")) {
+		if (causalTerminal(response.id) === undefined) {
+			return { ok: false, code: "protocol_gap", message: "Every ask response requires ACK and one terminal response" }
+		}
+	}
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
 			return {
@@ -594,6 +621,7 @@ export function validateStreamLifecycle(
 				return { ok: false, code: "task_failed", message: "Root creation must match its task.start request" }
 			}
 		} else if (streamEvent.type === "task.delegated") {
+			const reconstructingResumeTree = resumedEvents.length === 1 && resumedTasks.size === 0
 			if (
 				streamEvent.taskId !== streamEvent.childTaskId ||
 				streamEvent.childTaskId === rootTaskId ||
@@ -601,6 +629,7 @@ export function validateStreamLifecycle(
 				!createdTasks.has(streamEvent.parentTaskId) ||
 				!createdTasks.has(streamEvent.childTaskId) ||
 				settledStates.has(taskStates.get(streamEvent.parentTaskId) ?? "") ||
+				(taskStates.get(streamEvent.parentTaskId) !== "running" && !reconstructingResumeTree) ||
 				delegatedTasks.has(streamEvent.childTaskId)
 			) {
 				return {
@@ -634,6 +663,12 @@ export function validateStreamLifecycle(
 		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
+		if (
+			approvalResumeCauses.has(streamEvent.taskId) &&
+			!(streamEvent.type === "task.lifecycle" && streamEvent.state === "running")
+		) {
+			approvalResumeCauses.delete(streamEvent.taskId)
+		}
 		if (
 			(previousState !== undefined && endedStates.has(previousState)) ||
 			(previousState === "interrupted" && streamEvent.type !== "task.resumed")
@@ -671,6 +706,21 @@ export function validateStreamLifecycle(
 				(streamEvent.state === "waiting" || streamEvent.state === "interrupted")
 			if (!startedTasks.has(streamEvent.taskId) && !reconstructingPredecessor) {
 				return { ok: false, code: "task_failed", message: "Task lifecycle requires an ordered task.started event" }
+			}
+			const transitionAllowed =
+				reconstructingPredecessor ||
+				(previousState === "running" && ["waiting", "interrupted", "completed", "failed"].includes(streamEvent.state)) ||
+				(previousState === "waiting" &&
+					(["interrupted", "failed"].includes(streamEvent.state) ||
+						(streamEvent.state === "running" &&
+							(approvalResumeCause(streamEvent.taskId, streamEvent.requestId) ||
+								inputResumeCause(streamEvent.taskId, streamEvent.requestId)))))
+			if (!transitionAllowed) {
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Invalid lifecycle transition for task ${streamEvent.taskId}`,
+				}
 			}
 			if ((pendingAsks.get(streamEvent.taskId)?.size ?? 0) > 0 && settledStates.has(streamEvent.state)) {
 				return { ok: false, code: "task_failed", message: "A task with a pending ask cannot terminate" }
@@ -796,6 +846,9 @@ export function validateStreamLifecycle(
 				if (response !== undefined) consumedResponseCommands.add(response.id)
 			}
 			setScope(settledAsks, streamEvent.taskId).add(streamEvent.askId)
+			if (streamEvent.decision === "approve" || streamEvent.decision === "needs_input") {
+				approvalResumeCauses.set(streamEvent.taskId, streamEvent.requestId)
+			}
 		}
 		if (streamEvent.type === "ask.abandoned") {
 			if (!pendingAsks.get(streamEvent.taskId)?.delete(streamEvent.askId)) {
@@ -933,12 +986,10 @@ export function validateStreamLifecycle(
 	if (resultEvent.result.outcome === "completed" && values(messageStates).some((message) => !message.complete)) {
 		return { ok: false, code: "task_failed", message: "Completed streams cannot contain partial messages" }
 	}
-	const unconsumedResponses = commands.some(
-		(command) =>
-			command.type === "ask.respond" &&
-			settledAsks.get(command.taskId)?.has(command.askId) === true &&
-			!consumedResponseCommands.has(command.id),
-	)
+	const unconsumedResponses = commands.some((command) => {
+		if (command.type !== "ask.respond" || consumedResponseCommands.has(command.id)) return false
+		return causalTerminal(command.id)?.type === "command.done"
+	})
 	if (unconsumedResponses) {
 		return { ok: false, code: "task_failed", message: "Every ask response command must settle its matching ask" }
 	}
