@@ -286,7 +286,9 @@ describe("presentAssistantMessage - Image Handling in Native Tool Calling", () =
 
 			expect(mockTask.ask).not.toHaveBeenCalled()
 			expect(callTool).not.toHaveBeenCalled()
-			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+			expect(
+				mockTask.userMessageContent.filter((item: { type?: string }) => item.type === "tool_result"),
+			).toHaveLength(1)
 			expect(mockTask.userMessageContent).not.toContainEqual(
 				expect.objectContaining({ tool_use_id: expect.stringContaining("hook") }),
 			)

@@ -1,6 +1,7 @@
 // npx vitest src/core/assistant-message/__tests__/presentAssistantMessage-custom-tool.spec.ts
 
 import { describe, it, expect, beforeEach, vi } from "vitest"
+import { parametersSchema as z, type CustomToolDefinition } from "@roo-code/types"
 import { presentAssistantMessage } from "../presentAssistantMessage"
 import { validateToolUse } from "../../tools/validateToolUse"
 import { readFileTool } from "../../tools/ReadFileTool"
@@ -165,8 +166,9 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 		})
 
 		it("blocks a custom tool after argument validation with one real tool result", async () => {
-			const execute = vi.fn()
-			const parse = vi.fn().mockReturnValue({ safe: true })
+			const execute = vi.fn<CustomToolDefinition["execute"]>().mockResolvedValue("custom result")
+			const parameters = z.object({ secret: z.string() })
+			const parse = vi.spyOn(parameters, "parse")
 			mockTask.assistantMessageContent = [
 				{
 					type: "tool_use",
@@ -180,9 +182,9 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			vi.mocked(customToolRegistry.get).mockReturnValue({
 				name: "my_custom_tool",
 				description: "custom",
-				parameters: { parse },
+				parameters,
 				execute,
-			} as any)
+			})
 			mockTask.runPreToolUseHooks.mockResolvedValue({
 				decision: "block",
 				context: [],
@@ -197,7 +199,9 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			expect(mockTask.runPreToolUseHooks.mock.calls[0]).toEqual(["my_custom_tool"])
 			expect(execute).not.toHaveBeenCalled()
 			expect(mockTask.ask).not.toHaveBeenCalled()
-			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+			expect(
+				mockTask.userMessageContent.filter((item: { type?: string }) => item.type === "tool_result"),
+			).toHaveLength(1)
 		})
 
 		it("skips approval, checkpoint, and static execution when blocked", async () => {
@@ -226,7 +230,9 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			expect(mockTask.ask).not.toHaveBeenCalled()
 			expect(mockTask.checkpointSave).not.toHaveBeenCalled()
 			expect(execute).not.toHaveBeenCalled()
-			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+			expect(
+				mockTask.userMessageContent.filter((item: { type?: string }) => item.type === "tool_result"),
+			).toHaveLength(1)
 		})
 
 		it("does not run a hook for invalid custom arguments", async () => {
@@ -243,18 +249,16 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			vi.mocked(customToolRegistry.get).mockReturnValue({
 				name: "my_custom_tool",
 				description: "custom",
-				parameters: {
-					parse: vi.fn(() => {
-						throw new Error("invalid")
-					}),
-				},
-				execute: vi.fn(),
-			} as any)
+				parameters: z.object({ expected: z.string() }),
+				execute: vi.fn<CustomToolDefinition["execute"]>(),
+			})
 
 			await presentAssistantMessage(mockTask)
 
 			expect(mockTask.runPreToolUseHooks).not.toHaveBeenCalled()
-			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+			expect(
+				mockTask.userMessageContent.filter((item: { type?: string }) => item.type === "tool_result"),
+			).toHaveLength(1)
 		})
 
 		it("does not run a hook when built-in mode validation rejects the call", async () => {
@@ -299,7 +303,9 @@ describe("presentAssistantMessage - Custom Tool Recording", () => {
 			await presentAssistantMessage(mockTask)
 
 			expect(mockTask.runPreToolUseHooks).not.toHaveBeenCalled()
-			expect(mockTask.userMessageContent.filter((item: any) => item.type === "tool_result")).toHaveLength(1)
+			expect(
+				mockTask.userMessageContent.filter((item: { type?: string }) => item.type === "tool_result"),
+			).toHaveLength(1)
 		})
 	})
 
