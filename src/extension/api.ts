@@ -474,6 +474,8 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 	}
 
 	public async cancelCurrentTask() {
+		const currentTask = this.sidebarProvider.getCurrentTask()
+		if (currentTask && this.sidebarProvider.taskHistoryStore.get(currentTask.taskId)?.status === "completed") return
 		await this.sidebarProvider.cancelTask()
 	}
 
