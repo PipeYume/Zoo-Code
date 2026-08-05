@@ -31,7 +31,11 @@ export const commandDoneDataSchema = z.discriminatedUnion("commandType", [
 	strictObject({ commandType: z.literal("task.input"), taskId: z.string().min(1) }),
 	strictObject({ commandType: z.literal("ask.respond"), taskId: z.string().min(1), askId: z.string().min(1) }),
 	strictObject({ commandType: z.literal("task.cancel"), rootTaskId: z.string().min(1) }),
-	strictObject({ commandType: z.literal("history.list"), tasks: z.array(taskSummarySchema) }),
+	strictObject({
+		commandType: z.literal("history.list"),
+		workspace: z.string().min(1),
+		tasks: z.array(taskSummarySchema),
+	}),
 	strictObject({
 		commandType: z.literal("host.snapshot"),
 		lastSeq: z.number().int().nonnegative(),
@@ -104,7 +108,7 @@ export function validateCommandLifecycle(
 	}
 
 	const firstHostId = events[0]?.hostId
-	for (const event of events) {
+	for (const [index, event] of events.entries()) {
 		if (event.hostId !== firstHostId) {
 			const commandId = "commandId" in event ? event.commandId : commands[0]?.id ?? "unknown"
 			return { ok: false, commandId, message: "Command lifecycle cannot span multiple hosts" }
@@ -114,6 +118,13 @@ export function validateCommandLifecycle(
 			!commandById.has(event.commandId)
 		) {
 			return { ok: false, commandId: event.commandId, message: "Response references an unknown command" }
+		}
+		if (index > 0) {
+			const expected = events[index - 1]!.seq + 1
+			if (event.seq !== expected) {
+				const commandId = "commandId" in event ? event.commandId : commands[0]?.id ?? "unknown"
+				return { ok: false, commandId, message: `Expected host sequence ${expected}` }
+			}
 		}
 	}
 
@@ -153,6 +164,11 @@ export function validateCommandLifecycle(
 					case "task.cancel":
 						return data.commandType === command.type && data.rootTaskId === command.rootTaskId
 					case "history.list":
+						return (
+							data.commandType === command.type &&
+							data.workspace === command.workspace &&
+							data.tasks.every((task) => task.workspace === command.workspace)
+						)
 					case "host.snapshot":
 					case "host.shutdown":
 						return data.commandType === command.type

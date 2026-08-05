@@ -68,13 +68,22 @@ const usageErrors = new Set<ZooErrorCode>([
 	"credentials_missing",
 ])
 
-export type ExitContext = {
-	outcome: ZooOutcome
-	errorCode?: ZooErrorCode
-	signal?: "SIGINT" | "SIGTERM"
-}
+export const exitContextSchema = z.discriminatedUnion("outcome", [
+	z.object({ outcome: z.literal("completed") }).strict(),
+	z.object({ outcome: z.literal("needs_input") }).strict(),
+	z.object({ outcome: z.literal("cancelled"), signal: z.enum(["SIGINT", "SIGTERM"]).optional() }).strict(),
+	z
+		.object({ outcome: z.literal("timed_out"), errorCode: z.enum(["task_timed_out", "cleanup_timed_out"]).optional() })
+		.strict(),
+	z.object({ outcome: z.literal("failed"), errorCode: zooErrorCodeSchema }).strict(),
+])
 
-export function exitCodeFor({ outcome, errorCode, signal }: ExitContext): number {
+export type ExitContext = z.infer<typeof exitContextSchema>
+
+export function exitCodeFor(context: ExitContext): number {
+	const { outcome } = exitContextSchema.parse(context)
+	const errorCode = "errorCode" in context ? context.errorCode : undefined
+	const signal = "signal" in context ? context.signal : undefined
 	if (signal === "SIGINT") return EXIT_CODES.sigint
 	if (signal === "SIGTERM") return EXIT_CODES.sigterm
 	if (errorCode && usageErrors.has(errorCode)) return EXIT_CODES.usage

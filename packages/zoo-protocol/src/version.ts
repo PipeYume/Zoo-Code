@@ -23,10 +23,22 @@ export const hostHelloSchema = z
 		type: z.literal("hello"),
 		hostId: z.string().min(1),
 		supportedVersions: z.array(z.number().int().positive()).nonempty(),
-		capabilities: z.array(z.string().min(1)),
+		capabilities: z.record(z.string().regex(/^[1-9]\d*$/), z.array(z.string().min(1))),
 		buildVersion: z.string().min(1),
 	})
 	.strict()
+	.superRefine((hello, context) => {
+		const advertisedVersions = Object.keys(hello.capabilities).map(Number)
+		if (
+			advertisedVersions.some((version) => !hello.supportedVersions.includes(version)) ||
+			hello.supportedVersions.some((version) => !(String(version) in hello.capabilities))
+		) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Capabilities must be advertised for exactly the supported protocol versions",
+			})
+		}
+	})
 
 export type HostHello = z.infer<typeof hostHelloSchema>
 
@@ -50,7 +62,15 @@ export function negotiateProtocol(
 	supportedVersions: readonly number[],
 	requiredCapabilities: readonly ZooCapability[],
 ): NegotiationResult {
-	const missing = requiredCapabilities.filter((capability) => !host.capabilities.includes(capability))
+	const version = [...supportedVersions]
+		.sort((left, right) => right - left)
+		.find((candidate) => host.supportedVersions.includes(candidate))
+	if (version === undefined) {
+		return { ok: false, code: "protocol_incompatible", message: "No mutually supported host protocol version" }
+	}
+
+	const capabilities = host.capabilities[String(version)] ?? []
+	const missing = requiredCapabilities.filter((capability) => !capabilities.includes(capability))
 	if (missing.length > 0) {
 		return {
 			ok: false,
@@ -59,10 +79,5 @@ export function negotiateProtocol(
 		}
 	}
 
-	const version = [...supportedVersions]
-		.sort((left, right) => right - left)
-		.find((candidate) => host.supportedVersions.includes(candidate))
-	return version === undefined
-		? { ok: false, code: "protocol_incompatible", message: "No mutually supported host protocol version" }
-		: { ok: true, version }
+	return { ok: true, version }
 }

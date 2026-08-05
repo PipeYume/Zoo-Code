@@ -5,7 +5,16 @@ import { ZOO_HOST_PROTOCOL_VERSION } from "./version.js"
 export const approvalModeSchema = z.enum(["interactive", "safe", "auto"])
 export type ApprovalMode = z.infer<typeof approvalModeSchema>
 
-export const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh"])
+export const reasoningEffortSchema = z.enum([
+	"disabled",
+	"none",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+])
 
 export const runOverridesSchema = z
 	.object({

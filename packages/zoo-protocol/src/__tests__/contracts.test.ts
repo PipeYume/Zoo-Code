@@ -3,6 +3,7 @@ import {
 	ZOO_HOST_PROTOCOL_VERSION,
 	assertAuthoritativeRootResult,
 	compareSemanticTraces,
+	exitContextSchema,
 	exitCodeFor,
 	hostCommandSchema,
 	hostEventSchema,
@@ -33,6 +34,8 @@ describe("strict host contracts", () => {
 		}
 		expect(hostCommandSchema.parse(command)).toEqual(command)
 		expect(hostCommandSchema.safeParse({ ...command, unexpected: true }).success).toBe(false)
+		expect(hostCommandSchema.safeParse({ ...command, overrides: { reasoningEffort: "max" } }).success).toBe(true)
+		expect(hostCommandSchema.safeParse({ ...command, overrides: { reasoningEffort: "disabled" } }).success).toBe(true)
 	})
 
 	it("enforces input and approval payload invariants", () => {
@@ -54,12 +57,19 @@ describe("strict host contracts", () => {
 			type: "hello",
 			hostId: "host-1",
 			supportedVersions: [1],
-			capabilities: ["task:start", "host:shutdown", "future:additive-capability"],
+			capabilities: { 1: ["task:start", "host:shutdown", "future:additive-capability"] },
 			buildVersion: "1.0.0",
 		})
 		expect(negotiateProtocol(hello, [1], ["task:start"])).toEqual({ ok: true, version: 1 })
 		expect(negotiateProtocol(hello, [2], ["task:start"])).toMatchObject({ ok: false })
 		expect(negotiateProtocol(hello, [1], ["task:resume"])).toMatchObject({ ok: false })
+		const multiVersionHello = hostHelloSchema.parse({
+			...hello,
+			supportedVersions: [1, 2],
+			capabilities: { 1: ["task:start"], 2: ["task:start", "task:resume"] },
+		})
+		expect(negotiateProtocol(multiVersionHello, [1], ["task:resume"])).toMatchObject({ ok: false })
+		expect(negotiateProtocol(multiVersionHello, [2, 1], ["task:resume"])).toEqual({ ok: true, version: 2 })
 	})
 
 	it("requires contiguous host sequence numbers", () => {
@@ -82,6 +92,8 @@ describe("strict host contracts", () => {
 		]
 		expect(validateCommandLifecycle([command], events)).toEqual({ ok: true })
 		expect(validateCommandLifecycle([command], [...events, events[1]!])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [events[1]!, events[0]!])).toMatchObject({ ok: false })
+		expect(validateCommandLifecycle([command], [events[0]!, { ...events[1]!, seq: 3 }])).toMatchObject({ ok: false })
 	})
 
 	it("correlates terminal responses with commands and hosts", () => {
@@ -141,6 +153,40 @@ describe("strict host contracts", () => {
 				data: { commandType: "task.start", task: { rootTaskId: "root" } },
 			}).success,
 		).toBe(false)
+	})
+
+	it("binds history completion data to its requested workspace", () => {
+		const command = hostCommandSchema.parse({
+			v: 1,
+			id: "history",
+			type: "history.list",
+			workspace: "/workspace",
+		})
+		const acknowledgement = hostEventSchema.parse({
+			v: 1,
+			seq: 1,
+			hostId: "host",
+			type: "command.ack",
+			commandId: "history",
+		})
+		const completion = hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host",
+			type: "command.done",
+			commandId: "history",
+			data: { commandType: "history.list", workspace: "/workspace", tasks: [] },
+		})
+		const mismatchedCompletion = hostEventSchema.parse({
+			v: 1,
+			seq: 2,
+			hostId: "host",
+			type: "command.done",
+			commandId: "history",
+			data: { commandType: "history.list", workspace: "/other", tasks: [] },
+		})
+		expect(validateCommandLifecycle([command], [acknowledgement, completion])).toEqual({ ok: true })
+		expect(validateCommandLifecycle([command], [acknowledgement, mismatchedCompletion])).toMatchObject({ ok: false })
 	})
 })
 
@@ -253,6 +299,105 @@ describe("public automation contracts", () => {
 			state: "failed",
 		})
 		expect(validateStreamLifecycle([init, completedLifecycle, { ...result, seq: 3 }])).toMatchObject({ ok: false })
+		expect(validateStreamLifecycle([init, { ...init, seq: 2 }, { ...result, seq: 3 }])).toMatchObject({ ok: false })
+	})
+
+	it("validates task-tree edges and approval command causation", () => {
+		const init = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 1,
+			timestamp,
+			hostId: "host",
+			type: "system.init",
+			protocol: "zoo-stream",
+			capabilities: ["ask:respond"],
+			clientVersion: "1.0.0",
+			hostVersion: "1.0.0",
+		})
+		const result = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 4,
+			timestamp,
+			hostId: "host",
+			type: "task.result",
+			rootTaskId: "root",
+			taskId: "root",
+			result: {
+				schemaVersion: 1,
+				protocol: "zoo-run-result",
+				success: true,
+				outcome: "completed",
+				rootTaskId: "root",
+				workspace: "/workspace",
+				resumable: false,
+				elapsedMs: 10,
+			},
+		})
+		const created = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 2,
+			timestamp,
+			hostId: "host",
+			type: "task.created",
+			rootTaskId: "root",
+			taskId: "child",
+			parentTaskId: "root",
+		})
+		const delegated = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 3,
+			timestamp,
+			hostId: "host",
+			type: "task.delegated",
+			rootTaskId: "root",
+			taskId: "child",
+			parentTaskId: "root",
+			childTaskId: "child",
+		})
+		expect(validateStreamLifecycle([init, created, delegated, result])).toEqual({ ok: true })
+		const mismatchedDelegation = zooStreamEventSchema.parse({ ...delegated, taskId: "root" })
+		expect(validateStreamLifecycle([init, created, mismatchedDelegation, result])).toMatchObject({ ok: false })
+
+		const required = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 2,
+			timestamp,
+			hostId: "host",
+			type: "ask.required",
+			rootTaskId: "root",
+			taskId: "root",
+			askId: "ask",
+			category: "tool",
+			subject: "Run command",
+		})
+		const resolved = zooStreamEventSchema.parse({
+			v: 1,
+			seq: 3,
+			timestamp,
+			hostId: "host",
+			requestId: "respond",
+			type: "ask.resolved",
+			rootTaskId: "root",
+			taskId: "root",
+			askId: "ask",
+			decision: "approve",
+			source: "user",
+		})
+		const response = hostCommandSchema.parse({
+			v: 1,
+			id: "respond",
+			type: "ask.respond",
+			taskId: "root",
+			askId: "ask",
+			response: "approve",
+		})
+		expect(validateStreamLifecycle([init, required, resolved, result], [response])).toEqual({ ok: true })
+		const mismatchedResolution = zooStreamEventSchema.parse({ ...resolved, decision: "reject" })
+		expect(validateStreamLifecycle([init, required, mismatchedResolution, result], [response])).toMatchObject({ ok: false })
+		const deniedApproval = zooStreamEventSchema.parse({ ...resolved, source: "deny" })
+		expect(
+			validateStreamLifecycle([init, required, deniedApproval, result]),
+		).toMatchObject({ ok: false })
 	})
 
 	it("maps every terminal outcome deterministically", () => {
@@ -265,6 +410,8 @@ describe("public automation contracts", () => {
 		expect(exitCodeFor({ outcome: "failed", errorCode: "host_crashed" })).toBe(EXIT_CODES.runtimeFailure)
 		expect(exitCodeFor({ outcome: "cancelled", signal: "SIGINT" })).toBe(EXIT_CODES.sigint)
 		expect(exitCodeFor({ outcome: "cancelled", signal: "SIGTERM" })).toBe(EXIT_CODES.sigterm)
+		expect(exitContextSchema.safeParse({ outcome: "cancelled", errorCode: "invalid_mode" }).success).toBe(false)
+		expect(exitContextSchema.safeParse({ outcome: "completed", signal: "SIGINT" }).success).toBe(false)
 	})
 })
 
@@ -286,12 +433,19 @@ describe("redaction contracts", () => {
 		expect(redactText('{"client_secret":"secret-value","access_token":"token-value"}')).toBe(
 			'{"client_secret":"[REDACTED]","access_token":"[REDACTED]"}',
 		)
+		expect(redactText("--api-key abc123 run")).toBe("[REDACTED] run")
+		expect(redactText('API_TOKEN="abc def" run')).toBe("[REDACTED] run")
 	})
 
 	it("handles cycles without throwing", () => {
 		const input: Record<string, unknown> = {}
 		input.self = input
 		expect(redactValue(input)).toEqual({ self: "[CIRCULAR]" })
+	})
+
+	it("preserves repeated non-cyclic references", () => {
+		const shared = { value: "safe" }
+		expect(redactValue({ left: shared, right: shared })).toEqual({ left: { value: "safe" }, right: { value: "safe" } })
 	})
 })
 

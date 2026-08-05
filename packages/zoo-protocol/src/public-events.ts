@@ -1,5 +1,6 @@
 import { z } from "zod"
 
+import type { HostCommand } from "./host-commands.js"
 import { zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
 import { ZOO_PUBLIC_SCHEMA_VERSION, zooCapabilitySchema } from "./version.js"
 
@@ -159,9 +160,13 @@ export type ZooStreamEvent = z.infer<typeof zooStreamEventSchema>
 
 export function validateStreamLifecycle(
 	events: readonly ZooStreamEvent[],
+	commands: readonly HostCommand[] = [],
 ): { ok: true } | { ok: false; code: "protocol_gap" | "task_failed"; message: string } {
 	if (events[0]?.type !== "system.init") {
 		return { ok: false, code: "task_failed", message: "Stream must start with system.init" }
+	}
+	if (events[0].seq !== 1 || events.slice(1).some((streamEvent) => streamEvent.type === "system.init")) {
+		return { ok: false, code: "protocol_gap", message: "Stream must contain one sequence-1 system.init" }
 	}
 	const hostId = events[0].hostId
 	if (events.some((streamEvent) => streamEvent.hostId !== hostId)) {
@@ -186,11 +191,50 @@ export function validateStreamLifecycle(
 	const pendingAsks = new Set<string>()
 	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
 	const terminalStates = new Set(["interrupted", "completed", "failed"])
+	const taskParents = new Map<string, string | null>([[rootTaskId, null]])
+	const createdTasks = new Set<string>()
+	const delegatedTasks = new Set<string>()
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
 			return { ok: false, code: "task_failed", message: "All task events must identify the authoritative root task" }
 		}
 		if (!("taskId" in streamEvent) || streamEvent.type === "task.result") continue
+
+		if (streamEvent.type === "task.created") {
+			const parentTaskId = streamEvent.parentTaskId ?? null
+			if (
+				(streamEvent.taskId === rootTaskId) !== (parentTaskId === null) ||
+				(parentTaskId !== null && !taskParents.has(parentTaskId)) ||
+				createdTasks.has(streamEvent.taskId)
+			) {
+				return { ok: false, code: "task_failed", message: `Invalid creation edge for task ${streamEvent.taskId}` }
+			}
+			if (taskParents.has(streamEvent.taskId) && taskParents.get(streamEvent.taskId) !== parentTaskId) {
+				return { ok: false, code: "task_failed", message: `Conflicting parent for task ${streamEvent.taskId}` }
+			}
+			taskParents.set(streamEvent.taskId, parentTaskId)
+			createdTasks.add(streamEvent.taskId)
+		} else if (streamEvent.type === "task.delegated") {
+			if (
+				streamEvent.taskId !== streamEvent.childTaskId ||
+				streamEvent.childTaskId === rootTaskId ||
+				streamEvent.childTaskId === streamEvent.parentTaskId ||
+				!taskParents.has(streamEvent.parentTaskId) ||
+				delegatedTasks.has(streamEvent.childTaskId)
+			) {
+				return { ok: false, code: "task_failed", message: `Invalid delegation edge for task ${streamEvent.childTaskId}` }
+			}
+			if (
+				taskParents.has(streamEvent.childTaskId) &&
+				taskParents.get(streamEvent.childTaskId) !== streamEvent.parentTaskId
+			) {
+				return { ok: false, code: "task_failed", message: `Conflicting parent for task ${streamEvent.childTaskId}` }
+			}
+			taskParents.set(streamEvent.childTaskId, streamEvent.parentTaskId)
+			delegatedTasks.add(streamEvent.childTaskId)
+		} else if (!taskParents.has(streamEvent.taskId)) {
+			return { ok: false, code: "task_failed", message: `Event references unknown task ${streamEvent.taskId}` }
+		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
 		if (previousState !== undefined && terminalStates.has(previousState)) {
@@ -210,6 +254,28 @@ export function validateStreamLifecycle(
 			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
 			if (!pendingAsks.delete(askKey)) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
+			}
+			if (
+				(streamEvent.source === "deny" && streamEvent.decision !== "reject") ||
+				(streamEvent.source === "auto" && streamEvent.decision !== "approve")
+			) {
+				return { ok: false, code: "task_failed", message: "Ask decision contradicts its resolution source" }
+			}
+			if (streamEvent.source === "user") {
+				const response = commands.find(
+					(command) =>
+						command.type === "ask.respond" &&
+						command.id === streamEvent.requestId &&
+						command.taskId === streamEvent.taskId &&
+						command.askId === streamEvent.askId,
+				)
+				const expectedDecision =
+					response?.type === "ask.respond"
+						? { approve: "approve", reject: "reject", message: "needs_input" }[response.response]
+						: undefined
+				if (expectedDecision !== streamEvent.decision) {
+					return { ok: false, code: "task_failed", message: "User ask resolution does not match its response command" }
+				}
 			}
 		}
 	}

@@ -1,11 +1,13 @@
 const REDACTED = "[REDACTED]" as const
 const sensitiveKey = /(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)/i
 const sensitiveKeyName = String.raw`[A-Za-z0-9_-]*(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)[A-Za-z0-9_-]*`
+const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
 const secretPatterns: ReadonlyArray<RegExp> = [
 	/\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n]+/gi,
-	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*[:=]\\s*[^\\s,;}]+`, "gi"),
+	new RegExp(`--${sensitiveKeyName}(?:\\s*=\\s*|\\s+)${secretValue}`, "gi"),
+	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*[:=]\\s*${secretValue}`, "gi"),
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
 	/\b[A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[^\s]+/gi,
@@ -28,12 +30,17 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): Redac
 	if (seen.has(value)) return "[CIRCULAR]"
 	seen.add(value)
 
-	if (Array.isArray(value)) return value.map((entry) => redactValue(entry, seen))
-
-	const result: Record<string, RedactedValue> = {}
-	for (const [key, entry] of Object.entries(value)) {
-		result[key] = sensitiveKey.test(key) ? REDACTED : redactValue(entry, seen)
+	let result: RedactedValue
+	if (Array.isArray(value)) {
+		result = value.map((entry) => redactValue(entry, seen))
+	} else {
+		const entries: Record<string, RedactedValue> = {}
+		for (const [key, entry] of Object.entries(value)) {
+			entries[key] = sensitiveKey.test(key) ? REDACTED : redactValue(entry, seen)
+		}
+		result = entries
 	}
+	seen.delete(value)
 	return result
 }
 
