@@ -7,7 +7,7 @@ import { ZOO_HOST_PROTOCOL_VERSION } from "./version.js"
 
 const base = {
 	v: z.literal(ZOO_HOST_PROTOCOL_VERSION),
-	seq: z.number().int().positive(),
+	seq: z.number().int().safe().positive(),
 	hostId: z.string().min(1),
 }
 
@@ -38,7 +38,7 @@ export const commandDoneDataSchema = z.discriminatedUnion("commandType", [
 	}),
 	strictObject({
 		commandType: z.literal("host.snapshot"),
-		lastSeq: z.number().int().nonnegative(),
+		lastSeq: z.number().int().safe().nonnegative(),
 		activeRootTaskId: z.string().min(1).optional(),
 	}),
 	strictObject({ commandType: z.literal("host.shutdown") }),
@@ -65,7 +65,7 @@ const heartbeatSchema = strictObject({
 const snapshotSchema = strictObject({
 	...base,
 	type: z.literal("host.snapshot"),
-	lastSeq: z.number().int().nonnegative(),
+	lastSeq: z.number().int().safe().nonnegative(),
 	activeRootTaskId: z.string().min(1).optional(),
 })
 const normalizedEventSchema = strictObject({ ...base, type: z.literal("event"), event: zooStreamEventSchema })
@@ -92,7 +92,9 @@ export function validateMonotonicSequence(
 	next: number,
 ): { ok: true } | { ok: false; expected: number } {
 	const expected = previous + 1
-	return next === expected ? { ok: true } : { ok: false, expected }
+	return Number.isSafeInteger(previous) && Number.isSafeInteger(next) && next === expected
+		? { ok: true }
+		: { ok: false, expected }
 }
 
 export function validateCommandLifecycle(

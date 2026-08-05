@@ -1,4 +1,10 @@
-import { type ZooErrorCode, type ZooOutcome, zooErrorCodeSchema } from "./outcomes.js"
+import {
+	failedErrorCodeSchema,
+	type ZooErrorCode,
+	type ZooOutcome,
+	zooErrorCodeSchema,
+	zooOutcomeSchema,
+} from "./outcomes.js"
 
 export type SemanticTraceEntry = {
 	type: string
@@ -228,5 +234,19 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 
 export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry[], rootTaskId: string): boolean {
 	const results = trace.filter((entry) => entry.type === "task.result")
-	return results.length === 1 && results[0]?.taskId === rootTaskId && results[0].rootTaskId === rootTaskId
+	if (results.length !== 1) return false
+	const result = results[0]!
+	if (
+		result.taskId !== rootTaskId ||
+		result.rootTaskId !== rootTaskId ||
+		!zooOutcomeSchema.safeParse(result.outcome).success
+	) {
+		return false
+	}
+	if (result.outcome === "failed") return failedErrorCodeSchema.safeParse(result.errorCode).success
+	if (result.outcome === "timed_out") {
+		return result.errorCode === undefined || ["task_timed_out", "cleanup_timed_out"].includes(result.errorCode)
+	}
+	if (result.outcome === "cancelled") return result.cancellationReason !== undefined && result.errorCode === undefined
+	return result.errorCode === undefined && result.cancellationReason === undefined
 }

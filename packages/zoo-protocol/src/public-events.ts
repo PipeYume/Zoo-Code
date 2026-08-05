@@ -67,7 +67,7 @@ export type ZooRunResult = z.infer<typeof zooRunResultSchema>
 
 const eventBase = {
 	v: z.literal(ZOO_PUBLIC_SCHEMA_VERSION),
-	seq: z.number().int().positive(),
+	seq: z.number().int().safe().positive(),
 	timestamp: z.string().datetime({ offset: true }),
 	hostId: z.string().min(1),
 	requestId: z.string().min(1).optional(),
@@ -118,6 +118,10 @@ const askResolvedEventSchema = taskEvent("ask.resolved", {
 	decision: z.enum(["approve", "reject", "needs_input"]),
 	source: z.enum(["policy", "user", "auto", "deny"]),
 })
+const askAbandonedEventSchema = taskEvent("ask.abandoned", {
+	askId: z.string().min(1),
+	reason: z.enum(["cancelled", "timed_out"]),
+})
 const toolEventState = {
 	toolCallId: z.string().min(1),
 	name: z.string().min(1),
@@ -136,7 +140,7 @@ const terminalOutputEventSchema = taskEvent("terminal.output", {
 const terminalStatusEventSchema = taskEvent("terminal.status", {
 	toolCallId: z.string().min(1),
 	state: z.enum(["running", "background", "exited", "killed"]),
-	exitCode: z.number().int().nullable().optional(),
+	exitCode: z.number().int().safe().nullable().optional(),
 })
 const mcpEventState = {
 	operationId: z.string().min(1),
@@ -164,6 +168,7 @@ const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	messageUpsertEventSchema,
 	askRequiredEventSchema,
 	askResolvedEventSchema,
+	askAbandonedEventSchema,
 	toolStartedEventSchema,
 	toolUpdatedEventSchema,
 	toolCompletedEventSchema,
@@ -175,7 +180,16 @@ const rawZooStreamEventSchema = z.discriminatedUnion("type", [
 	mcpFailedEventSchema,
 	usageUpdatedEventSchema,
 	taskResultEventSchema,
-])
+]).superRefine((streamEvent, context) => {
+	if (streamEvent.type !== "terminal.status") return
+	const terminal = streamEvent.state === "exited" || streamEvent.state === "killed"
+	if (terminal === (streamEvent.exitCode === undefined)) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: terminal ? "Terminal states require an exit code or null" : "Nonterminal states cannot include an exit code",
+		})
+	}
+})
 
 export const zooStreamEventSchema = z.preprocess((value) => redactValue(value), rawZooStreamEventSchema)
 
@@ -212,14 +226,15 @@ export function validateStreamLifecycle(
 	}
 
 	const pendingAsks = new Set<string>()
+	const abandonedAsks = new Map<string, "cancelled" | "timed_out">()
 	const taskStates = new Map<string, "running" | "waiting" | "interrupted" | "completed" | "failed">()
 	const terminalStates = new Set(["interrupted", "completed", "failed"])
 	const taskParents = new Map<string, string | null>()
 	const createdTasks = new Set<string>()
 	const delegatedTasks = new Set<string>()
-	const toolStates = new Map<string, "active" | "terminal">()
+	const toolStates = new Map<string, { state: "active" | "terminal"; name: string }>()
 	const terminalOperationStates = new Map<string, "active" | "terminal">()
-	const mcpStates = new Map<string, "active" | "terminal">()
+	const mcpStates = new Map<string, { state: "active" | "terminal"; server: string; operation: string }>()
 	for (const streamEvent of events) {
 		if ("rootTaskId" in streamEvent && streamEvent.rootTaskId !== rootTaskId) {
 			return {
@@ -331,18 +346,30 @@ export function validateStreamLifecycle(
 				}
 			}
 		}
+		if (streamEvent.type === "ask.abandoned") {
+			const askKey = `${streamEvent.taskId}\u0000${streamEvent.askId}`
+			if (!pendingAsks.delete(askKey)) {
+				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
+			}
+			abandonedAsks.set(askKey, streamEvent.reason)
+		}
 
 		const toolKey = "toolCallId" in streamEvent ? `${streamEvent.taskId}\u0000${streamEvent.toolCallId}` : undefined
 		if (streamEvent.type === "tool.started") {
 			if (toolStates.has(toolKey!))
 				return { ok: false, code: "task_failed", message: "Tool operation started twice" }
-			toolStates.set(toolKey!, "active")
-		} else if (["tool.updated", "tool.completed", "tool.failed"].includes(streamEvent.type)) {
-			if (toolStates.get(toolKey!) !== "active") {
+			toolStates.set(toolKey!, { state: "active", name: streamEvent.name })
+		} else if (
+			streamEvent.type === "tool.updated" ||
+			streamEvent.type === "tool.completed" ||
+			streamEvent.type === "tool.failed"
+		) {
+			const tool = toolStates.get(toolKey!)
+			if (tool?.state !== "active" || tool.name !== streamEvent.name) {
 				return { ok: false, code: "task_failed", message: "Tool event requires an active operation" }
 			}
 			if (streamEvent.type === "tool.completed" || streamEvent.type === "tool.failed")
-				toolStates.set(toolKey!, "terminal")
+				toolStates.set(toolKey!, { ...tool, state: "terminal" })
 		}
 
 		if (streamEvent.type === "terminal.status") {
@@ -365,16 +392,28 @@ export function validateStreamLifecycle(
 		if (streamEvent.type === "mcp.started") {
 			if (mcpStates.has(mcpKey!))
 				return { ok: false, code: "task_failed", message: "MCP operation started twice" }
-			mcpStates.set(mcpKey!, "active")
+			mcpStates.set(mcpKey!, {
+				state: "active",
+				server: streamEvent.server,
+				operation: streamEvent.operation,
+			})
 		} else if (streamEvent.type === "mcp.completed" || streamEvent.type === "mcp.failed") {
-			if (mcpStates.get(mcpKey!) !== "active") {
+			const operation = mcpStates.get(mcpKey!)
+			if (
+				operation?.state !== "active" ||
+				operation.server !== streamEvent.server ||
+				operation.operation !== streamEvent.operation
+			) {
 				return { ok: false, code: "task_failed", message: "MCP result requires an active operation" }
 			}
-			mcpStates.set(mcpKey!, "terminal")
+			mcpStates.set(mcpKey!, { ...operation, state: "terminal" })
 		}
 	}
 	if (pendingAsks.size > 0 && resultEvent.result.outcome !== "needs_input") {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains unresolved asks" }
+	}
+	if ([...abandonedAsks.values()].some((reason) => reason !== resultEvent.result.outcome)) {
+		return { ok: false, code: "task_failed", message: "Ask abandonment contradicts task.result" }
 	}
 	const expectedState = {
 		completed: "completed",
@@ -383,8 +422,19 @@ export function validateStreamLifecycle(
 		timed_out: "interrupted",
 		failed: "failed",
 	} as const
-	if (!createdTasks.has(rootTaskId) || [...taskParents.keys()].some((taskId) => !createdTasks.has(taskId))) {
-		return { ok: false, code: "task_failed", message: "Every task in the authoritative tree must be created" }
+	if (
+		!createdTasks.has(rootTaskId) ||
+		[...taskParents.keys()].some((taskId) => !createdTasks.has(taskId)) ||
+		[...createdTasks].some((taskId) => taskId !== rootTaskId && !delegatedTasks.has(taskId))
+	) {
+		return {
+			ok: false,
+			code: "task_failed",
+			message: "Every task in the authoritative tree must be created and every descendant delegated",
+		}
+	}
+	if (resultEvent.result.currentTaskId !== undefined && !createdTasks.has(resultEvent.result.currentTaskId)) {
+		return { ok: false, code: "task_failed", message: "currentTaskId must identify a task in the authoritative tree" }
 	}
 	const rootState = taskStates.get(rootTaskId)
 	if (rootState !== expectedState[resultEvent.result.outcome]) {
@@ -408,7 +458,10 @@ export function validateStreamLifecycle(
 			message: "Every descendant task must reach a compatible settled state",
 		}
 	}
-	if ([...toolStates.values(), ...terminalOperationStates.values(), ...mcpStates.values()].includes("active")) {
+	if (
+		[...toolStates.values(), ...mcpStates.values()].some((operation) => operation.state === "active") ||
+		[...terminalOperationStates.values()].includes("active")
+	) {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains active operations" }
 	}
 	if (resultEvent.result.outcome === "cancelled") {

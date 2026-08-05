@@ -43,7 +43,7 @@ const taskStartCommandSchema = commandBaseSchema
 	.extend({
 		type: z.literal("task.start"),
 		workspace: z.string().min(1),
-		prompt: z.string().trim().min(1),
+		prompt: z.string().refine((prompt) => prompt.trim().length > 0, "Prompt cannot be blank"),
 		overrides: runOverridesSchema.optional(),
 	})
 	.strict()

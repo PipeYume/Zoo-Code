@@ -85,6 +85,9 @@ describe("strict host contracts", () => {
 		expect(hostCommandSchema.safeParse({ ...command, overrides: { reasoningEffort: "disabled" } }).success).toBe(
 			true,
 		)
+		const formattedPrompt = hostCommandSchema.parse({ ...command, prompt: "  formatted prompt\n" })
+		expect(formattedPrompt.type === "task.start" && formattedPrompt.prompt).toBe("  formatted prompt\n")
+		expect(hostCommandSchema.safeParse({ ...command, prompt: " \n\t" }).success).toBe(false)
 	})
 
 	it("enforces input and approval payload invariants", () => {
@@ -118,7 +121,7 @@ describe("strict host contracts", () => {
 			capabilities: { 1: ["task:start"], 2: ["task:start", "task:resume"] },
 		})
 		expect(negotiateProtocol(multiVersionHello, [1], ["task:resume"])).toMatchObject({ ok: false })
-		expect(negotiateProtocol(multiVersionHello, [2, 1], ["task:resume"])).toEqual({ ok: true, version: 2 })
+		expect(negotiateProtocol(multiVersionHello, [2, 1], ["task:resume"])).toMatchObject({ ok: false })
 		const lowerVersionCapabilities = hostHelloSchema.parse({
 			...hello,
 			supportedVersions: [1, 2],
@@ -141,14 +144,27 @@ describe("strict host contracts", () => {
 			clientVersion: "1.0.0",
 			requiredCapabilities: ["task:resume"],
 		})
-		expect(validateParentHello(host, selected)).toEqual({ ok: true, version: 2 })
+		expect(validateParentHello(host, selected)).toMatchObject({ ok: false })
 		expect(validateParentHello(host, { ...selected, version: 3 })).toMatchObject({ ok: false })
 		expect(validateParentHello(host, { ...selected, version: 1 })).toMatchObject({ ok: false })
+		expect(
+			validateParentHello(host, { ...selected, version: 1, requiredCapabilities: ["task:start"] }),
+		).toEqual({ ok: true, version: 1 })
 	})
 
 	it("requires contiguous host sequence numbers", () => {
 		expect(validateMonotonicSequence(8, 9)).toEqual({ ok: true })
 		expect(validateMonotonicSequence(8, 10)).toEqual({ ok: false, expected: 9 })
+		expect(validateMonotonicSequence(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)).toMatchObject({ ok: false })
+		expect(
+			hostEventSchema.safeParse({
+				v: 1,
+				seq: Number.MAX_SAFE_INTEGER + 1,
+				hostId: "host",
+				type: "command.ack",
+				commandId: "cmd",
+			}).success,
+		).toBe(false)
 	})
 
 	it("models one ACK and terminal command response independently", () => {
@@ -325,6 +341,7 @@ describe("public automation contracts", () => {
 		}
 		expect(zooStreamEventSchema.parse(event)).toEqual(event)
 		expect(zooStreamEventSchema.safeParse({ ...event, seq: 0 }).success).toBe(false)
+		expect(zooStreamEventSchema.safeParse({ ...event, seq: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, rawSecret: "no" }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, taskId: undefined }).success).toBe(false)
 	})
@@ -379,6 +396,16 @@ describe("public automation contracts", () => {
 		).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle([initEvent, rootCreated, childCreated, delegated, rootCompleted, resultEvent(6)]),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle([
+				initEvent,
+				rootCreated,
+				childCreated,
+				taskEvent(4, "task.lifecycle", { taskId: "child", state: "completed" }),
+				taskEvent(5, "task.lifecycle", { state: "completed" }),
+				resultEvent(6),
+			]),
 		).toMatchObject({ ok: false })
 		const mismatchedDelegation = taskEvent(4, "task.delegated", {
 			taskId: "root",
@@ -471,6 +498,33 @@ describe("public automation contracts", () => {
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream, [{ ...command, reason: "signal" }])).toMatchObject({ ok: false })
 		expect(
+			zooStreamEventSchema.safeParse({
+				...terminalStarted,
+				exitCode: 0,
+			}).success,
+		).toBe(false)
+		expect(zooStreamEventSchema.safeParse({ ...terminalExited, exitCode: undefined }).success).toBe(false)
+		expect(
+			validateStreamLifecycle([
+				initEvent,
+				created,
+				toolStarted,
+				taskEvent(4, "tool.completed", { toolCallId: "tool", name: "write" }),
+				taskEvent(5, "task.lifecycle", { state: "completed" }),
+				resultEvent(6),
+			]),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle([
+				initEvent,
+				created,
+				mcpStarted,
+				taskEvent(4, "mcp.completed", { operationId: "mcp", server: "other", operation: "read" }),
+				taskEvent(5, "task.lifecycle", { state: "completed" }),
+				resultEvent(6),
+			]),
+		).toMatchObject({ ok: false })
+		expect(
 			validateStreamLifecycle([
 				initEvent,
 				created,
@@ -504,6 +558,49 @@ describe("public automation contracts", () => {
 				mcpCompleted,
 				taskEvent(4, "task.lifecycle", { state: "completed" }),
 				resultEvent(5),
+			]),
+		).toMatchObject({ ok: false })
+	})
+
+	it("abandons pending asks only for cancellation or timeout", () => {
+		const created = taskEvent(2, "task.created")
+		const required = taskEvent(3, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
+		const abandoned = taskEvent(4, "ask.abandoned", { askId: "ask", reason: "cancelled" })
+		if (abandoned.type !== "ask.abandoned") throw new Error("Expected ask.abandoned fixture")
+		const interrupted = taskEvent(5, "task.lifecycle", { state: "interrupted" })
+		const cancelled = resultEvent(6, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
+		const command = hostCommandSchema.parse({
+			v: 1,
+			id: "cancel",
+			type: "task.cancel",
+			rootTaskId: "root",
+			reason: "user",
+		})
+		expect(
+			validateStreamLifecycle([initEvent, created, required, abandoned, interrupted, cancelled], [command]),
+		).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					required,
+					{ ...abandoned, reason: "timed_out" },
+					interrupted,
+					cancelled,
+				],
+				[command],
+			),
+		).toMatchObject({ ok: false })
+	})
+
+	it("requires currentTaskId to belong to the authoritative tree", () => {
+		expect(
+			validateStreamLifecycle([
+				initEvent,
+				taskEvent(2, "task.created"),
+				taskEvent(3, "task.lifecycle", { state: "completed" }),
+				resultEvent(4, { currentTaskId: "ghost" }),
 			]),
 		).toMatchObject({ ok: false })
 	})
@@ -545,6 +642,8 @@ describe("redaction contracts", () => {
 			'{"client_secret":"[REDACTED]","access_token":"[REDACTED]"}',
 		)
 		expect(redactText("--api-key abc123 run")).toBe("[REDACTED] run")
+		expect(redactText("API Key: abc123")).toBe("[REDACTED]")
+		expect(redactText("Private Key: abc123")).toBe("[REDACTED]")
 		expect(redactText('API_TOKEN="abc def" run')).toBe("[REDACTED] run")
 	})
 
@@ -606,6 +705,15 @@ describe("deterministic parity oracle", () => {
 		]
 		expect(assertAuthoritativeRootResult(trace, "root")).toBe(false)
 		expect(assertAuthoritativeRootResult(parityScenarios[2]!.expected, "root")).toBe(true)
+		expect(assertAuthoritativeRootResult([{ type: "task.result", taskId: "root", rootTaskId: "root" }], "root")).toBe(
+			false,
+		)
+		expect(
+			assertAuthoritativeRootResult(
+				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "failed" }],
+				"root",
+			),
+		).toBe(false)
 	})
 
 	it("reports semantic drift without timestamps", () => {

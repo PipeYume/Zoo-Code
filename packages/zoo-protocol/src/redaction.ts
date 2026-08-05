@@ -1,6 +1,6 @@
 const REDACTED = "[REDACTED]" as const
-const sensitiveKey = /(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)/i
-const sensitiveKeyName = String.raw`[A-Za-z0-9_-]*(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|token)[A-Za-z0-9_-]*`
+const sensitiveKey = /(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)/i
+const sensitiveKeyName = String.raw`[A-Za-z0-9_-]*(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)[A-Za-z0-9_-]*`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")

@@ -66,6 +66,7 @@ export function negotiateProtocol(
 		.sort((left, right) => right - left)
 		.find(
 			(candidate) =>
+				candidate === ZOO_HOST_PROTOCOL_VERSION &&
 				host.supportedVersions.includes(candidate) &&
 				requiredCapabilities.every((capability) => host.capabilities[String(candidate)]?.includes(capability)),
 		)
@@ -81,6 +82,9 @@ export function negotiateProtocol(
 }
 
 export function validateParentHello(host: HostHello, parent: ParentHello): NegotiationResult {
+	if (parent.version !== ZOO_HOST_PROTOCOL_VERSION) {
+		return { ok: false, code: "protocol_incompatible", message: "Selected protocol version has no installed codec" }
+	}
 	if (!host.supportedVersions.includes(parent.version)) {
 		return { ok: false, code: "protocol_incompatible", message: "Parent selected an unadvertised protocol version" }
 	}
