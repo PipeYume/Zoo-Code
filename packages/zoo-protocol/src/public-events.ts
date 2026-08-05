@@ -161,7 +161,14 @@ const askAbandonedEventSchema = taskEvent("ask.abandoned", {
 	reason: z.enum(["cancelled", "timed_out", "failed"]),
 })
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-	z.union([z.null(), z.boolean(), z.number().finite(), z.string(), z.array(jsonValueSchema), z.record(jsonValueSchema)]),
+	z.union([
+		z.null(),
+		z.boolean(),
+		z.number().finite(),
+		z.string(),
+		z.array(jsonValueSchema),
+		z.record(jsonValueSchema),
+	]),
 )
 const toolEventState = {
 	toolCallId: z.string().min(1),
@@ -198,39 +205,43 @@ const usageUpdatedEventSchema = taskEvent("usage.updated", {
 })
 const taskResultEventSchema = taskEvent("task.result", { result: zooRunResultSchema })
 
-export const rawZooStreamEventSchema = z.discriminatedUnion("type", [
-	systemInitEventSchema,
-	systemWarningEventSchema,
-	taskCreatedEventSchema,
-	taskStartedEventSchema,
-	taskLifecycleEventSchema,
-	taskResumedEventSchema,
-	taskDelegatedEventSchema,
-	messageUpsertEventSchema,
-	askRequiredEventSchema,
-	askResolvedEventSchema,
-	askAbandonedEventSchema,
-	toolStartedEventSchema,
-	toolUpdatedEventSchema,
-	toolCompletedEventSchema,
-	toolFailedEventSchema,
-	terminalOutputEventSchema,
-	terminalStatusEventSchema,
-	mcpStartedEventSchema,
-	mcpCompletedEventSchema,
-	mcpFailedEventSchema,
-	usageUpdatedEventSchema,
-	taskResultEventSchema,
-]).superRefine((streamEvent, context) => {
-	if (streamEvent.type !== "terminal.status") return
-	const terminal = streamEvent.state === "exited" || streamEvent.state === "killed"
-	if (terminal === (streamEvent.exitCode === undefined)) {
-		context.addIssue({
-			code: z.ZodIssueCode.custom,
-			message: terminal ? "Terminal states require an exit code or null" : "Nonterminal states cannot include an exit code",
-		})
-	}
-})
+export const rawZooStreamEventSchema = z
+	.discriminatedUnion("type", [
+		systemInitEventSchema,
+		systemWarningEventSchema,
+		taskCreatedEventSchema,
+		taskStartedEventSchema,
+		taskLifecycleEventSchema,
+		taskResumedEventSchema,
+		taskDelegatedEventSchema,
+		messageUpsertEventSchema,
+		askRequiredEventSchema,
+		askResolvedEventSchema,
+		askAbandonedEventSchema,
+		toolStartedEventSchema,
+		toolUpdatedEventSchema,
+		toolCompletedEventSchema,
+		toolFailedEventSchema,
+		terminalOutputEventSchema,
+		terminalStatusEventSchema,
+		mcpStartedEventSchema,
+		mcpCompletedEventSchema,
+		mcpFailedEventSchema,
+		usageUpdatedEventSchema,
+		taskResultEventSchema,
+	])
+	.superRefine((streamEvent, context) => {
+		if (streamEvent.type !== "terminal.status") return
+		const terminal = streamEvent.state === "exited" || streamEvent.state === "killed"
+		if (terminal === (streamEvent.exitCode === undefined)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: terminal
+					? "Terminal states require an exit code or null"
+					: "Nonterminal states cannot include an exit code",
+			})
+		}
+	})
 
 const redactStreamEvent = (streamEvent: z.infer<typeof rawZooStreamEventSchema>) => {
 	switch (streamEvent.type) {
@@ -314,7 +325,7 @@ export function createZooStreamRedactor(
 		pem: boolean
 		overflowed: boolean
 		secretQuotes: Partial<Record<z.infer<typeof terminalOutputEventSchema>["stream"], '"' | "'">>
-		secretValueContinuation?: boolean
+		secretValueContinuations: Partial<Record<z.infer<typeof terminalOutputEventSchema>["stream"], true>>
 	}
 	const pendingOutputs = new Map<string, PendingOutput>()
 	let failClosedAll = false
@@ -331,7 +342,8 @@ export function createZooStreamRedactor(
 	}
 	const incompleteSecretQuote = (text: string): '"' | "'" | undefined => {
 		const match = text.match(/(?:^|[,{;\s])["']?([A-Za-z0-9_. -]+)["']?\s*[:=]\s*(["'])(?:\\.|[^\\])*$/i)
-		if (match === null || !isSensitiveKey(match[1] ?? "") || (match[2] !== '"' && match[2] !== "'")) return undefined
+		if (match === null || !isSensitiveKey(match[1] ?? "") || (match[2] !== '"' && match[2] !== "'"))
+			return undefined
 		const opening = /[:=]\s*(["'])/.exec(match[0])
 		if (opening === null) return undefined
 		const value = match[0].slice(opening.index + opening[0].length)
@@ -340,7 +352,11 @@ export function createZooStreamRedactor(
 	const closesSecretQuote = (text: string, quote: '"' | "'"): boolean =>
 		new RegExp(`(?:^|[^\\\\])${quote}`).test(text)
 	const incompleteSecretValue = (text: string): boolean => {
-		const line = text.replace(/\r?\n$/, "").split(/\r?\n/).at(-1) ?? ""
+		const line =
+			text
+				.replace(/\r?\n$/, "")
+				.split(/\r?\n/)
+				.at(-1) ?? ""
 		const match = line.match(/(?:^|[,{;\s])["']?([A-Za-z0-9_. -]+)["']?\s*[:=]\s*$/i)
 		return match !== null && isSensitiveKey(match[1] ?? "")
 	}
@@ -353,10 +369,10 @@ export function createZooStreamRedactor(
 			return []
 		}
 		const [first, ...rest] = pending.events
-		const detectionText = canonicalizeRedactionText(pending.text)
 		const continuedSecret = Object.keys(pending.secretQuotes).length > 0
-		const continuedValue = pending.secretValueContinuation === true
+		const continuedValue = Object.keys(pending.secretValueContinuations).length > 0
 		const secretQuotes = { ...pending.secretQuotes }
+		const secretValueContinuations = { ...pending.secretValueContinuations }
 		for (const [stream, text] of Object.entries(pending.textByStream) as Array<
 			[z.infer<typeof terminalOutputEventSchema>["stream"], string]
 		>) {
@@ -368,16 +384,20 @@ export function createZooStreamRedactor(
 				const quote = incompleteSecretQuote(streamText)
 				if (quote !== undefined) secretQuotes[stream] = quote
 			}
+			if (secretValueContinuations[stream] === true) {
+				if (!incompleteSecretValue(streamText)) delete secretValueContinuations[stream]
+			} else if (incompleteSecretValue(streamText)) {
+				secretValueContinuations[stream] = true
+			}
 		}
-		const secretValueContinuation = !continuedValue && incompleteSecretValue(detectionText)
 		const unterminatedSecret =
 			pending.pem ||
 			Object.keys(secretQuotes).length > 0 ||
-			secretValueContinuation ||
+			Object.keys(secretValueContinuations).length > 0 ||
 			requiresFailClosedRedaction(pending.text)
 		const delta = replacement ?? (unterminatedSecret ? REDACTED : String(redactValue(pending.text)))
 		pendingOutputs.delete(key)
-		if (Object.keys(secretQuotes).length > 0 || secretValueContinuation) {
+		if (Object.keys(secretQuotes).length > 0 || Object.keys(secretValueContinuations).length > 0) {
 			pendingOutputs.set(key, {
 				events: [],
 				text: "",
@@ -385,7 +405,7 @@ export function createZooStreamRedactor(
 				pem: false,
 				overflowed: false,
 				secretQuotes,
-				secretValueContinuation: secretValueContinuation || undefined,
+				secretValueContinuations,
 			})
 		}
 		return first === undefined
@@ -427,7 +447,15 @@ export function createZooStreamRedactor(
 					const buffered = [...pendingOutputs.keys()].flatMap((pendingKey) => emit(pendingKey, REDACTED))
 					return [...buffered, { ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 				}
-				pending = { events: [], text: "", textByStream: {}, pem: false, overflowed: false, secretQuotes: {} }
+				pending = {
+					events: [],
+					text: "",
+					textByStream: {},
+					pem: false,
+					overflowed: false,
+					secretQuotes: {},
+					secretValueContinuations: {},
+				}
 				pendingOutputs.set(key, pending)
 			}
 			if (pending.overflowed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
@@ -435,7 +463,10 @@ export function createZooStreamRedactor(
 			pending.text += event.delta
 			pending.textByStream[event.stream] = (pending.textByStream[event.stream] ?? "") + event.delta
 			pending.pem = hasUnmatchedPem(canonicalizeRedactionText(pending.text))
-			if (new TextEncoder().encode(pending.text).byteLength > maxPendingBytes || pending.events.length > maxPendingEvents) {
+			if (
+				new TextEncoder().encode(pending.text).byteLength > maxPendingBytes ||
+				pending.events.length > maxPendingEvents
+			) {
 				pending.overflowed = true
 				const redacted = emit(key, REDACTED)
 				pendingOutputs.set(key, {
@@ -445,6 +476,7 @@ export function createZooStreamRedactor(
 					pem: false,
 					overflowed: true,
 					secretQuotes: {},
+					secretValueContinuations: {},
 				})
 				return redacted
 			}
@@ -466,6 +498,7 @@ export function createZooStreamRedactor(
 					pem: false,
 					overflowed: true,
 					secretQuotes: {},
+					secretValueContinuations: {},
 				})
 				return redacted
 			})
@@ -555,7 +588,11 @@ export function validateStreamLifecycle(
 		eventEnvelopes.length !== events.length ||
 		events.some((streamEvent, index) => !isDeepStrictEqual(eventEnvelopes[index]?.event, streamEvent))
 	) {
-		return { ok: false, code: "protocol_gap", message: "Public events must exactly match their ordered host envelopes" }
+		return {
+			ok: false,
+			code: "protocol_gap",
+			message: "Public events must exactly match their ordered host envelopes",
+		}
 	}
 	const results = events.filter((event) => event.type === "task.result")
 	if (results.length !== 1 || events.at(-1)?.type !== "task.result") {
@@ -567,13 +604,31 @@ export function validateStreamLifecycle(
 		return { ok: false, code: "task_failed", message: "task.result must identify the authoritative root task" }
 	}
 	const resumedEvents = events.filter((streamEvent) => streamEvent.type === "task.resumed")
-	const runCommands = commands
-	const initiatingCandidates = runCommands.filter((command) => command.type === "task.start" || command.type === "task.resume")
+	const initiatingCandidates = commands.filter(
+		(command) => command.type === "task.start" || command.type === "task.resume",
+	)
 	const initiatingCommand = lifecycleScope
 		? initiatingCandidates.find((command) => command.id === lifecycleScope.initiatingCommandId)
 		: initiatingCandidates.length === 1
 			? initiatingCandidates[0]
 			: undefined
+	const treeTaskIds = new Set(
+		events
+			.filter((event): event is ZooStreamEvent & { type: "task.created" } => event.type === "task.created")
+			.map((event) => event.taskId),
+	)
+	const explicitlyScopedCommandIds =
+		lifecycleScope?.commandIds === undefined ? undefined : new Set(lifecycleScope.commandIds)
+	const targetsRunTree = (command: HostCommand): boolean => {
+		if (command.id === initiatingCommand?.id) return true
+		if (command.type === "task.resume" || command.type === "task.cancel") return command.rootTaskId === rootTaskId
+		if (command.type === "task.input" || command.type === "ask.respond") return treeTaskIds.has(command.taskId)
+		return false
+	}
+	const runCommands =
+		explicitlyScopedCommandIds === undefined
+			? commands
+			: commands.filter((command) => explicitlyScopedCommandIds.has(command.id) || targetsRunTree(command))
 	const startCommands = initiatingCommand?.type === "task.start" ? [initiatingCommand] : []
 	const resumeCommands = initiatingCommand?.type === "task.resume" ? [initiatingCommand] : []
 	if (initiatingCommand === undefined) {
@@ -591,7 +646,11 @@ export function validateStreamLifecycle(
 			resultEvent.result.workspace !== start.workspace ||
 			(resultEvent.result.outcome !== "cancelled" && resultEvent.requestId !== start.id)
 		) {
-			return { ok: false, code: "task_failed", message: "Fresh streams must match exactly one task.start command" }
+			return {
+				ok: false,
+				code: "task_failed",
+				message: "Fresh streams must match exactly one task.start command",
+			}
 		}
 	} else if (resumedEvents.length !== 1 || startCommands.length !== 0 || resumeCommands.length !== 1) {
 		return { ok: false, code: "task_failed", message: "Resume streams must match exactly one task.resume command" }
@@ -640,7 +699,8 @@ export function validateStreamLifecycle(
 		map.set(taskId, created)
 		return created
 	}
-	const values = <T>(map: Map<string, Map<string, T>>): T[] => [...map.values()].flatMap((entries) => [...entries.values()])
+	const values = <T>(map: Map<string, Map<string, T>>): T[] =>
+		[...map.values()].flatMap((entries) => [...entries.values()])
 	const isDescendantOf = (taskId: string, parentTaskId: string): boolean => {
 		let current = taskParents.get(taskId)
 		while (current !== undefined && current !== null) {
@@ -701,7 +761,11 @@ export function validateStreamLifecycle(
 	}
 	for (const response of runCommands.filter((command) => command.type === "ask.respond")) {
 		if (causalTerminal(response.id) === undefined) {
-			return { ok: false, code: "protocol_gap", message: "Every ask response requires ACK and one terminal response" }
+			return {
+				ok: false,
+				code: "protocol_gap",
+				message: "Every ask response requires ACK and one terminal response",
+			}
 		}
 	}
 	const initiatingTerminal = initiatingCommand === undefined ? undefined : causalTerminal(initiatingCommand.id)
@@ -753,7 +817,11 @@ export function validateStreamLifecycle(
 			}
 			taskParents.set(streamEvent.taskId, parentTaskId)
 			createdTasks.add(streamEvent.taskId)
-			if (streamEvent.taskId === rootTaskId && resumedEvents.length === 0 && streamEvent.requestId !== startCommands[0]?.id) {
+			if (
+				streamEvent.taskId === rootTaskId &&
+				resumedEvents.length === 0 &&
+				streamEvent.requestId !== startCommands[0]?.id
+			) {
 				return { ok: false, code: "task_failed", message: "Root creation must match its task.start request" }
 			}
 			if (streamEvent.taskId === rootTaskId && causalTerminal(initiatingCommand.id, streamEvent) === undefined) {
@@ -798,7 +866,11 @@ export function validateStreamLifecycle(
 			streamEvent.type !== "task.delegated" &&
 			!delegatedTasks.has(streamEvent.taskId)
 		) {
-			return { ok: false, code: "task_failed", message: `Task ${streamEvent.taskId} emitted an event before delegation` }
+			return {
+				ok: false,
+				code: "task_failed",
+				message: `Task ${streamEvent.taskId} emitted an event before delegation`,
+			}
 		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
@@ -828,7 +900,9 @@ export function validateStreamLifecycle(
 		if (streamEvent.type === "task.started") {
 			const parentTaskId = taskParents.get(streamEvent.taskId)
 			const reconstructingResumedDescendant =
-				resumedEvents.length === 1 && resumeCommands[0]?.taskId === streamEvent.taskId && resumedTasks.has(streamEvent.taskId)
+				resumedEvents.length === 1 &&
+				resumeCommands[0]?.taskId === streamEvent.taskId &&
+				resumedTasks.has(streamEvent.taskId)
 			if (
 				startedTasks.has(streamEvent.taskId) ||
 				(previousState !== undefined && previousState !== "running") ||
@@ -838,7 +912,11 @@ export function validateStreamLifecycle(
 					taskStates.get(parentTaskId) !== "running" &&
 					!reconstructingResumedDescendant)
 			) {
-				return { ok: false, code: "task_failed", message: `Invalid start transition for task ${streamEvent.taskId}` }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Invalid start transition for task ${streamEvent.taskId}`,
+				}
 			}
 			startedTasks.add(streamEvent.taskId)
 			taskStates.set(streamEvent.taskId, "running")
@@ -851,11 +929,16 @@ export function validateStreamLifecycle(
 				!resumedTasks.has(streamEvent.taskId) &&
 				(streamEvent.state === "waiting" || streamEvent.state === "interrupted")
 			if (!startedTasks.has(streamEvent.taskId) && !reconstructingPredecessor) {
-				return { ok: false, code: "task_failed", message: "Task lifecycle requires an ordered task.started event" }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: "Task lifecycle requires an ordered task.started event",
+				}
 			}
 			const transitionAllowed =
 				reconstructingPredecessor ||
-				(previousState === "running" && ["waiting", "interrupted", "completed", "failed"].includes(streamEvent.state)) ||
+				(previousState === "running" &&
+					["waiting", "interrupted", "completed", "failed"].includes(streamEvent.state)) ||
 				(previousState === "waiting" &&
 					(["interrupted", "failed"].includes(streamEvent.state) ||
 						(streamEvent.state === "running" &&
@@ -870,7 +953,9 @@ export function validateStreamLifecycle(
 				}
 			}
 			if (
-				(streamEvent.state === "running" || streamEvent.state === "waiting" || streamEvent.state === "completed") &&
+				(streamEvent.state === "running" ||
+					streamEvent.state === "waiting" ||
+					streamEvent.state === "completed") &&
 				streamEvent.cause !== undefined
 			) {
 				return { ok: false, code: "task_failed", message: "Lifecycle cause contradicts task state" }
@@ -887,7 +972,8 @@ export function validateStreamLifecycle(
 			if (
 				settledStates.has(streamEvent.state) &&
 				[...createdTasks].some(
-					(taskId) => isDescendantOf(taskId, streamEvent.taskId) && !settledStates.has(taskStates.get(taskId) ?? ""),
+					(taskId) =>
+						isDescendantOf(taskId, streamEvent.taskId) && !settledStates.has(taskStates.get(taskId) ?? ""),
 				)
 			) {
 				return { ok: false, code: "task_failed", message: "A task cannot terminate before its descendants" }
@@ -906,7 +992,11 @@ export function validateStreamLifecycle(
 				resumedTasks.size > 0 ||
 				previousState !== streamEvent.previousState
 			) {
-				return { ok: false, code: "task_failed", message: "task.resumed must match reconstructed persisted state" }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: "task.resumed must match reconstructed persisted state",
+				}
 			}
 			if (causalTerminal(resume!.id, streamEvent) === undefined) {
 				return { ok: false, code: "protocol_gap", message: "Task resume must follow its command ACK" }
@@ -952,10 +1042,24 @@ export function validateStreamLifecycle(
 			return { ok: false, code: "task_failed", message: "Task operations require an unblocked running task" }
 		}
 		if (streamEvent.type === "message.upsert") {
+			const matchingInput = runCommands.find(
+				(command) => command.type === "task.input" && command.id === streamEvent.requestId,
+			)
+			if (streamEvent.role === "user" && matchingInput !== undefined && !inputResumeCause(streamEvent)) {
+				return {
+					ok: false,
+					code: "task_failed",
+					message: "Task input must cause exactly one matching user message",
+				}
+			}
 			const messages = scope(messageStates, streamEvent.taskId)
 			const previous = messages.get(streamEvent.messageId)
 			if (previous?.complete === true || (previous !== undefined && previous.role !== streamEvent.role)) {
-				return { ok: false, code: "task_failed", message: `Invalid update for message ${streamEvent.messageId}` }
+				return {
+					ok: false,
+					code: "task_failed",
+					message: `Invalid update for message ${streamEvent.messageId}`,
+				}
 			}
 			messages.set(streamEvent.messageId, { role: streamEvent.role, complete: streamEvent.complete })
 		}
@@ -991,9 +1095,7 @@ export function validateStreamLifecycle(
 			)
 			if (streamEvent.source === "user" || responseCommands.length > 0) {
 				const response = responseCommands.find(
-					(command) =>
-						!consumedResponseCommands.has(command.id) &&
-						command.id === streamEvent.requestId,
+					(command) => !consumedResponseCommands.has(command.id) && command.id === streamEvent.requestId,
 				)
 				const expectedDecision =
 					response?.type === "ask.respond"
@@ -1128,7 +1230,11 @@ export function validateStreamLifecycle(
 		}
 	}
 	if (resultEvent.result.currentTaskId !== undefined && !createdTasks.has(resultEvent.result.currentTaskId)) {
-		return { ok: false, code: "task_failed", message: "currentTaskId must identify a task in the authoritative tree" }
+		return {
+			ok: false,
+			code: "task_failed",
+			message: "currentTaskId must identify a task in the authoritative tree",
+		}
 	}
 	const rootState = taskStates.get(rootTaskId)
 	if (rootState !== expectedState[resultEvent.result.outcome]) {
@@ -1177,10 +1283,34 @@ export function validateStreamLifecycle(
 	if (unconsumedResponses) {
 		return { ok: false, code: "task_failed", message: "Every ask response command must settle its matching ask" }
 	}
-	const cancelCommands = runCommands.filter((command) => command.type === "task.cancel" && command.rootTaskId === rootTaskId)
+	const invalidInputs = runCommands.some((command) => {
+		if (command.type !== "task.input") return false
+		const terminal = causalTerminal(command.id)
+		if (terminal?.type !== "command.done") return false
+		return (
+			!createdTasks.has(command.taskId) ||
+			terminal.data.commandType !== "task.input" ||
+			terminal.data.taskId !== command.taskId ||
+			!consumedInputCommands.has(command.id)
+		)
+	})
+	if (invalidInputs) {
+		return {
+			ok: false,
+			code: "task_failed",
+			message: "Every successful task input must have one matching tree effect",
+		}
+	}
+	const cancelCommands = runCommands.filter(
+		(command) => command.type === "task.cancel" && command.rootTaskId === rootTaskId,
+	)
 	const cancellationTerminals = cancelCommands.map((command) => causalTerminal(command.id))
 	if (cancellationTerminals.some((terminal) => terminal === undefined)) {
-		return { ok: false, code: "task_failed", message: "Every cancellation command requires ACK and one terminal response" }
+		return {
+			ok: false,
+			code: "task_failed",
+			message: "Every cancellation command requires ACK and one terminal response",
+		}
 	}
 	if (
 		cancellationTerminals.some(

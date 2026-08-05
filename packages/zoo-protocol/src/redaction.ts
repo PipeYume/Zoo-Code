@@ -31,7 +31,14 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 	/-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?-----END (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g,
 ]
 
-export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
+export type RedactedValue =
+	| null
+	| undefined
+	| boolean
+	| number
+	| string
+	| RedactedValue[]
+	| { [key: string]: RedactedValue }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 export function isSensitiveKey(key: string): boolean {
@@ -49,7 +56,11 @@ export function isSensitiveKey(key: string): boolean {
 	)
 		return true
 	if (/^[a-z0-9]+(?:password|secret|passphrase|passwd|pwd)$/.test(compact)) return true
-	if (/^(?:.*)?(?:apikey|apitoken|accesstoken|authtoken|bearertoken|idtoken|privatekey|refreshtoken|sessiontoken)$/.test(compact)) {
+	if (
+		/^(?:.*)?(?:apikey|apitoken|accesstoken|authtoken|bearertoken|idtoken|privatekey|refreshtoken|sessiontoken)$/.test(
+			compact,
+		)
+	) {
 		return true
 	}
 	if (
@@ -65,8 +76,10 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 export function requiresFailClosedRedaction(value: string): boolean {
-	if (unsafeTerminalEditing.test(value)) return true
-	return [...value.matchAll(new RegExp(terminalControl.source, "g"))].some(([control]) => containsSensitiveAssignment(control))
+	if (unsafeTerminalEditing.test(value) || /(?:\r(?!\n)|[\v\f])/.test(value)) return true
+	return [...value.matchAll(new RegExp(terminalControl.source, "g"))].some(([control]) =>
+		containsSensitiveAssignment(control),
+	)
 }
 
 function containsSensitiveAssignment(value: string): boolean {
@@ -83,7 +96,8 @@ function redactAssignments(value: string): string {
 		return unquoted === REDACTED
 	}
 	const redactValueText = (prefix: string, entry: string) => {
-		const quote = entry.startsWith('"') && entry.endsWith('"') ? '"' : entry.startsWith("'") && entry.endsWith("'") ? "'" : ""
+		const quote =
+			entry.startsWith('"') && entry.endsWith('"') ? '"' : entry.startsWith("'") && entry.endsWith("'") ? "'" : ""
 		return `${prefix}${quote}${REDACTED}${quote}`
 	}
 	return value
