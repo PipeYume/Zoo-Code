@@ -44,10 +44,8 @@ async function terminateProcessTree(pid: number | undefined, platform: NodeJS.Pl
 	}
 	if (platform === "win32") {
 		const taskkillPath = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe")
-		const result = await execa(taskkillPath, ["/PID", String(pid), "/T", "/F"], { reject: false }).catch(
-			() => undefined,
-		)
-		if (!result || result.exitCode !== 0) {
+		const result = await execa(taskkillPath, ["/PID", String(pid), "/T", "/F"], { reject: false })
+		if (result.exitCode !== 0) {
 			try {
 				process.kill(pid, "SIGKILL")
 			} catch {
