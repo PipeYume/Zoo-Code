@@ -12,6 +12,7 @@ import { VaultSecretStorage, type VaultBackend } from "../security.js"
 import { HostTransport } from "../transport.js"
 
 const childPath = fileURLToPath(new URL("../child.ts", import.meta.url))
+const tsxLoader = import.meta.resolve("tsx")
 
 describe("host security and transport", () => {
 	it("requires explicit absolute roots", () => {
@@ -66,7 +67,7 @@ exports.deactivate = async () => {}
 				stderr: string
 			}>((resolve, reject) => {
 				const child = fork(childPath, [], {
-					execArgv: ["--import", "tsx"],
+					execArgv: ["--import", tsxLoader],
 					stdio: ["ignore", "ignore", "pipe", "ipc"],
 					env: {
 						...process.env,
