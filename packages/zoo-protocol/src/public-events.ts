@@ -4,7 +4,13 @@ import type { HostCommand } from "./host-commands.js"
 import type { HostEvent } from "./host-events.js"
 import { failedErrorCodeSchema, zooErrorSchema, zooOutcomeSchema } from "./outcomes.js"
 import { REDACTED, redactValue, type RedactedValue } from "./redaction.js"
-import { ZOO_PUBLIC_SCHEMA_VERSION } from "./version.js"
+import {
+	ZOO_HOST_PROTOCOL_VERSION,
+	ZOO_PUBLIC_SCHEMA_VERSION,
+	validateParentHello,
+	type HostHello,
+	type ParentHello,
+} from "./version.js"
 
 const strictObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict()
 
@@ -103,6 +109,7 @@ const taskEvent = <const Type extends string, T extends z.ZodRawShape>(type: Typ
 
 const systemInitEventSchema = event("system.init", {
 	protocol: z.literal("zoo-stream"),
+	hostProtocolVersion: z.literal(ZOO_HOST_PROTOCOL_VERSION),
 	capabilities: z.array(z.string().min(1)),
 	clientVersion: z.string().min(1),
 	hostVersion: z.string().min(1),
@@ -275,6 +282,7 @@ const streamEventKey = (event: RawZooStreamEvent) =>
 export type ZooStreamRedactor = {
 	push: (event: RawZooStreamEvent) => ZooStreamEvent[]
 	flush: () => ZooStreamEvent[]
+	failClosed: () => ZooStreamEvent[]
 }
 
 export function createZooStreamRedactor(
@@ -293,6 +301,15 @@ export function createZooStreamRedactor(
 	let failClosed = false
 	const outputKey = (event: z.infer<typeof terminalOutputEventSchema>) =>
 		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId, event.stream])
+	const hasUnmatchedPem = (text: string): boolean => {
+		const openLabels: string[] = []
+		for (const match of text.matchAll(/-----(BEGIN|END) ([A-Z ]*PRIVATE KEY)-----/g)) {
+			const [, boundary, label] = match
+			if (boundary === "BEGIN" && label !== undefined) openLabels.push(label)
+			else if (boundary === "END" && label !== undefined && openLabels.at(-1) === label) openLabels.pop()
+		}
+		return openLabels.length > 0
+	}
 
 	const emit = (key: string, replacement?: string): ZooStreamEvent[] => {
 		const pending = pendingOutputs.get(key)
@@ -350,22 +367,23 @@ export function createZooStreamRedactor(
 			if (pending.overflowed) return [{ ...event, delta: event.delta.length === 0 ? "" : REDACTED }]
 			pending.events.push(event)
 			pending.text += event.delta
-			if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(pending.text)) pending.pem = true
-			if (/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) pending.pem = false
+			pending.pem = hasUnmatchedPem(pending.text)
 			if (pending.text.length > maxPendingBytes || pending.events.length > maxPendingEvents) {
 				pending.overflowed = true
 				const redacted = emit(key, REDACTED)
 				pendingOutputs.set(key, { events: [], text: "", pem: false, overflowed: true })
 				return redacted
 			}
-			if (pending.pem && !/-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text)) return []
+			if (pending.pem) return []
 			const boundary = pending.text.lastIndexOf("\n")
 			const allEventsEndAtBoundary = boundary === pending.text.length - 1
-			return allEventsEndAtBoundary || (pending.pem && /-----END [A-Z ]*PRIVATE KEY-----/.test(pending.text))
-				? emit(key)
-				: []
+			return allEventsEndAtBoundary ? emit(key) : []
 		},
 		flush: () => [...pendingOutputs.keys()].flatMap((key) => emit(key)),
+		failClosed: () => {
+			failClosed = true
+			return [...pendingOutputs.keys()].flatMap((key) => emit(key, REDACTED))
+		},
 	}
 }
 
@@ -383,6 +401,33 @@ export const zooStreamSchema = z.array(rawZooStreamEventSchema).transform((event
 		.sort((left, right) => left.index - right.index)
 		.map(({ event }) => event)
 })
+
+export function validateNegotiatedStreamSession(
+	host: HostHello,
+	parent: ParentHello,
+	events: readonly ZooStreamEvent[],
+): { ok: true } | { ok: false; code: "protocol_incompatible"; message: string } {
+	const negotiation = validateParentHello(host, parent)
+	if (!negotiation.ok) return negotiation
+	const init = events[0]
+	const advertised = host.capabilities[String(parent.version)] ?? []
+	if (
+		init?.type !== "system.init" ||
+		init.hostId !== host.hostId ||
+		init.hostProtocolVersion !== parent.version ||
+		init.clientVersion !== parent.clientVersion ||
+		init.hostVersion !== host.buildVersion ||
+		parent.requiredCapabilities.some((capability) => !init.capabilities.includes(capability)) ||
+		init.capabilities.some((capability) => !advertised.includes(capability))
+	) {
+		return {
+			ok: false,
+			code: "protocol_incompatible",
+			message: "system.init does not match the negotiated host session",
+		}
+	}
+	return { ok: true }
+}
 
 export function validateStreamLifecycle(
 	events: readonly ZooStreamEvent[],
@@ -707,11 +752,28 @@ export function validateStreamLifecycle(
 					response?.type === "ask.respond"
 						? { approve: "approve", reject: "reject", message: "needs_input" }[response.response]
 						: undefined
-				if (expectedDecision !== streamEvent.decision) {
+				const terminals =
+					response === undefined
+						? []
+						: commandEvents.filter(
+								(event) =>
+									(event.type === "command.done" || event.type === "command.error") &&
+									event.hostId === hostId &&
+									event.commandId === response.id,
+							)
+				const completion = terminals[0]
+				if (
+					expectedDecision !== streamEvent.decision ||
+					terminals.length !== 1 ||
+					completion?.type !== "command.done" ||
+					completion.data.commandType !== "ask.respond" ||
+					completion.data.taskId !== streamEvent.taskId ||
+					completion.data.askId !== streamEvent.askId
+				) {
 					return {
 						ok: false,
 						code: "task_failed",
-						message: "User ask resolution does not match its response command",
+						message: "Ask resolution requires its successful response command",
 					}
 				}
 				if (response !== undefined) consumedResponseCommands.add(response.id)
@@ -867,6 +929,7 @@ export function validateStreamLifecycle(
 	const cancellationTerminals = cancelCommands.map((command) =>
 		commandEvents.filter(
 			(event) =>
+				event.hostId === hostId &&
 				((event.type === "command.error" && event.commandId === command.id) ||
 					(event.type === "command.done" &&
 						event.commandId === command.id &&

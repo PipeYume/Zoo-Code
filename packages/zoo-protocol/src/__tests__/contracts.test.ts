@@ -17,6 +17,7 @@ import {
 	runDeterministicFakeProvider,
 	validateCommandLifecycle,
 	validateMonotonicSequence,
+	validateNegotiatedStreamSession,
 	validateParentHello,
 	validateStreamLifecycle,
 	zooRunResultSchema,
@@ -40,6 +41,7 @@ const initEvent = zooStreamEventSchema.parse({
 	hostId: "host",
 	type: "system.init",
 	protocol: "zoo-stream",
+	hostProtocolVersion: 1,
 	capabilities: ["task:start"],
 	clientVersion: "1.0.0",
 	hostVersion: "1.0.0",
@@ -80,11 +82,11 @@ function resultEvent(seq: number, result: Record<string, unknown> = {}, event: R
 	return parsed
 }
 
-function cancellationDone(commandId = "cancel") {
+function cancellationDone(commandId = "cancel", hostId = "host") {
 	return hostEventSchema.parse({
 		v: 1,
 		seq: 1,
-		hostId: "host",
+		hostId,
 		type: "command.done",
 		commandId,
 		data: { commandType: "task.cancel", rootTaskId: "root" },
@@ -99,6 +101,17 @@ function cancellationError(commandId = "cancel") {
 		type: "command.error",
 		commandId,
 		error: { code: "cancel_failed", message: "Task already completed" },
+	})
+}
+
+function askResponseDone(commandId = "respond", hostId = "host") {
+	return hostEventSchema.parse({
+		v: 1,
+		seq: 1,
+		hostId,
+		type: "command.done",
+		commandId,
+		data: { commandType: "ask.respond", taskId: "root", askId: "ask" },
 	})
 }
 
@@ -211,6 +224,50 @@ describe("strict host contracts", () => {
 				type: "command.ack",
 				commandId: "cmd",
 			}).success,
+		).toBe(false)
+	})
+
+	it("binds stream initialization to the negotiated session", () => {
+		const host = hostHelloSchema.parse({
+			type: "hello",
+			hostId: "host",
+			supportedVersions: [1],
+			capabilities: { 1: ["task:start", "future:additive-capability"] },
+			buildVersion: "1.0.0",
+		})
+		const parent = parentHelloSchema.parse({
+			type: "hello.select",
+			version: 1,
+			clientVersion: "1.0.0",
+			requiredCapabilities: ["task:start"],
+		})
+		expect(
+			validateNegotiatedStreamSession(host, parent, [
+				{ ...initEvent, capabilities: ["task:start", "future:additive-capability"] },
+			]),
+		).toEqual({ ok: true })
+		expect(validateNegotiatedStreamSession(host, parent, [{ ...initEvent, hostId: "other" }])).toMatchObject({
+			ok: false,
+		})
+		expect(validateNegotiatedStreamSession(host, parent, [{ ...initEvent, capabilities: [] }])).toMatchObject({
+			ok: false,
+		})
+	})
+
+	it("pins host identity and sequence in the streaming parser", () => {
+		const parser = createHostEventStreamParser()
+		parser.push({ v: 1, seq: 4, hostId: "host", type: "host.heartbeat", monotonicMs: 1 })
+		expect(() =>
+			parser.push({ v: 1, seq: 6, hostId: "host", type: "host.heartbeat", monotonicMs: 2 }),
+		).toThrow("Expected host sequence 5")
+		const otherHost = createHostEventStreamParser()
+		otherHost.push({ v: 1, seq: 1, hostId: "host", type: "host.heartbeat", monotonicMs: 1 })
+		expect(() =>
+			otherHost.push({ v: 1, seq: 2, hostId: "other", type: "host.heartbeat", monotonicMs: 2 }),
+		).toThrow("cannot span multiple hosts")
+		expect(
+			hostEventSchema.safeParse({ v: 1, seq: 1, hostId: "host", type: "host.heartbeat", monotonicMs: Infinity })
+				.success,
 		).toBe(false)
 	})
 
@@ -677,6 +734,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
 				[startCommand, response],
+				[askResponseDone()],
 			),
 		).toEqual({
 			ok: true,
@@ -697,6 +755,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyOverride, completed, resultEvent(7)],
 				[startCommand, response],
+				[askResponseDone()],
 			),
 		).toMatchObject({ ok: false })
 		const policyReportedResponse = zooStreamEventSchema.parse({ ...resolved, source: "policy" })
@@ -704,8 +763,22 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyReportedResponse, completed, resultEvent(7)],
 				[startCommand, response],
+				[askResponseDone()],
 			),
 		).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[startCommand, response],
+			),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[startCommand, response],
+				[askResponseDone("respond", "other")],
+			),
+		).toMatchObject({ ok: false })
 	})
 
 	it("correlates cancellation and settles operation lifecycles", () => {
@@ -741,6 +814,9 @@ describe("public automation contracts", () => {
 			cancelled,
 		]
 		expect(validateStreamLifecycle(stream, [startCommand, command], [cancellationDone()])).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(stream, [startCommand, command], [cancellationDone("cancel", "other")]),
+		).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle(stream, [{ ...command, reason: "signal" }])).toMatchObject({ ok: false })
 		expect(
@@ -1065,6 +1141,7 @@ describe("public automation contracts", () => {
 					resultEvent(8),
 				],
 				[startCommand, response],
+				[askResponseDone()],
 			),
 		).toMatchObject({ ok: false })
 
@@ -1205,6 +1282,9 @@ describe("redaction contracts", () => {
 		expect(redactText("postgres://alice:hunter2@db/prod")).toBe("postgres://[REDACTED]@db/prod")
 		expect(redactText("redis://:secret@cache/0")).toBe("redis://[REDACTED]@cache/0")
 		expect(redactText("API_TOKEN=abc,def")).toBe("[REDACTED]")
+		expect(redactText("OPENAI_API_KEY: value")).toBe("[REDACTED]")
+		expect(redactText("SENTRY_AUTH_TOKEN: value")).toBe("[REDACTED]")
+		expect(redactText("openaiApiKey: value")).toBe("[REDACTED]")
 		expect(redactValue({ credentials: "value", passphrase: "value", passwd: "value", pwd: "value" })).toEqual({
 			credentials: "[REDACTED]",
 			passphrase: "[REDACTED]",
@@ -1319,6 +1399,16 @@ describe("redaction contracts", () => {
 		])
 		expect(output.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
 			.toBe("[REDACTED]\n")
+		const repeated = zooStreamSchema.parse([
+			{
+				...terminal,
+				seq: 1,
+				delta:
+					"-----BEGIN PRIVATE KEY-----\nfirst\n-----END PRIVATE KEY-----\n-----BEGIN PRIVATE KEY-----\nsecond",
+			},
+		])
+		expect(repeated.map((event) => (event.type === "terminal.output" ? event.delta : "")).join(""))
+			.toBe("[REDACTED]")
 
 		const parser = createHostEventStreamParser({ maxPendingBytes: 4 })
 		const overflow = parser.push({
@@ -1349,6 +1439,20 @@ describe("redaction contracts", () => {
 				(event) => event.type === "event" && event.event.type === "terminal.output" && event.event.delta === "[REDACTED]",
 			),
 		).toBe(true)
+		let now = 0
+		const deadlineParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		expect(deadlineParser.push(pending(1, "deadline"))).toEqual([])
+		now = 10
+		const released = deadlineParser.push({
+			v: 1,
+			seq: 2,
+			hostId: "host",
+			type: "host.heartbeat",
+			monotonicMs: 1,
+		})
+		expect(released.map((event) => event.seq)).toEqual([1, 2])
+		expect(released[0]?.type === "event" && released[0].event.type === "terminal.output" && released[0].event.delta)
+			.toBe("[REDACTED]")
 
 		const unterminated = zooStreamSchema.parse([
 			{ ...terminal, seq: 1, delta: "-----BEGIN PRIVATE KEY-----\n" },
@@ -1483,6 +1587,14 @@ describe("deterministic parity oracle", () => {
 		expect(colonArgument.find((entry) => entry.type === "tool.started")?.toolArguments).toEqual({
 			path: "https://example.com/a:b",
 		})
+		expect(() =>
+			runDeterministicFakeProvider({
+				id: "malformed-tool",
+				prompt: "Read",
+				providerTurns: ["tool:read_file:call"],
+				expected: [],
+			}),
+		).toThrow("Invalid tool fixture")
 		expect(() =>
 			runDeterministicFakeProvider({
 				id: "invalid-failure",

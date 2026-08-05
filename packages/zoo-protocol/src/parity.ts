@@ -202,6 +202,7 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 			const separator1 = turn.indexOf(":")
 			const separator2 = turn.indexOf(":", separator1 + 1)
 			const separator3 = turn.indexOf(":", separator2 + 1)
+			if (separator2 < 0 || separator3 < 0) throw new Error(`Invalid tool fixture: ${turn}`)
 			const operation = turn.slice(separator1 + 1, separator2)
 			const toolCallId = turn.slice(separator2 + 1, separator3)
 			const argument = turn.slice(separator3 + 1)

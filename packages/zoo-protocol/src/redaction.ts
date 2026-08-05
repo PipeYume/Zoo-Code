@@ -1,5 +1,5 @@
 const REDACTED = "[REDACTED]" as const
-const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret|passphrase|passwd|pwd)[A-Za-z0-9_.-]*|api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|authorization|bearer[-_. ]?token|client[-_. ]?secret|cookie|credentials?|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token|token)`
+const sensitiveKeyName = String.raw`(?:[A-Za-z0-9_.-]*(?:password|secret|passphrase|passwd|pwd)[A-Za-z0-9_.-]*|[A-Za-z0-9_.-]*(?:api[-_. ]?(?:key|token)|access[-_. ]?token|auth[-_. ]?token|bearer[-_. ]?token|client[-_. ]?secret|id[-_. ]?token|private[-_. ]?key|refresh[-_. ]?token|session[-_. ]?token)|authorization|cookie|credentials?|token)`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")

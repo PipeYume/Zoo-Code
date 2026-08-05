@@ -66,7 +66,7 @@ const commandErrorSchema = strictObject({
 const heartbeatSchema = strictObject({
 	...base,
 	type: z.literal("host.heartbeat"),
-	monotonicMs: z.number().nonnegative(),
+	monotonicMs: z.number().finite().nonnegative(),
 })
 const snapshotSchema = strictObject({
 	...base,
@@ -122,12 +122,24 @@ export type HostEventStreamParser = {
 }
 
 export function createHostEventStreamParser(
-	options: { maxPendingBytes?: number; maxPendingEvents?: number; maxPendingStreams?: number } = {},
+	options: {
+		maxPendingBytes?: number
+		maxPendingEvents?: number
+		maxPendingStreams?: number
+		maxQueuedEvents?: number
+		maxPendingMs?: number
+		now?: () => number
+	} = {},
 ): HostEventStreamParser {
 	const redactor = createZooStreamRedactor(options)
-	type QueueEntry = { envelope?: z.infer<typeof rawNormalizedEventSchema>; output?: HostEvent }
+	const maxQueuedEvents = options.maxQueuedEvents ?? 512
+	const maxPendingMs = options.maxPendingMs ?? 1_000
+	const now = options.now ?? Date.now
+	type QueueEntry = { envelope?: z.infer<typeof rawNormalizedEventSchema>; output?: HostEvent; enqueuedAt: number }
 	const queue: QueueEntry[] = []
 	const envelopes = new Map<string, QueueEntry[]>()
+	let pinnedHostId: string | undefined
+	let lastSeq: number | undefined
 	const eventKey = (event: RawZooStreamEvent) =>
 		JSON.stringify([
 			event.hostId,
@@ -162,6 +174,17 @@ export function createHostEventStreamParser(
 		while (queue[0]?.output !== undefined) ready.push(queue.shift()!.output!)
 		return ready
 	}
+	const releaseBlockedQueue = (): HostEvent[] => {
+		const oldest = queue[0]
+		if (
+			oldest !== undefined &&
+			(oldest.output === undefined &&
+				(queue.length >= maxQueuedEvents || now() - oldest.enqueuedAt >= maxPendingMs))
+		) {
+			assign(redactor.failClosed())
+		}
+		return drain()
+	}
 	const sanitizeNonEvent = (event: z.infer<typeof rawHostEventDiscriminatedSchema>): HostEvent =>
 		event.type === "command.error"
 			? {
@@ -177,11 +200,20 @@ export function createHostEventStreamParser(
 	return {
 		push(input) {
 			const event = rawHostEventDiscriminatedSchema.parse(input)
-			const entry: QueueEntry = {}
+			if (pinnedHostId !== undefined && event.hostId !== pinnedHostId) {
+				throw new Error("Host event stream cannot span multiple hosts")
+			}
+			if (lastSeq !== undefined && !validateMonotonicSequence(lastSeq, event.seq).ok) {
+				throw new Error(`Expected host sequence ${lastSeq + 1}`)
+			}
+			pinnedHostId ??= event.hostId
+			lastSeq = event.seq
+			const released = releaseBlockedQueue()
+			const entry: QueueEntry = { enqueuedAt: now() }
 			queue.push(entry)
 			if (event.type !== "event") {
 				entry.output = sanitizeNonEvent(event)
-				return drain()
+				return [...released, ...releaseBlockedQueue()]
 			}
 			if (event.event.hostId !== event.hostId) throw new Error("Normalized event hostId must match its host envelope")
 			entry.envelope = event
@@ -190,7 +222,7 @@ export function createHostEventStreamParser(
 			entries.push(entry)
 			envelopes.set(key, entries)
 			assign(redactor.push(event.event))
-			return drain()
+			return [...released, ...releaseBlockedQueue()]
 		},
 		flush() {
 			assign(redactor.flush())
