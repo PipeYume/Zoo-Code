@@ -83,12 +83,40 @@ function resultEvent(seq: number, result: Record<string, unknown> = {}, event: R
 	return parsed
 }
 
-function cancellationDone(commandId = "cancel", hostId = "host") {
+function startDone(commandId = "start", rootTaskId = "root", startSeq = 1) {
 	return [
-		hostEventSchema.parse({ v: 1, seq: 1, hostId, type: "command.ack", commandId }),
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId: "host", type: "command.ack", commandId }),
 		hostEventSchema.parse({
 			v: 1,
-			seq: 2,
+			seq: startSeq + 1,
+			hostId: "host",
+			type: "command.done",
+			commandId,
+			data: { commandType: "task.start", task: { rootTaskId, taskId: rootTaskId } },
+		}),
+	]
+}
+
+function resumeDone(commandId = "resume", taskId = "root", startSeq = 1) {
+	return [
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId: "host", type: "command.ack", commandId }),
+		hostEventSchema.parse({
+			v: 1,
+			seq: startSeq + 1,
+			hostId: "host",
+			type: "command.done",
+			commandId,
+			data: { commandType: "task.resume", task: { rootTaskId: "root", taskId } },
+		}),
+	]
+}
+
+function cancellationDone(commandId = "cancel", hostId = "host", startSeq = 1) {
+	return [
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId, type: "command.ack", commandId }),
+		hostEventSchema.parse({
+			v: 1,
+			seq: startSeq + 1,
 			hostId,
 			type: "command.done",
 			commandId,
@@ -97,12 +125,12 @@ function cancellationDone(commandId = "cancel", hostId = "host") {
 	]
 }
 
-function cancellationError(commandId = "cancel") {
+function cancellationError(commandId = "cancel", startSeq = 1) {
 	return [
-		hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId }),
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId: "host", type: "command.ack", commandId }),
 		hostEventSchema.parse({
 			v: 1,
-			seq: 2,
+			seq: startSeq + 1,
 			hostId: "host",
 			type: "command.error",
 			commandId,
@@ -111,12 +139,12 @@ function cancellationError(commandId = "cancel") {
 	]
 }
 
-function askResponseDone(commandId = "respond", hostId = "host") {
+function askResponseDone(commandId = "respond", hostId = "host", startSeq = 1) {
 	return [
-		hostEventSchema.parse({ v: 1, seq: 1, hostId, type: "command.ack", commandId }),
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId, type: "command.ack", commandId }),
 		hostEventSchema.parse({
 			v: 1,
-			seq: 2,
+			seq: startSeq + 1,
 			hostId,
 			type: "command.done",
 			commandId,
@@ -125,12 +153,12 @@ function askResponseDone(commandId = "respond", hostId = "host") {
 	]
 }
 
-function askResponseError(commandId = "respond") {
+function askResponseError(commandId = "respond", startSeq = 1) {
 	return [
-		hostEventSchema.parse({ v: 1, seq: 1, hostId: "host", type: "command.ack", commandId }),
+		hostEventSchema.parse({ v: 1, seq: startSeq, hostId: "host", type: "command.ack", commandId }),
 		hostEventSchema.parse({
 			v: 1,
-			seq: 2,
+			seq: startSeq + 1,
 			hostId: "host",
 			type: "command.error",
 			commandId,
@@ -508,6 +536,18 @@ describe("strict host contracts", () => {
 		expect(byteParser.push(terminalEnvelope(1, "unterminated"))).toMatchObject([
 			{ seq: 1, event: { delta: "[REDACTED]" } },
 		])
+
+		const scopedParser = createHostEventStreamParser({ maxPendingMs: 10, now: () => now })
+		now = 0
+		expect(scopedParser.push(terminalEnvelope(1, "unterminated"))).toEqual([])
+		now = 10
+		expect(scopedParser.tick()).toMatchObject([{ seq: 1, event: { delta: "[REDACTED]" } }])
+		expect(
+			scopedParser.push({
+				...terminalEnvelope(2, "harmless\n"),
+				event: { ...terminalEnvelope(2, "harmless\n").event, toolCallId: "other-terminal" },
+			}),
+		).toMatchObject([{ seq: 2, event: { delta: "harmless\n" } }])
 	})
 
 	it("preserves host envelopes across concurrent root streams", () => {
@@ -660,7 +700,9 @@ describe("public automation contracts", () => {
 		const started = taskEvent(3, "task.started")
 		const completed = taskEvent(4, "task.lifecycle", { state: "completed" })
 		const result = resultEvent(5)
-		expect(validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand])).toEqual({ ok: true })
+		expect(validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand], startDone())).toEqual({
+			ok: true,
+		})
 		expect(
 			validateStreamLifecycle(
 				[initEvent, created, started, completed, resultEvent(5, { workspace: "/other" })],
@@ -675,6 +717,16 @@ describe("public automation contracts", () => {
 		).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([initEvent, resultEvent(2)])).toMatchObject({ ok: false })
 		expect(validateStreamLifecycle([initEvent, created, resultEvent(3)])).toMatchObject({ ok: false })
+		expect(validateStreamLifecycle([initEvent, created, started, completed, result], [startCommand])).toMatchObject({
+			ok: false,
+		})
+		expect(
+			validateStreamLifecycle(
+				[initEvent, created, started, completed, result],
+				[startCommand],
+				startDone("start", "other-root"),
+			),
+		).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle([initEvent, created, completed, { ...result, hostId: "other-host" }]),
 		).toMatchObject({
@@ -718,7 +770,7 @@ describe("public automation contracts", () => {
 				childCompleted,
 				rootCompleted,
 				resultEvent(9),
-			], [startCommand]),
+			], [startCommand], startDone()),
 		).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle(
@@ -734,6 +786,7 @@ describe("public automation contracts", () => {
 					resultEvent(9),
 				],
 				[startCommand],
+				startDone(),
 			),
 		).toMatchObject({ ok: false })
 		expect(
@@ -789,7 +842,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
 				[startCommand, response],
-				askResponseDone(),
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
 		).toEqual({
 			ok: true,
@@ -810,7 +863,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyOverride, completed, resultEvent(7)],
 				[startCommand, response],
-				askResponseDone(),
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
 		).toMatchObject({ ok: false })
 		const policyReportedResponse = zooStreamEventSchema.parse({ ...resolved, source: "policy" })
@@ -818,7 +871,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, policyReportedResponse, completed, resultEvent(7)],
 				[startCommand, response],
-				askResponseDone(),
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
 		).toEqual({ ok: true })
 		expect(
@@ -847,7 +900,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, rootCreated, rootStarted, required, waiting, needsInput],
 				[startCommand, response],
-				askResponseError(),
+				[...startDone(), ...askResponseError("respond", 3)],
 			),
 		).toEqual({ ok: true })
 		expect(
@@ -874,7 +927,7 @@ describe("public automation contracts", () => {
 		const terminalExited = taskEvent(7, "terminal.status", { toolCallId: "terminal", state: "exited", exitCode: 0 })
 		const mcpStarted = taskEvent(8, "mcp.started", { operationId: "mcp", server: "test", operation: "read" })
 		const mcpCompleted = taskEvent(9, "mcp.completed", { operationId: "mcp", server: "test", operation: "read" })
-		const interrupted = taskEvent(10, "task.lifecycle", { state: "interrupted" })
+		const interrupted = taskEvent(10, "task.lifecycle", { state: "interrupted", cause: "cancelled" })
 		const cancelled = resultEvent(11, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
 		const command = hostCommandSchema.parse({
 			v: 1,
@@ -897,7 +950,9 @@ describe("public automation contracts", () => {
 			interrupted,
 			cancelled,
 		]
-		expect(validateStreamLifecycle(stream, [startCommand, command], cancellationDone())).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(stream, [startCommand, command], [...startDone(), ...cancellationDone("cancel", "host", 3)]),
+		).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle(stream, [startCommand, command], cancellationDone("cancel", "other")),
 		).toMatchObject({ ok: false })
@@ -974,7 +1029,7 @@ describe("public automation contracts", () => {
 		const required = taskEvent(4, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
 		const abandoned = taskEvent(5, "ask.abandoned", { askId: "ask", reason: "cancelled" })
 		if (abandoned.type !== "ask.abandoned") throw new Error("Expected ask.abandoned fixture")
-		const interrupted = taskEvent(6, "task.lifecycle", { state: "interrupted" })
+		const interrupted = taskEvent(6, "task.lifecycle", { state: "interrupted", cause: "cancelled" })
 		const cancelled = resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
 		const command = hostCommandSchema.parse({
 			v: 1,
@@ -987,7 +1042,7 @@ describe("public automation contracts", () => {
 			validateStreamLifecycle(
 				[initEvent, created, started, required, abandoned, interrupted, cancelled],
 				[startCommand, command],
-				cancellationDone(),
+				[...startDone(), ...cancellationDone("cancel", "host", 3)],
 			),
 		).toEqual({ ok: true })
 		expect(
@@ -1012,13 +1067,40 @@ describe("public automation contracts", () => {
 					started,
 					required,
 					failedAbandonment,
-					taskEvent(6, "task.lifecycle", { state: "failed" }),
+					taskEvent(6, "task.lifecycle", { state: "failed", cause: "failed" }),
 					resultEvent(7, {
 						outcome: "failed",
 						error: { code: "provider_failed", message: "failed" },
 					}),
 				],
 				[startCommand],
+				startDone(),
+			),
+		).toEqual({ ok: true })
+
+		const childFailureThenCancellation = [
+			initEvent,
+			created,
+			started,
+			taskEvent(4, "task.created", { taskId: "child", parentTaskId: "root" }),
+			taskEvent(5, "task.delegated", { taskId: "child", parentTaskId: "root", childTaskId: "child" }),
+			taskEvent(6, "task.started", { taskId: "child" }),
+			taskEvent(7, "ask.required", {
+				taskId: "child",
+				askId: "child-ask",
+				category: "tool",
+				subject: "Run",
+			}),
+			taskEvent(8, "ask.abandoned", { taskId: "child", askId: "child-ask", reason: "failed" }),
+			taskEvent(9, "task.lifecycle", { taskId: "child", state: "failed", cause: "failed" }),
+			taskEvent(10, "task.lifecycle", { state: "interrupted", cause: "cancelled" }),
+			resultEvent(11, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
+		]
+		expect(
+			validateStreamLifecycle(
+				childFailureThenCancellation,
+				[startCommand, command],
+				[...startDone(), ...cancellationDone("cancel", "host", 3)],
 			),
 		).toEqual({ ok: true })
 	})
@@ -1076,9 +1158,57 @@ describe("public automation contracts", () => {
 					resultEvent(9),
 				],
 				[startCommand, response],
-				askResponseDone(),
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
 		).toEqual({ ok: true })
+
+		const secondRequired = taskEvent(5, "ask.required", { askId: "other", category: "tool", subject: "Other" })
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					started,
+					required,
+					secondRequired,
+					{ ...waiting, seq: 6 },
+					{ ...resolved, seq: 7 },
+					{ ...running, seq: 8, requestId: "respond" },
+					resultEvent(9, { outcome: "needs_input", resumable: true }),
+				],
+				[startCommand, response],
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
+			),
+		).toMatchObject({ ok: false })
+	})
+
+	it("consumes each task input resume cause once", () => {
+		const input = hostCommandSchema.parse({ v: 1, id: "input", type: "task.input", taskId: "root", text: "continue" })
+		const inputEvents = [
+			hostEventSchema.parse({ v: 1, seq: 3, hostId: "host", type: "command.ack", commandId: "input" }),
+			hostEventSchema.parse({
+				v: 1,
+				seq: 4,
+				hostId: "host",
+				type: "command.done",
+				commandId: "input",
+				data: { commandType: "task.input", taskId: "root" },
+			}),
+		]
+		const stream = [
+			initEvent,
+			taskEvent(2, "task.created"),
+			taskEvent(3, "task.started"),
+			taskEvent(4, "task.lifecycle", { state: "waiting" }),
+			taskEvent(5, "task.lifecycle", { state: "running", requestId: "input" }),
+			taskEvent(6, "task.lifecycle", { state: "waiting" }),
+			taskEvent(7, "task.lifecycle", { state: "running", requestId: "input" }),
+			taskEvent(8, "task.lifecycle", { state: "completed" }),
+			resultEvent(9),
+		]
+		expect(validateStreamLifecycle(stream, [startCommand, input], [...startDone(), ...inputEvents])).toMatchObject({
+			ok: false,
+		})
 	})
 
 	it("reconstructs resume streams from a matching command", () => {
@@ -1102,7 +1232,7 @@ describe("public automation contracts", () => {
 			completed,
 			resultEvent(7, {}, { requestId: "resume" }),
 		]
-		expect(validateStreamLifecycle(stream, [command])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [command], resumeDone())).toEqual({ ok: true })
 		expect(validateStreamLifecycle(stream)).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle(
@@ -1128,10 +1258,12 @@ describe("public automation contracts", () => {
 			taskEvent(3, "task.lifecycle", { state: "interrupted" }),
 			taskEvent(4, "task.resumed", { requestId: "resume", previousState: "interrupted" }),
 			taskEvent(5, "task.started"),
-			taskEvent(6, "task.lifecycle", { state: "interrupted" }),
+			taskEvent(6, "task.lifecycle", { state: "interrupted", cause: "cancelled" }),
 			resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
 		]
-		expect(validateStreamLifecycle(stream, [resume, cancel], cancellationDone())).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(stream, [resume, cancel], [...resumeDone(), ...cancellationDone("cancel", "host", 3)]),
+		).toEqual({ ok: true })
 	})
 
 	it("requires accepted cancellations to own cancelled results", () => {
@@ -1152,7 +1284,9 @@ describe("public automation contracts", () => {
 		expect(validateStreamLifecycle(completed, [startCommand, cancel], cancellationDone())).toMatchObject({
 			ok: false,
 		})
-		expect(validateStreamLifecycle(completed, [startCommand, cancel], cancellationError())).toEqual({ ok: true })
+		expect(
+			validateStreamLifecycle(completed, [startCommand, cancel], [...startDone(), ...cancellationError("cancel", 3)]),
+		).toEqual({ ok: true })
 		expect(validateStreamLifecycle(completed, [startCommand, cancel])).toMatchObject({ ok: false })
 	})
 
@@ -1181,7 +1315,7 @@ describe("public automation contracts", () => {
 			taskEvent(10, "task.lifecycle", { state: "completed" }),
 			resultEvent(11, {}, { requestId: "resume-child" }),
 		]
-		expect(validateStreamLifecycle(stream, [command])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [command], resumeDone("resume-child", "child"))).toEqual({ ok: true })
 		expect(
 			validateStreamLifecycle(
 				stream.map((event) =>
@@ -1212,7 +1346,7 @@ describe("public automation contracts", () => {
 			taskEvent(12, "task.lifecycle", { state: "completed" }),
 			resultEvent(13),
 		]
-		expect(validateStreamLifecycle(stream, [startCommand])).toEqual({ ok: true })
+		expect(validateStreamLifecycle(stream, [startCommand], startDone())).toEqual({ ok: true })
 	})
 
 	it("keeps pending asks on waiting tasks", () => {
@@ -1260,6 +1394,7 @@ describe("public automation contracts", () => {
 					resultEvent(7),
 				],
 				[startCommand],
+				startDone(),
 			),
 		).toMatchObject({ ok: false })
 
@@ -1365,6 +1500,7 @@ describe("public automation contracts", () => {
 					}),
 				],
 				[startCommand],
+				startDone(),
 			),
 		).toEqual({ ok: true })
 	})
@@ -1451,6 +1587,12 @@ describe("redaction contracts", () => {
 		expect(redactText("password: abc,def")).toBe("[REDACTED]")
 		expect(redactText('{"api\\u005fkey":"hunter2"}')).toBe('{"api_key":"[REDACTED]"}')
 		expect(redactText("API_\u001b[31mTOKEN=abcdefgh")).toBe("[REDACTED]")
+		expect(redactText("github_pat_1234567890abcdef")).toBe("[REDACTED]")
+		expect(redactValue({ sessionCookie: "abc", cookieJar: "def", privateKeyPem: "ghi" })).toEqual({
+			sessionCookie: "[REDACTED]",
+			cookieJar: "[REDACTED]",
+			privateKeyPem: "[REDACTED]",
+		})
 	})
 
 	it("redacts public event and result payloads during parsing", () => {
@@ -1632,6 +1774,19 @@ describe("redaction contracts", () => {
 			{ ...terminal, seq: 1, delta: '{"api_key":"hunter2' },
 		])
 		expect(unterminatedQuoted[0]?.type === "terminal.output" && unterminatedQuoted[0].delta).toBe("[REDACTED]")
+		const escapedUnterminatedQuoted = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: '{"api\\u005fkey":"hunter2' },
+		])
+		expect(
+			escapedUnterminatedQuoted[0]?.type === "terminal.output" && escapedUnterminatedQuoted[0].delta,
+		).toBe("[REDACTED]")
+		const ansiPem = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "-----BEGIN\u001b[31m PRIVATE KEY-----\n" },
+			{ ...terminal, seq: 2, delta: "private-body\n" },
+		])
+		expect(ansiPem.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
+			"[REDACTED]",
+		)
 
 		const interleaved = zooStreamSchema.parse([
 			{ ...terminal, seq: 1, delta: "API_TOKEN=" },

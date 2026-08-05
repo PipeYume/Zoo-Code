@@ -16,6 +16,7 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 	new RegExp(`(?<!["'])\\b${sensitiveKeyName}\\s*=\\s*${cliSecretValue}`, "gi"),
 	/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
 	/\b(?:sk|xox[baprs]|gh[opusr])[-_][A-Za-z0-9_-]{8,}\b/g,
+	/\bgithub_pat_[A-Za-z0-9_]{8,}\b/g,
 	/\b[A-Za-z][A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[^\s]+/gi,
 	/-----BEGIN (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?-----END (?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----/g,
 ]
@@ -30,7 +31,9 @@ function isSensitiveKey(key: string): boolean {
 		.toLowerCase()
 	if (
 		/\b(?:password|secret|passphrase|passwd|pwd)\b/.test(words) ||
-		/^(?:(?:proxy )?authorization|(?:set )?cookie|credentials?)$/.test(words)
+		/^(?:(?:proxy )?authorization|credentials?)$/.test(words) ||
+		/\bcookie\b/.test(words) ||
+		/\bprivate key\b/.test(words)
 	)
 		return true
 	return /^(?:.* )?(?:api key|api token|access token|auth token|bearer token|id token|private key|refresh token|session token|token)$/.test(
@@ -38,10 +41,14 @@ function isSensitiveKey(key: string): boolean {
 	)
 }
 
-export function redactText(value: string): string {
-	const canonical = value
+export function canonicalizeRedactionText(value: string): string {
+	return value
 		.replace(ansiEscape, "")
 		.replace(/\\u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+}
+
+export function redactText(value: string): string {
+	const canonical = canonicalizeRedactionText(value)
 	const structured = canonical
 		.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/?#]+/g, (authority) => {
 			const schemeEnd = authority.indexOf("//") + 2

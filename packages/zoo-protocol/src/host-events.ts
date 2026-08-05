@@ -196,7 +196,7 @@ export function createHostEventStreamParser(
 					queuedBytes >= maxQueuedBytes ||
 					now() - oldest.enqueuedAt >= maxPendingMs))
 		) {
-			assign(redactor.failClosed())
+			assign(redactor.failClosed(oldest.envelope?.event))
 		}
 		return drain()
 	}
