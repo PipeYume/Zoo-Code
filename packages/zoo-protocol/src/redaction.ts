@@ -83,8 +83,27 @@ export function requiresFailClosedRedaction(value: string): boolean {
 }
 
 function containsSensitiveAssignment(value: string): boolean {
-	const candidates = value.matchAll(/([A-Za-z][A-Za-z0-9_. -]*)\s*[:=]/g)
-	return [...candidates].some((match) => isSensitiveKey(match[1] ?? ""))
+	let candidateStart = 0
+	for (let index = 0; index < value.length; index += 1) {
+		const character = value[index]!
+		if (character === ":" || character === "=") {
+			const candidate = value.slice(candidateStart, index).trim()
+			if (candidate.length > 0 && isSensitiveKey(candidate)) return true
+			candidateStart = index + 1
+			continue
+		}
+		const code = character.charCodeAt(0)
+		const allowed =
+			(code >= 65 && code <= 90) ||
+			(code >= 97 && code <= 122) ||
+			(code >= 48 && code <= 57) ||
+			character === "_" ||
+			character === "." ||
+			character === "-" ||
+			character === " "
+		if (!allowed) candidateStart = index + 1
+	}
+	return false
 }
 
 function redactAssignments(value: string): string {
