@@ -87,6 +87,9 @@ describe("API headless facade", () => {
 
 	it("validates initialization and active-run boundaries", async () => {
 		await expect(api.startHeadlessTask({ text: "   " })).rejects.toThrow("must not be blank")
+		await expect(
+			api.startHeadlessTask({ text: "conflict", configuration: {}, overrides: { mode: "code" } }),
+		).rejects.toThrow("Persistent configuration and run overrides cannot be combined")
 		await api.startHeadlessTask({ text: "active" })
 		await expect(api.startHeadlessTask({ text: "second" })).rejects.toThrow("already active")
 		await expect(api.resumeHeadlessTask("other")).rejects.toThrow("already active")

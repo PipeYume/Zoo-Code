@@ -59,4 +59,48 @@ describe("ClineProvider run overrides", () => {
 			),
 		).rejects.toThrow("mutually exclusive")
 	})
+
+	it("covers generic models, disabled reasoning, and invalid override values", async () => {
+		const host = createResolverHost()
+		const baseline = { apiProvider: "openai", apiModelId: "baseline" } as ProviderSettings
+		const result = await ClineProvider.prototype["resolveRunOverrides"].call(
+			host as unknown as ClineProvider,
+			{ model: "generic", mode: "code", reasoningEffort: "disabled" },
+			baseline,
+		)
+		expect(result.apiConfiguration).toMatchObject({
+			apiModelId: "generic",
+			enableReasoningEffort: false,
+			reasoningEffort: undefined,
+		})
+
+		await expect(
+			ClineProvider.prototype["resolveRunOverrides"].call(
+				host as unknown as ClineProvider,
+				{ provider: "missing-provider", mode: "code" },
+				baseline,
+			),
+		).rejects.toThrow("Unknown provider override")
+		await expect(
+			ClineProvider.prototype["resolveRunOverrides"].call(
+				host as unknown as ClineProvider,
+				{ mode: "missing-mode" },
+				baseline,
+			),
+		).rejects.toThrow("Unknown mode override")
+	})
+
+	it("rejects combining persistent configuration with run overrides", async () => {
+		await expect(
+			ClineProvider.prototype.createTask.call(
+				createResolverHost() as unknown as ClineProvider,
+				"task",
+				undefined,
+				undefined,
+				{},
+				{ allowedCommands: ["echo"] },
+				{ mode: "code" },
+			),
+		).rejects.toThrow("Persistent configuration and run overrides cannot be combined")
+	})
 })
