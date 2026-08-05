@@ -373,6 +373,17 @@ describe("strict host contracts", () => {
 				},
 			}),
 		).toThrow("input limit")
+		const escaped = createHostEventStreamParser({ hostId: "host", maxInputBytes: 100 })
+		expect(() =>
+			escaped.push({
+				v: 1,
+				seq: 1,
+				hostId: "host",
+				type: "host.heartbeat",
+				monotonicMs: 1,
+				padding: "\u0000".repeat(30),
+			}),
+		).toThrow("input limit")
 	})
 
 	it("does not mutate parser state for an invalid nested event", () => {
@@ -936,6 +947,14 @@ describe("public automation contracts", () => {
 			...eventEnvelopes.slice(2).map((event, index) => ({ ...event, seq: index + 5 })),
 		]
 		expect(validateStreamLifecycleContract(stream, [startCommand], lateAckWindow)).toMatchObject({ ok: false })
+		const mismatchedEnvelope = eventEnvelopes.map((event, index) =>
+			index === 1 && event.type === "event"
+				? { ...event, seq: event.seq + 2, event: { ...event.event, requestId: "different-request" } }
+				: { ...event, seq: event.seq + 2 },
+		)
+		expect(validateStreamLifecycleContract(stream, [startCommand], [...startDone(), ...mismatchedEnvelope])).toMatchObject({
+			ok: false,
+		})
 	})
 
 	it("validates task-tree settlement and approval command causation", () => {
@@ -1015,7 +1034,8 @@ describe("public automation contracts", () => {
 			category: "tool",
 			subject: "Run command",
 		})
-		const resolved = taskEvent(5, "ask.resolved", {
+		const waitingForApproval = taskEvent(5, "task.lifecycle", { state: "waiting" })
+		const resolved = taskEvent(6, "ask.resolved", {
 			requestId: "respond",
 			askId: "ask",
 			decision: "approve",
@@ -1029,16 +1049,34 @@ describe("public automation contracts", () => {
 			askId: "ask",
 			response: "approve",
 		})
-		const completed = taskEvent(6, "task.lifecycle", { state: "completed" })
+		const runningAfterApproval = taskEvent(7, "task.lifecycle", { state: "running", requestId: "respond" })
+		const completed = taskEvent(8, "task.lifecycle", { state: "completed" })
 		expect(
 			validateStreamLifecycle(
-				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[
+					initEvent,
+					rootCreated,
+					rootStarted,
+					required,
+					waitingForApproval,
+					resolved,
+					runningAfterApproval,
+					completed,
+					resultEvent(9),
+				],
 				[startCommand, response],
 				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
 		).toEqual({
 			ok: true,
 		})
+		expect(
+			validateStreamLifecycle(
+				[initEvent, rootCreated, rootStarted, required, resolved, completed, resultEvent(7)],
+				[startCommand, response],
+				[...startDone(), ...askResponseDone("respond", "host", 3)],
+			),
+		).toMatchObject({ ok: false })
 		const mismatchedResolution = zooStreamEventSchema.parse({ ...resolved, decision: "reject" })
 		expect(
 			validateStreamLifecycle(
@@ -1061,7 +1099,17 @@ describe("public automation contracts", () => {
 		const policyReportedResponse = zooStreamEventSchema.parse({ ...resolved, source: "policy" })
 		expect(
 			validateStreamLifecycle(
-				[initEvent, rootCreated, rootStarted, required, policyReportedResponse, completed, resultEvent(7)],
+				[
+					initEvent,
+					rootCreated,
+					rootStarted,
+					required,
+					waitingForApproval,
+					policyReportedResponse,
+					runningAfterApproval,
+					completed,
+					resultEvent(9),
+				],
 				[startCommand, response],
 				[...startDone(), ...askResponseDone("respond", "host", 3)],
 			),
@@ -1145,6 +1193,21 @@ describe("public automation contracts", () => {
 		expect(
 			validateStreamLifecycle(stream, [startCommand, command], [...startDone(), ...cancellationDone("cancel", "host", 3)]),
 		).toEqual({ ok: true })
+		const completedDespiteCancellation = [
+			initEvent,
+			created,
+			started,
+			taskEvent(4, "task.lifecycle", { state: "completed" }),
+			resultEvent(5),
+		]
+		expect(
+			validateStreamLifecycle(
+				completedDespiteCancellation,
+				[startCommand, command],
+				[...startDone(), ...cancellationDone("cancel", "host", 3)],
+				{ initiatingCommandId: "start", commandIds: ["start"] },
+			),
+		).toMatchObject({ ok: false })
 		expect(
 			validateStreamLifecycle(
 				stream.map((event) =>
@@ -1230,10 +1293,11 @@ describe("public automation contracts", () => {
 		const created = taskEvent(2, "task.created")
 		const started = taskEvent(3, "task.started")
 		const required = taskEvent(4, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
-		const abandoned = taskEvent(5, "ask.abandoned", { askId: "ask", reason: "cancelled" })
+		const waiting = taskEvent(5, "task.lifecycle", { state: "waiting" })
+		const abandoned = taskEvent(6, "ask.abandoned", { askId: "ask", reason: "cancelled" })
 		if (abandoned.type !== "ask.abandoned") throw new Error("Expected ask.abandoned fixture")
-		const interrupted = taskEvent(6, "task.lifecycle", { state: "interrupted", cause: "cancelled" })
-		const cancelled = resultEvent(7, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
+		const interrupted = taskEvent(7, "task.lifecycle", { state: "interrupted", cause: "cancelled" })
+		const cancelled = resultEvent(8, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" })
 		const command = hostCommandSchema.parse({
 			v: 1,
 			id: "cancel",
@@ -1243,7 +1307,7 @@ describe("public automation contracts", () => {
 		})
 		expect(
 			validateStreamLifecycle(
-				[initEvent, created, started, required, abandoned, interrupted, cancelled],
+				[initEvent, created, started, required, waiting, abandoned, interrupted, cancelled],
 				[startCommand, command],
 				[...startDone(), ...cancellationDone("cancel", "host", 3)],
 			),
@@ -1261,7 +1325,7 @@ describe("public automation contracts", () => {
 				[command],
 			),
 		).toMatchObject({ ok: false })
-		const failedAbandonment = taskEvent(5, "ask.abandoned", { askId: "ask", reason: "failed" })
+		const failedAbandonment = taskEvent(6, "ask.abandoned", { askId: "ask", reason: "failed" })
 		expect(
 			validateStreamLifecycle(
 				[
@@ -1269,9 +1333,10 @@ describe("public automation contracts", () => {
 					created,
 					started,
 					required,
+					waiting,
 					failedAbandonment,
-					taskEvent(6, "task.lifecycle", { state: "failed", cause: "failed" }),
-					resultEvent(7, {
+					taskEvent(7, "task.lifecycle", { state: "failed", cause: "failed" }),
+					resultEvent(8, {
 						outcome: "failed",
 						error: { code: "provider_failed", message: "failed" },
 					}),
@@ -1294,10 +1359,11 @@ describe("public automation contracts", () => {
 				category: "tool",
 				subject: "Run",
 			}),
-			taskEvent(8, "ask.abandoned", { taskId: "child", askId: "child-ask", reason: "failed" }),
-			taskEvent(9, "task.lifecycle", { taskId: "child", state: "failed", cause: "failed" }),
-			taskEvent(10, "task.lifecycle", { state: "interrupted", cause: "cancelled" }),
-			resultEvent(11, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
+			taskEvent(8, "task.lifecycle", { taskId: "child", state: "waiting" }),
+			taskEvent(9, "ask.abandoned", { taskId: "child", askId: "child-ask", reason: "failed" }),
+			taskEvent(10, "task.lifecycle", { taskId: "child", state: "failed", cause: "failed" }),
+			taskEvent(11, "task.lifecycle", { state: "interrupted", cause: "cancelled" }),
+			resultEvent(12, { outcome: "cancelled", cancellationReason: "user" }, { requestId: "cancel" }),
 		]
 		expect(
 			validateStreamLifecycle(
@@ -1826,6 +1892,9 @@ describe("redaction contracts", () => {
 			proxyAuthorization: "[REDACTED]",
 		})
 		expect(redactText("password: abc,def")).toBe("[REDACTED]")
+		expect(redactText('{"password": abc,def}')).toBe('{"password": [REDACTED]}')
+		expect(redactText("accessTokenValue=hunter2 cookieJar=session123")).not.toMatch(/hunter2|session123/)
+		expect(redactText(`\u001b]0;password=hunter2\u0007safe`)).toBe("[REDACTED]")
 		expect(redactText('{"api\\u005fkey":"hunter2"}')).toBe("[REDACTED]")
 		expect(redactText("API_\u001b[31mTOKEN=abcdefgh")).toBe("[REDACTED]")
 		expect(redactText('{"literal":"\\u0061"}')).toBe('{"literal":"\\u0061"}')
@@ -2062,7 +2131,18 @@ describe("redaction contracts", () => {
 				.filter((event) => event.type === "terminal.output" && event.stream === "stdout")
 				.map((event) => (event.type === "terminal.output" ? event.delta : ""))
 				.join(""),
-		).toBe("[REDACTED]\n")
+		).toBe("[REDACTED]\nabcdefgh\n")
+		const crossStream = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "API_TOKEN=" },
+			{ ...terminal, seq: 2, stream: "stderr", delta: "hunter2\n" },
+		])
+		expect(crossStream.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
+			"[REDACTED]\n",
+		)
+		expect(crossStream.map((event) => (event.type === "terminal.output" ? event.stream : ""))).toEqual([
+			"stdout",
+			"stderr",
+		])
 	})
 
 	it("preserves prototype-like keys as redacted record data", () => {

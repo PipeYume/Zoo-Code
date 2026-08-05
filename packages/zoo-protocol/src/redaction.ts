@@ -5,9 +5,12 @@ const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
 const singleQuotedSecret = new RegExp(`('${sensitiveKeyName}'\\s*:\\s*)'(?:\\\\.|[^'\\\\])*'`, "gi")
 const quotedUnquotedSecret = new RegExp(
-	`((?:"${sensitiveKeyName}"|'${sensitiveKeyName}')\\s*:\\s*)(?!["'])[^\\s,;}]+`,
+	`((?:"${sensitiveKeyName}"|'${sensitiveKeyName}')\\s*:\\s*)(?!["'])[^\\r\\n;}]+`,
 	"gi",
 )
+const quotedAssignment = /((["'])([^"']+)\2\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n;}]+)/g
+const bareColonAssignment = /(\b([A-Za-z][A-Za-z0-9_.-]*)\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n;}]+)/g
+const bareEqualsAssignment = /(\b([A-Za-z][A-Za-z0-9_.-]*)\s*=\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)/g
 const terminalControl = new RegExp(
 	`(?:${String.fromCharCode(27)}\\][^${String.fromCharCode(7)}${String.fromCharCode(27)}]*(?:${String.fromCharCode(7)}|${String.fromCharCode(27)}\\\\)|${String.fromCharCode(27)}[PX^_][\\s\\S]*?${String.fromCharCode(27)}\\\\|${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]|[\\u0090\\u0098\\u009d\\u009e\\u009f][\\s\\S]*?\\u009c|\\u009b[0-?]*[ -/]*[@-~]|${String.fromCharCode(27)}[@-_])`,
 	"g",
@@ -61,7 +64,26 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 export function requiresFailClosedRedaction(value: string): boolean {
-	return unsafeTerminalEditing.test(value)
+	if (unsafeTerminalEditing.test(value)) return true
+	return [...value.matchAll(new RegExp(terminalControl.source, "g"))].some(([control]) => containsSensitiveAssignment(control))
+}
+
+function containsSensitiveAssignment(value: string): boolean {
+	const candidates = value.matchAll(/([A-Za-z][A-Za-z0-9_. -]*)\s*[:=]/g)
+	return [...candidates].some((match) => isSensitiveKey(match[1] ?? ""))
+}
+
+function redactAssignments(value: string): string {
+	return value
+		.replace(quotedAssignment, (match, prefix: string, _quote: string, key: string, value: string) =>
+			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+		)
+		.replace(bareColonAssignment, (match, prefix: string, key: string, value: string) =>
+			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+		)
+		.replace(bareEqualsAssignment, (match, prefix: string, key: string, value: string) =>
+			isSensitiveKey(key) && !value.includes(REDACTED) ? `${prefix}${REDACTED}` : match,
+		)
 }
 
 export function canonicalizeRedactionText(value: string): string {
@@ -92,7 +114,8 @@ export function redactText(value: string): string {
 		.replace(doubleQuotedSecret, `$1"${REDACTED}"`)
 		.replace(singleQuotedSecret, `$1'${REDACTED}'`)
 		.replace(quotedUnquotedSecret, `$1${REDACTED}`)
-	const redacted = secretPatterns.reduce((text, pattern) => text.replace(pattern, REDACTED), structured)
+	const assignments = redactAssignments(structured)
+	const redacted = secretPatterns.reduce((text, pattern) => text.replace(pattern, REDACTED), assignments)
 	if (canonical !== value) return redacted === canonical ? value : REDACTED
 	return redacted
 }

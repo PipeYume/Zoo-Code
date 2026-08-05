@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util"
+
 import { z } from "zod"
 
 import { validateCommandLifecycle } from "./command-lifecycle.js"
@@ -316,7 +318,7 @@ export function createZooStreamRedactor(
 	const pendingOutputs = new Map<string, PendingOutput>()
 	let failClosedAll = false
 	const outputKey = (event: z.infer<typeof terminalOutputEventSchema>) =>
-		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId, event.stream])
+		JSON.stringify([event.hostId, event.rootTaskId, event.taskId, event.toolCallId])
 	const hasUnmatchedPem = (text: string): boolean => {
 		const openLabels: string[] = []
 		for (const match of text.matchAll(/-----(BEGIN|END) ((?:[A-Z ]*PRIVATE KEY|PGP PRIVATE KEY BLOCK))-----/g)) {
@@ -515,6 +517,13 @@ export function validateStreamLifecycle(
 	if (!commandLifecycle.ok) {
 		return { ok: false, code: "protocol_gap", message: commandLifecycle.message }
 	}
+	const eventEnvelopes = commandEvents.filter((event) => event.type === "event")
+	if (
+		eventEnvelopes.length !== events.length ||
+		events.some((streamEvent, index) => !isDeepStrictEqual(eventEnvelopes[index]?.event, streamEvent))
+	) {
+		return { ok: false, code: "protocol_gap", message: "Public events must exactly match their ordered host envelopes" }
+	}
 	const results = events.filter((event) => event.type === "task.result")
 	if (results.length !== 1 || events.at(-1)?.type !== "task.result") {
 		return { ok: false, code: "task_failed", message: "Accepted stream must end with exactly one task.result" }
@@ -525,9 +534,7 @@ export function validateStreamLifecycle(
 		return { ok: false, code: "task_failed", message: "task.result must identify the authoritative root task" }
 	}
 	const resumedEvents = events.filter((streamEvent) => streamEvent.type === "task.resumed")
-	const scopedCommandIds =
-		lifecycleScope?.commandIds === undefined ? undefined : new Set(lifecycleScope.commandIds)
-	const runCommands = scopedCommandIds === undefined ? commands : commands.filter((command) => scopedCommandIds.has(command.id))
+	const runCommands = commands
 	const initiatingCandidates = runCommands.filter((command) => command.type === "task.start" || command.type === "task.resume")
 	const initiatingCommand = lifecycleScope
 		? initiatingCandidates.find((command) => command.id === lifecycleScope.initiatingCommandId)
@@ -618,16 +625,8 @@ export function validateStreamLifecycle(
 		return false
 	}
 	const hostSequenceFor = (streamEvent: ZooStreamEvent): number | undefined => {
-		const matches = commandEvents.filter(
-			(event) =>
-				event.type === "event" &&
-				event.event.hostId === streamEvent.hostId &&
-				event.event.seq === streamEvent.seq &&
-				event.event.type === streamEvent.type &&
-				("rootTaskId" in event.event ? event.event.rootTaskId : undefined) ===
-					("rootTaskId" in streamEvent ? streamEvent.rootTaskId : undefined),
-		)
-		return matches.length === 1 ? matches[0]!.seq : undefined
+		const index = events.indexOf(streamEvent)
+		return index < 0 ? undefined : eventEnvelopes[index]?.seq
 	}
 	const causalTerminal = (commandId: string, effect?: ZooStreamEvent): HostEvent | undefined => {
 		const lifecycle = commandEvents.filter(
@@ -770,6 +769,13 @@ export function validateStreamLifecycle(
 		}
 
 		const previousState = taskStates.get(streamEvent.taskId)
+		if (
+			previousState === "running" &&
+			(pendingAsks.get(streamEvent.taskId)?.size ?? 0) > 0 &&
+			!(streamEvent.type === "task.lifecycle" && streamEvent.state === "waiting")
+		) {
+			return { ok: false, code: "task_failed", message: "A pending approval must transition its task to waiting" }
+		}
 		if (
 			approvalResumeCauses.has(streamEvent.taskId) &&
 			!(streamEvent.type === "task.lifecycle" && streamEvent.state === "running")
@@ -922,12 +928,19 @@ export function validateStreamLifecycle(
 		}
 		if (streamEvent.type === "ask.required") {
 			const asks = askScope(streamEvent.taskId)
-			if (asks.has(streamEvent.askId) || settledAsks.get(streamEvent.taskId)?.has(streamEvent.askId) === true) {
+			if (
+				taskStates.get(streamEvent.taskId) !== "running" ||
+				asks.has(streamEvent.askId) ||
+				settledAsks.get(streamEvent.taskId)?.has(streamEvent.askId) === true
+			) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was already used` }
 			}
 			asks.add(streamEvent.askId)
 		}
 		if (streamEvent.type === "ask.resolved") {
+			if (taskStates.get(streamEvent.taskId) !== "waiting") {
+				return { ok: false, code: "task_failed", message: "Ask resolution requires a waiting task" }
+			}
 			if (!pendingAsks.get(streamEvent.taskId)?.delete(streamEvent.askId)) {
 				return { ok: false, code: "task_failed", message: `Ask ${streamEvent.askId} was not pending` }
 			}

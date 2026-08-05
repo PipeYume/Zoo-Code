@@ -151,18 +151,43 @@ export function createHostEventStreamParser(
 	const envelopes = new Map<string, QueueEntry[]>()
 	const pinnedHostId = options.hostId
 	let lastSeq: number | undefined
-	const inputSize = (value: unknown, seen = new WeakSet<object>()): number => {
-		if (value === null || value === undefined) return 4
-		if (typeof value === "string") return new TextEncoder().encode(value).byteLength
-		if (typeof value !== "object") return 8
-		if (seen.has(value)) return maxInputBytes + 1
-		seen.add(value)
-		let bytes = 2
-		for (const [key, entry] of Object.entries(value)) {
-			bytes += new TextEncoder().encode(key).byteLength + inputSize(entry, seen)
+	const encoder = new TextEncoder()
+	const inputSize = (value: unknown): number => {
+		const seen = new WeakSet<object>()
+		const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
+		let bytes = 0
+		while (stack.length > 0) {
+			const current = stack.pop()!
+			if (current.depth > 64) return maxInputBytes + 1
+			if (current.value === null || typeof current.value !== "object") {
+				let serialized: string | undefined
+				try {
+					serialized = JSON.stringify(current.value)
+				} catch {
+					return maxInputBytes + 1
+				}
+				if (serialized === undefined) return maxInputBytes + 1
+				bytes += encoder.encode(serialized).byteLength
+			} else {
+				if (seen.has(current.value)) return maxInputBytes + 1
+				seen.add(current.value)
+				if (Array.isArray(current.value)) {
+					bytes += 2 + Math.max(0, current.value.length - 1)
+					for (let index = current.value.length - 1; index >= 0; index -= 1) {
+						stack.push({ value: current.value[index], depth: current.depth + 1 })
+					}
+				} else {
+					const entries = Object.entries(current.value)
+					bytes += 2 + Math.max(0, entries.length - 1)
+					for (let index = entries.length - 1; index >= 0; index -= 1) {
+						const [key, entry] = entries[index]!
+						bytes += encoder.encode(JSON.stringify(key)).byteLength + 1
+						stack.push({ value: entry, depth: current.depth + 1 })
+					}
+				}
+			}
 			if (bytes > maxInputBytes) return bytes
 		}
-		seen.delete(value)
 		return bytes
 	}
 	const eventKey = (event: RawZooStreamEvent) =>
@@ -247,7 +272,7 @@ export function createHostEventStreamParser(
 			}
 			let bytes: number
 			try {
-				bytes = new TextEncoder().encode(JSON.stringify(event)).byteLength
+				bytes = encoder.encode(JSON.stringify(event)).byteLength
 			} catch {
 				bytes = maxQueuedBytes
 			}
