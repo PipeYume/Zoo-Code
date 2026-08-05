@@ -44,6 +44,7 @@ export type HeadlessTaskResult = {
 	currentTaskId: string
 	outcome: "completed" | "cancelled" | "failed"
 	resumable: boolean
+	cancellationReason?: "user" | "signal" | "timeout"
 	content?: string
 	error?: { code: "task_failed" | "cancel_failed" | "shutdown"; message: string }
 	tokenUsage?: TokenUsage
@@ -71,6 +72,7 @@ export interface RooCodeAPI extends EventEmitter<RooCodeAPIEvents> {
 	}): Promise<HeadlessCancelSettlement>
 	getHeadlessTaskResult(rootTaskId: string): Promise<HeadlessTaskResult | undefined>
 	waitForHeadlessTaskResult(rootTaskId: string): Promise<HeadlessTaskResult>
+	listHeadlessTaskHistory(workspace: string): Promise<HistoryItem[]>
 	shutdownHeadless(): Promise<HeadlessShutdownReport>
 	/**
 	 * Starts a new task with an optional initial message and images.

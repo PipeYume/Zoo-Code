@@ -257,6 +257,7 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 
 	public async cancelHeadlessTask({
 		rootTaskId,
+		reason,
 	}: {
 		rootTaskId: string
 		reason: "user" | "signal" | "timeout"
@@ -277,6 +278,7 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 				currentTaskId: currentTask.taskId,
 				outcome: "cancelled",
 				resumable,
+				cancellationReason: reason,
 			})
 			return { rootTaskId, resumable, status: "interrupted" }
 		} catch (error) {
@@ -341,6 +343,7 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 			currentTaskId: result.currentTaskId,
 			outcome: result.outcome,
 			resumable: result.resumable,
+			cancellationReason: result.cancellationReason,
 			content: result.content,
 			historyItem: this.sidebarProvider.taskHistoryStore.get(result.rootTaskId),
 		})
@@ -456,6 +459,10 @@ export class API extends EventEmitter<RooCodeEvents> implements RooCodeAPI {
 	public async getTaskHistoryItem(taskId: string) {
 		const item = this.sidebarProvider.taskHistoryStore.get(taskId)
 		return item ? structuredClone(item) : undefined
+	}
+
+	public async listHeadlessTaskHistory(workspace: string) {
+		return structuredClone(this.sidebarProvider.taskHistoryStore.getByWorkspace(workspace))
 	}
 
 	public async getTaskApiConversationHistoryLength(taskId: string): Promise<number> {

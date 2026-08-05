@@ -48,6 +48,11 @@ export class HostCommandDispatcher {
 				return { commandType: command.type, task }
 			}
 			case "task.resume": {
+				const history = await this.api.getTaskHistoryItem(command.taskId)
+				if (!history) throw new Error(`Unknown session ${command.taskId}`)
+				if (history.workspace !== this.workspace) {
+					throw new Error(`Session ${command.taskId} belongs to workspace ${history.workspace ?? "unknown"}`)
+				}
 				const task = await this.api.resumeHeadlessTask(command.taskId, command.overrides)
 				this.activeRootTaskId = task.rootTaskId
 				return { commandType: command.type, task }
@@ -78,7 +83,26 @@ export class HostCommandDispatcher {
 				await this.api.shutdownHeadless()
 				return { commandType: command.type }
 			case "history.list":
-				return { commandType: command.type, workspace: command.workspace, tasks: [] }
+				if (command.workspace !== this.workspace) throw new Error("Host workspace identity cannot change")
+				return {
+					commandType: command.type,
+					workspace: command.workspace,
+					tasks: (await this.api.listHeadlessTaskHistory(command.workspace))
+						.filter((item) => item.parentTaskId === undefined)
+						.map((item) => ({
+							rootTaskId: item.rootTaskId ?? item.id,
+							currentTaskId: item.delegatedToId ?? item.id,
+							workspace: command.workspace,
+							state:
+								item.status === "completed"
+									? ("completed" as const)
+									: item.status === "interrupted"
+										? ("interrupted" as const)
+										: item.status === "delegated"
+											? ("waiting" as const)
+											: ("running" as const),
+						})),
+				}
 		}
 	}
 }

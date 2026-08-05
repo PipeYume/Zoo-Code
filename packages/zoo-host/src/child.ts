@@ -10,6 +10,7 @@ import {
 
 import { activateExtensionHost } from "./bootstrap.js"
 import { HostCommandDispatcher } from "./dispatcher.js"
+import { HostEventBridge } from "./events.js"
 import { validateHostRoots, type HostRoots } from "./roots.js"
 import { createSystemVaultBackend, VaultSecretStorage } from "./security.js"
 import { HostTransport } from "./transport.js"
@@ -70,6 +71,14 @@ export async function runChild(config: ChildConfig): Promise<void> {
 	const secretStorage = new VaultSecretStorage(createSystemVaultBackend())
 	const extension = await activateExtensionHost(roots, secretStorage)
 	const transport = new HostTransport(hostId, sendProcessMessage)
+	const bridge = new HostEventBridge(
+		extension.api,
+		transport,
+		roots.workspaceRoot,
+		selection.clientVersion,
+		config.buildVersion,
+	)
+	await bridge.initialize()
 	const dispatcher = new HostCommandDispatcher(extension.api, transport, roots.workspaceRoot)
 	transport.startHeartbeat()
 	process.on("message", (message) => {
