@@ -102,6 +102,16 @@ describe("HookRunner", () => {
 		expect((await cancellation).status).toBe("cancelled")
 	})
 
+	it("uses the Windows termination path without process discovery", async () => {
+		const result = await new HookRunner({ timeoutMs: 30, platform: "win32" }).run(
+			{ ...definition, argv: ["-e", "setInterval(() => {}, 1000)"] },
+			invocation("windows-timeout"),
+			new AbortController().signal,
+		)
+
+		expect(result.status).toBe("timedOut")
+	})
+
 	it("terminates child processes before returning from timeout", async () => {
 		const childScript = "setInterval(() => {}, 1000)"
 		const parentScript = [

@@ -22,6 +22,7 @@ type TerminationReason = "timedOut" | "cancelled"
 
 interface HookRunnerOptions {
 	timeoutMs?: number
+	platform?: NodeJS.Platform
 }
 
 function collectProcessTree(pid: number): Promise<number[]> {
@@ -37,11 +38,11 @@ function collectProcessTree(pid: number): Promise<number[]> {
 	})
 }
 
-async function terminateProcessTree(pid: number | undefined): Promise<void> {
+async function terminateProcessTree(pid: number | undefined, platform: NodeJS.Platform): Promise<void> {
 	if (pid === undefined) {
 		return
 	}
-	if (process.platform === "win32") {
+	if (platform === "win32") {
 		const taskkillPath = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe")
 		const result = await execa(taskkillPath, ["/PID", String(pid), "/T", "/F"], { reject: false }).catch(
 			() => undefined,
@@ -149,9 +150,11 @@ async function validateCwd(cwd: string): Promise<void> {
 
 export class HookRunner {
 	private readonly timeoutMs: number
+	private readonly platform: NodeJS.Platform
 
 	constructor(options: HookRunnerOptions = {}) {
 		this.timeoutMs = options.timeoutMs ?? HOOK_TIMEOUT_MS
+		this.platform = options.platform ?? process.platform
 	}
 
 	async run(definition: HookDefinition, invocation: HookInvocation, signal: AbortSignal): Promise<HookRunResult> {
@@ -223,7 +226,7 @@ export class HookRunner {
 			signal.removeEventListener("abort", onAbort)
 
 			if (outcome.type === "termination") {
-				await terminateProcessTree(subprocess.pid)
+				await terminateProcessTree(subprocess.pid, this.platform)
 				await subprocess.catch(() => undefined)
 				const summaries = boundedSummaries(
 					sanitizeHookOutput(Buffer.concat(stdoutChunks).toString("utf8")),
