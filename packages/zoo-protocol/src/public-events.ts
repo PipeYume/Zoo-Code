@@ -988,6 +988,9 @@ export function validateStreamLifecycle(
 	if (pendingAskCount > 0 && resultEvent.result.outcome !== "needs_input") {
 		return { ok: false, code: "task_failed", message: "Terminal stream contains unresolved asks" }
 	}
+	if (resultEvent.result.outcome === "needs_input" && pendingAskCount === 0) {
+		return { ok: false, code: "task_failed", message: "needs_input requires an unresolved actionable ask" }
+	}
 	if (
 		resultEvent.result.outcome === "needs_input" &&
 		[...pendingAsks].some(([taskId, asks]) => asks.size > 0 && taskStates.get(taskId) !== "waiting")

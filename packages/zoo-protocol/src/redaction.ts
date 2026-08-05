@@ -53,9 +53,18 @@ function isSensitiveKey(key: string): boolean {
 }
 
 export function canonicalizeRedactionText(value: string): string {
-	return value
+	const withoutTerminalControls = value
 		.replace(terminalControl, "")
 		.replace(/\\u([0-9a-f]{4})/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+	const rendered: string[] = []
+	for (const character of withoutTerminalControls) {
+		if (character === "\b") {
+			if (rendered.at(-1) !== "\n") rendered.pop()
+		} else {
+			rendered.push(character)
+		}
+	}
+	return rendered.join("")
 }
 
 export function redactText(value: string): string {

@@ -1464,6 +1464,19 @@ describe("public automation contracts", () => {
 				resultEvent(8, { outcome: "needs_input", resumable: true }),
 			]),
 		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					taskEvent(2, "task.created"),
+					taskEvent(3, "task.started"),
+					taskEvent(4, "task.lifecycle", { state: "waiting" }),
+					resultEvent(5, { outcome: "needs_input", resumable: true }),
+				],
+				[startCommand],
+				startDone(),
+			),
+		).toMatchObject({ ok: false })
 	})
 
 	it("enforces operation, ask, message, and parent execution state", () => {
@@ -1921,6 +1934,7 @@ describe("redaction contracts", () => {
 	it("canonicalizes terminal controls and credential value suffixes", () => {
 		expect(redactText(`API_\u001b]0;title\u0007TOKEN=hunter2`)).toBe("[REDACTED]")
 		expect(redactText(`API_\u009dtitle\u009cTOKEN=hunter2`)).toBe("[REDACTED]")
+		expect(redactText("passX\bword=hunter2")).toBe("[REDACTED]")
 		expect(redactValue({ accessTokenValue: "hunter2", apiKeyValue: "secret", maxTokenValue: 10 })).toEqual({
 			accessTokenValue: "[REDACTED]",
 			apiKeyValue: "[REDACTED]",
@@ -1998,6 +2012,12 @@ describe("deterministic parity oracle", () => {
 						resumable: true,
 					},
 				],
+				"root",
+			),
+		).toBe(false)
+		expect(
+			assertAuthoritativeRootResult(
+				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "needs_input" }],
 				"root",
 			),
 		).toBe(false)
