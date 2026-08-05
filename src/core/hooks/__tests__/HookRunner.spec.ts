@@ -152,7 +152,7 @@ describe("HookRunner", () => {
 		const metadata = JSON.parse(result.stdoutSummary ?? "{}")
 
 		expect(metadata.data).toEqual(invocation())
-		expect(metadata.mode).toBe(0o600)
+		if (process.platform !== "win32") expect(metadata.mode).toBe(0o600)
 		await expect(fs.stat(metadata.path)).rejects.toThrow()
 	})
 })
