@@ -1,6 +1,5 @@
 const REDACTED = "[REDACTED]" as const
-const sensitiveKey = /(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)/i
-const sensitiveKeyName = String.raw`[A-Za-z0-9_.-]*(?:api[-_ ]?key|authorization|cookie|credential|password|private[-_ ]?key|secret|token)[A-Za-z0-9_.-]*`
+const sensitiveKeyName = String.raw`[A-Za-z0-9_.-]*(?:api[-_ ]?key|access[-_ ]?token|auth[-_ ]?token|authorization|bearer[-_ ]?token|client[-_ ]?secret|cookie|credential|id[-_ ]?token|password|private[-_ ]?key|refresh[-_ ]?token|secret|session[-_ ]?token|token)[A-Za-z0-9_.-]*`
 const secretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`
 const cliSecretValue = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;}]+)`
 const doubleQuotedSecret = new RegExp(`("${sensitiveKeyName}"\\s*:\\s*)"(?:\\\\.|[^"\\\\])*"`, "gi")
@@ -20,6 +19,18 @@ const secretPatterns: ReadonlyArray<RegExp> = [
 ]
 
 export type RedactedValue = null | undefined | boolean | number | string | RedactedValue[] | { [key: string]: RedactedValue }
+
+function isSensitiveKey(key: string): boolean {
+	const words = key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/[^A-Za-z0-9]+/g, " ")
+		.trim()
+		.toLowerCase()
+	if (/^(?:authorization|cookie|credential|password|secret)$/.test(words)) return true
+	return /^(?:.* )?(?:api key|access token|auth token|bearer token|client secret|id token|private key|refresh token|session token|token)$/.test(
+		words,
+	)
+}
 
 export function redactText(value: string): string {
 	const structured = value
@@ -49,7 +60,7 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): Redac
 	} else {
 		const entries: Record<string, RedactedValue> = {}
 		for (const [key, entry] of Object.entries(value)) {
-			entries[key] = sensitiveKey.test(key) ? REDACTED : redactValue(entry, seen)
+			entries[key] = isSensitiveKey(key) ? REDACTED : redactValue(entry, seen)
 		}
 		result = entries
 	}

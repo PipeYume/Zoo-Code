@@ -20,6 +20,7 @@ import {
 	validateStreamLifecycle,
 	zooRunResultSchema,
 	zooStreamEventSchema,
+	zooStreamSchema,
 } from "../index.js"
 
 const timestamp = "2026-08-05T12:00:00.000Z"
@@ -424,6 +425,9 @@ describe("public automation contracts", () => {
 		expect(zooStreamEventSchema.safeParse({ ...event, seq: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, rawSecret: "no" }).success).toBe(false)
 		expect(zooStreamEventSchema.safeParse({ ...event, taskId: undefined }).success).toBe(false)
+		expect(zooStreamEventSchema.safeParse({ ...initEvent, capabilities: ["task:start", "future:additive"] }).success).toBe(
+			true,
+		)
 	})
 
 	it("requires init, contiguous sequence, and a settled authoritative root", () => {
@@ -435,6 +439,12 @@ describe("public automation contracts", () => {
 		expect(
 			validateStreamLifecycle(
 				[initEvent, created, started, completed, resultEvent(5, { workspace: "/other" })],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
+		expect(
+			validateStreamLifecycle(
+				[initEvent, created, started, completed, resultEvent(5, {}, { requestId: "other" })],
 				[startCommand],
 			),
 		).toMatchObject({ ok: false })
@@ -835,6 +845,99 @@ describe("public automation contracts", () => {
 		).toMatchObject({ ok: false })
 	})
 
+	it("enforces operation, ask, message, and parent execution state", () => {
+		const created = taskEvent(2, "task.created")
+		const started = taskEvent(3, "task.started")
+		const required = taskEvent(4, "ask.required", { askId: "ask", category: "tool", subject: "Run" })
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					started,
+					required,
+					taskEvent(5, "tool.started", { toolCallId: "tool", name: "shell" }),
+					taskEvent(6, "task.lifecycle", { state: "completed" }),
+					resultEvent(7),
+				],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
+
+		const response = hostCommandSchema.parse({
+			v: 1,
+			id: "respond",
+			type: "ask.respond",
+			taskId: "root",
+			askId: "ask",
+			response: "approve",
+		})
+		const resolved = taskEvent(5, "ask.resolved", {
+			requestId: "respond",
+			askId: "ask",
+			decision: "approve",
+			source: "user",
+		})
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					started,
+					required,
+					resolved,
+					taskEvent(6, "ask.required", { askId: "ask", category: "tool", subject: "Again" }),
+					taskEvent(7, "task.lifecycle", { state: "completed" }),
+					resultEvent(8),
+				],
+				[startCommand, response],
+			),
+		).toMatchObject({ ok: false })
+
+		const message = taskEvent(4, "message.upsert", {
+			messageId: "message",
+			role: "assistant",
+			content: "done",
+			complete: true,
+		})
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					started,
+					message,
+					taskEvent(5, "message.upsert", {
+						messageId: "message",
+						role: "user",
+						content: "changed",
+						complete: false,
+					}),
+					taskEvent(6, "task.lifecycle", { state: "completed" }),
+					resultEvent(7),
+				],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
+
+		expect(
+			validateStreamLifecycle(
+				[
+					initEvent,
+					created,
+					taskEvent(3, "task.created", { taskId: "child", parentTaskId: "root" }),
+					taskEvent(4, "task.delegated", { taskId: "child", parentTaskId: "root", childTaskId: "child" }),
+					taskEvent(5, "task.started", { taskId: "child" }),
+					taskEvent(6, "task.lifecycle", { taskId: "child", state: "completed" }),
+					taskEvent(7, "task.started"),
+					taskEvent(8, "task.lifecycle", { state: "completed" }),
+					resultEvent(9),
+				],
+				[startCommand],
+			),
+		).toMatchObject({ ok: false })
+	})
+
 	it("maps every terminal outcome deterministically", () => {
 		expect(exitCodeFor({ outcome: "completed" })).toBe(EXIT_CODES.completed)
 		expect(exitCodeFor({ outcome: "needs_input" })).toBe(EXIT_CODES.needsInput)
@@ -879,6 +982,15 @@ describe("redaction contracts", () => {
 		expect(redactText("https://alice:p@ss@example.com/path")).toBe("https://[REDACTED]@example.com/path")
 		expect(redactText("--password abc,def run")).toBe("[REDACTED] run")
 		expect(redactText('API_TOKEN="abc def" run')).toBe("[REDACTED] run")
+		expect(redactText('{"access token":"hunter2","client secret":"secret-value"}')).toBe(
+			'{"access token":"[REDACTED]","client secret":"[REDACTED]"}',
+		)
+		expect(redactValue({ max_tokens: 4096, tokenCount: 12, tokenizer: "bpe", accessToken: "secret" })).toEqual({
+			max_tokens: 4096,
+			tokenCount: 12,
+			tokenizer: "bpe",
+			accessToken: "[REDACTED]",
+		})
 	})
 
 	it("redacts public event and result payloads during parsing", () => {
@@ -924,6 +1036,39 @@ describe("redaction contracts", () => {
 			delta: "API_TOKEN=",
 		})
 		expect(terminalPrefix.type === "terminal.output" && terminalPrefix.delta).toBe("[REDACTED]")
+		const failed = zooRunResultSchema.parse({
+			schemaVersion: 1,
+			protocol: "zoo-run-result",
+			success: false,
+			outcome: "failed",
+			rootTaskId: "root",
+			workspace: "/workspace",
+			resumable: false,
+			error: { code: "provider_failed", message: "safe", phase: "password=hunter2" },
+			elapsedMs: 1,
+		})
+		expect(failed.error?.phase).toBe("[REDACTED]")
+	})
+
+	it("buffers terminal output across delta boundaries without destroying harmless output", () => {
+		const terminal = {
+			v: 1,
+			timestamp,
+			hostId: "host",
+			rootTaskId: "root",
+			taskId: "root",
+			type: "terminal.output",
+			toolCallId: "terminal",
+			stream: "stdout",
+		} as const
+		const output = zooStreamSchema.parse([
+			{ ...terminal, seq: 1, delta: "Build succeeded\n" },
+			{ ...terminal, seq: 2, delta: "API_TOKEN=" },
+			{ ...terminal, seq: 3, delta: "abcdefgh" },
+		])
+		expect(output.map((event) => (event.type === "terminal.output" ? event.delta : "")).join("")).toBe(
+			"Build succeeded\n[REDACTED]",
+		)
 	})
 
 	it("handles cycles without throwing", () => {
@@ -998,7 +1143,7 @@ describe("deterministic parity oracle", () => {
 				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "timed_out" }],
 				"root",
 			),
-		).toBe(false)
+		).toBe(true)
 	})
 
 	it("reports semantic drift without timestamps", () => {
@@ -1015,6 +1160,21 @@ describe("deterministic parity oracle", () => {
 			expected: [],
 		})
 		expect(timeout.at(-1)).toMatchObject({ outcome: "timed_out", errorCode: "task_timed_out" })
+		expect(
+			assertAuthoritativeRootResult(
+				[{ type: "task.result", taskId: "root", rootTaskId: "root", outcome: "timed_out" }],
+				"root",
+			),
+		).toBe(true)
+		const colonArgument = runDeterministicFakeProvider({
+			id: "colon-argument",
+			prompt: "Read URL",
+			providerTurns: ["tool:read_file:call:https://example.com/a:b"],
+			expected: [],
+		})
+		expect(colonArgument.find((entry) => entry.type === "tool.started")?.toolArguments).toEqual({
+			path: "https://example.com/a:b",
+		})
 		expect(() =>
 			runDeterministicFakeProvider({
 				id: "invalid-failure",

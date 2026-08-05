@@ -191,7 +191,12 @@ export function runDeterministicFakeProvider(scenario: ParityScenario): readonly
 	for (const turn of scenario.providerTurns) {
 		if (terminalReached) throw new Error("Fake-provider terminal directives must be the final turn")
 		if (turn.startsWith("tool:")) {
-			const [, operation, toolCallId, argument] = turn.split(":")
+			const separator1 = turn.indexOf(":")
+			const separator2 = turn.indexOf(":", separator1 + 1)
+			const separator3 = turn.indexOf(":", separator2 + 1)
+			const operation = turn.slice(separator1 + 1, separator2)
+			const toolCallId = turn.slice(separator2 + 1, separator3)
+			const argument = turn.slice(separator3 + 1)
 			if (operation !== "read_file" || !toolCallId || !argument) throw new Error(`Invalid tool fixture: ${turn}`)
 			const tool = {
 				rootTaskId: "root",
@@ -294,7 +299,7 @@ export function assertAuthoritativeRootResult(trace: readonly SemanticTraceEntry
 	}
 	if (result.outcome === "timed_out") {
 		return (
-			["task_timed_out", "cleanup_timed_out"].includes(result.errorCode ?? "") &&
+			(result.errorCode === undefined || ["task_timed_out", "cleanup_timed_out"].includes(result.errorCode)) &&
 			result.cancellationReason === undefined
 		)
 	}
