@@ -42,7 +42,8 @@ async function terminateProcessTree(pid: number | undefined): Promise<void> {
 		return
 	}
 	if (process.platform === "win32") {
-		const result = await execa("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { reject: false }).catch(
+		const taskkillPath = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe")
+		const result = await execa(taskkillPath, ["/PID", String(pid), "/T", "/F"], { reject: false }).catch(
 			() => undefined,
 		)
 		if (!result || result.exitCode !== 0) {
