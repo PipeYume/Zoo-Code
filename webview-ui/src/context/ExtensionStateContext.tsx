@@ -34,6 +34,7 @@ import { vscode } from "@src/utils/vscode"
 import { convertTextMateToHljs } from "@src/utils/textMateToHljs"
 import {
 	recordDiagnosticsHydration,
+	recordDiagnosticsExtensionState,
 	recordDiagnosticsStateSequence,
 	recordDiagnosticsUnknownMessageUpdate,
 } from "@src/utils/diagnostics"
@@ -279,6 +280,15 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 	})
 	const stateRef = useRef(state)
 	stateRef.current = state
+
+	useEffect(() => {
+		recordDiagnosticsExtensionState({
+			currentTaskId: state.currentTaskId,
+			chatMessageCount: state.clineMessages.length,
+			historyItemCount: state.taskHistory.length,
+			todoCount: state.currentTaskTodos?.length ?? 0,
+		})
+	}, [state.currentTaskId, state.clineMessages.length, state.taskHistory.length, state.currentTaskTodos?.length])
 
 	const [didHydrateState, setDidHydrateState] = useState(false)
 	const [showWelcome, setShowWelcome] = useState(false)
