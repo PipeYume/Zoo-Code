@@ -226,6 +226,28 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		expect(createTaskWithHistoryItem).toHaveBeenCalledWith({ id: "parent-1" })
 	})
 
+	it("handleModeSwitch() throws in the non-fan-out path: the evicted parent is restored", async () => {
+		const parent = makeParent()
+		const modeSwitchError = new Error("mode switch failed")
+		const createTask = vi.fn()
+		const createTaskWithHistoryItem = vi.fn().mockResolvedValue(parent)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			handleModeSwitch: vi.fn().mockRejectedValue(modeSwitchError),
+			tasks: [parent],
+			taskScheduler: new TaskScheduler(1),
+			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			createTask,
+			createTaskWithHistoryItem,
+		})
+
+		await expect(callDelegate(provider)).rejects.toThrow(modeSwitchError)
+
+		expect(createTask).not.toHaveBeenCalled()
+		expect(createTaskWithHistoryItem).toHaveBeenCalledWith({ id: "parent-1" })
+	})
+
 	it("createTask() throws in the non-fan-out path: parent restore retries once after a restore failure", async () => {
 		const parent = makeParent()
 		const createTaskError = new Error("createTask boom")

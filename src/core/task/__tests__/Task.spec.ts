@@ -60,6 +60,13 @@ function requireDefined<T>(value: T | null | undefined): T {
 	return value
 }
 
+async function getProviderStateWithOverrides(
+	provider: ClineProvider,
+	overrides: Partial<ProviderState>,
+): Promise<ProviderState> {
+	return { ...(await provider.getState()), ...overrides }
+}
+
 // Mock delay before any imports that might use it
 vi.mock("delay", () => ({
 	__esModule: true,
@@ -733,12 +740,14 @@ describe("Cline", () => {
 					apiProvider: providerIdentifiers.gemini,
 				} as ProviderSettings
 
-				vi.spyOn(mockProvider, "getState").mockResolvedValue({
-					mode: "ask",
-					apiConfiguration: taskApiConfiguration,
-					autoApprovalEnabled: true,
-					requestDelaySeconds: 0,
-				})
+				vi.spyOn(mockProvider, "getState").mockResolvedValue(
+					await getProviderStateWithOverrides(mockProvider, {
+						mode: "ask",
+						apiConfiguration: taskApiConfiguration,
+						autoApprovalEnabled: true,
+						requestDelaySeconds: 0,
+					}),
+				)
 
 				const cline = new Task({
 					provider: mockProvider,
@@ -753,15 +762,17 @@ describe("Cline", () => {
 					info: { contextWindow: 200000, maxTokens: 4096 } as ModelInfo,
 				})
 
-				vi.spyOn(mockProvider, "getState").mockResolvedValue({
-					mode: "code",
-					apiConfiguration: {
-						...mockApiConfig,
-						apiProvider: providerIdentifiers.anthropic,
-					},
-					autoApprovalEnabled: true,
-					requestDelaySeconds: 0,
-				})
+				vi.spyOn(mockProvider, "getState").mockResolvedValue(
+					await getProviderStateWithOverrides(mockProvider, {
+						mode: "code",
+						apiConfiguration: {
+							...mockApiConfig,
+							apiProvider: providerIdentifiers.anthropic,
+						},
+						autoApprovalEnabled: true,
+						requestDelaySeconds: 0,
+					}),
+				)
 
 				const mockStream = (async function* () {
 					yield { type: "text", text: "response" } as ApiStreamChunk

@@ -3817,10 +3817,11 @@ export class ClineProvider
 					(e as Error)?.message ?? String(e)
 				}`,
 			)
-			if (fanOut) {
-				await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
-				throw e
-			}
+			// Mode switching happens before child creation. If it fails, do not
+			// leave a fan-out reservation held or leave the parent evicted in the
+			// serial path with no task to resume it.
+			await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
+			throw e
 		}
 
 		// 4) Create and focus child, preserving parent reference for lineage.

@@ -13,6 +13,9 @@ export class TaskScheduler {
 	readonly maxConcurrency: number
 
 	constructor(maxConcurrency = 1) {
+		if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
+			throw new Error(`maxConcurrency must be a positive integer, got ${maxConcurrency}`)
+		}
 		this.maxConcurrency = maxConcurrency
 		this.sem = new TaskSemaphore(maxConcurrency)
 	}
