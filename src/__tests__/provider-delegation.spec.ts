@@ -5,7 +5,7 @@ import type { HistoryItem } from "@roo-code/types"
 import { RooCodeEventName } from "@roo-code/types"
 import { ClineProvider } from "../core/webview/ClineProvider"
 import { TaskScheduler } from "../core/task/TaskScheduler"
-import { bindRestoreParentOrReleasePermit } from "./helpers/provider-stub"
+import { bindDelegationMethods } from "./helpers/provider-stub"
 
 const parentHistoryItem: HistoryItem = {
 	id: "parent-1",
@@ -44,6 +44,18 @@ const makeParentTask = () =>
 	}) as any
 
 describe("ClineProvider.delegateParentAndOpenChild()", () => {
+	it("forwards an explicit target task through the typed child mode-switch binder", async () => {
+		const handleModeSwitch = vi.fn().mockResolvedValue(undefined)
+		const provider = { handleModeSwitch } as unknown as ClineProvider
+		bindDelegationMethods(provider)
+		const targetTask = makeParentTask()
+
+		const snapshot = await provider.handleModeSwitchForChild("architect", targetTask)
+
+		expect(handleModeSwitch).toHaveBeenCalledWith("architect", targetTask)
+		expect(snapshot).toMatchObject({ mode: "architect" })
+	})
+
 	it("persists parent delegation metadata via atomicReadAndUpdate and emits TaskDelegated", async () => {
 		const providerEmit = vi.fn()
 		const parentTask = makeParentTask()
@@ -66,6 +78,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindDelegationMethods(provider)
 
 		const child = await (ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
 			parentTaskId: "parent-1",
@@ -81,11 +94,22 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 		expect(removeClineFromStack).toHaveBeenCalledTimes(1)
 
 		// Child task created with startTask: false and initialStatus: "active"
-		expect(createTask).toHaveBeenCalledWith("Do something", undefined, parentTask, {
-			initialTodos: [],
-			initialStatus: "active",
-			startTask: false,
-		})
+		expect(createTask).toHaveBeenCalledWith(
+			"Do something",
+			undefined,
+			parentTask,
+			{
+				initialTodos: [],
+				initialStatus: "active",
+				startTask: false,
+			},
+			{},
+			{
+				apiConfiguration: {},
+				mode: "code",
+				apiConfigName: "default",
+			},
+		)
 
 		// Delegation metadata written via atomicReadAndUpdate with correct taskId
 		expect(taskHistoryStore.atomicReadAndUpdate).toHaveBeenCalledTimes(1)
@@ -133,6 +157,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindDelegationMethods(provider)
 
 		await (ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
 			parentTaskId: "parent-1",
@@ -167,6 +192,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindDelegationMethods(provider)
 
 		await (ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
 			parentTaskId: "parent-1",
@@ -208,6 +234,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindDelegationMethods(provider)
 
 		await (ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
 			parentTaskId: "parent-1",
@@ -255,6 +282,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
+		bindDelegationMethods(provider)
 
 		await (ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
 			parentTaskId: "parent-1",
@@ -319,7 +347,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			recentTasksCache: undefined,
 			taskHistoryStore,
 		} as unknown as ClineProvider
-		bindRestoreParentOrReleasePermit(provider)
+		bindDelegationMethods(provider)
 
 		await expect(
 			(ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {
@@ -375,7 +403,7 @@ describe("ClineProvider.delegateParentAndOpenChild()", () => {
 			// still needs evicting, independent of current focus.
 			taskRegistry: { getById: vi.fn((id: string) => (id === "child-1" ? child : undefined)) },
 		} as unknown as ClineProvider
-		bindRestoreParentOrReleasePermit(provider)
+		bindDelegationMethods(provider)
 
 		await expect(
 			(ClineProvider.prototype as any).delegateParentAndOpenChild.call(provider, {

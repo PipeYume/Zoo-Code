@@ -14,6 +14,8 @@ type ProviderStubFields = {
 	removeClineFromStack?: unknown
 	evictCurrentTask?: unknown
 	restoreParentOrReleasePermit?: unknown
+	handleModeSwitchForChild?: unknown
+	handleModeSwitch?: (newMode: string, targetTask?: unknown) => Promise<unknown>
 }
 
 type PrivateProviderMethods = {
@@ -21,12 +23,30 @@ type PrivateProviderMethods = {
 	removeClineFromStack: (this: unknown, ...args: unknown[]) => unknown
 	evictCurrentTask: (this: unknown, ...args: unknown[]) => unknown
 	restoreParentOrReleasePermit: (this: unknown, ...args: unknown[]) => unknown
+	handleModeSwitchForChild: (this: unknown, ...args: unknown[]) => unknown
 }
 
 export function bindRestoreParentOrReleasePermit(provider: ClineProvider): void {
 	const s = provider as unknown as ProviderStubFields
 	const proto = ClineProvider.prototype as unknown as PrivateProviderMethods
 	s.restoreParentOrReleasePermit = proto.restoreParentOrReleasePermit.bind(s)
+}
+
+export function bindHandleModeSwitchForChild(provider: ClineProvider): void {
+	const s = provider as unknown as ProviderStubFields
+	s.handleModeSwitchForChild = async (newMode: string, targetTask?: unknown) => {
+		if (targetTask === undefined) {
+			await s.handleModeSwitch?.(newMode)
+		} else {
+			await s.handleModeSwitch?.(newMode, targetTask)
+		}
+		return { apiConfiguration: {}, mode: newMode, apiConfigName: "default" }
+	}
+}
+
+export function bindDelegationMethods(provider: ClineProvider): void {
+	bindRestoreParentOrReleasePermit(provider)
+	bindHandleModeSwitchForChild(provider)
 }
 
 /**
@@ -61,6 +81,9 @@ export function makeProviderStub<T extends object>(stub: T): ClineProvider {
 	s.evictCurrentTask ??= proto.evictCurrentTask.bind(s)
 	if (!s.restoreParentOrReleasePermit) {
 		bindRestoreParentOrReleasePermit(s as unknown as ClineProvider)
+	}
+	if (!s.handleModeSwitchForChild) {
+		bindHandleModeSwitchForChild(s as unknown as ClineProvider)
 	}
 	return s as unknown as ClineProvider
 }

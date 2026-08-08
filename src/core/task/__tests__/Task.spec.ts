@@ -479,6 +479,47 @@ describe("Cline", () => {
 			expect(cline.diffStrategy).toBeDefined()
 		})
 
+		it("uses startupSnapshot configuration, mode, profile, and mistake-limit precedence", async () => {
+			const startupApiConfiguration: ProviderSettings = {
+				...mockApiConfig,
+				apiModelId: "snapshot-model",
+				consecutiveMistakeLimit: 11,
+			}
+			const cline = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				consecutiveMistakeLimit: 5,
+				task: "test task",
+				startTask: false,
+				startupSnapshot: {
+					apiConfiguration: startupApiConfiguration,
+					mode: "architect",
+					apiConfigName: "child-profile",
+				},
+			})
+
+			expect(cline.apiConfiguration).toEqual(startupApiConfiguration)
+			expect(cline.consecutiveMistakeLimit).toBe(11)
+			expect(await cline.getTaskMode()).toBe("architect")
+			expect(await cline.getTaskApiConfigName()).toBe("child-profile")
+		})
+
+		it("falls back to the constructor mistake limit when the snapshot has none", () => {
+			const cline = new Task({
+				provider: mockProvider,
+				apiConfiguration: mockApiConfig,
+				consecutiveMistakeLimit: 7,
+				task: "test task",
+				startTask: false,
+				startupSnapshot: {
+					apiConfiguration: { ...mockApiConfig },
+					mode: "code",
+				},
+			})
+
+			expect(cline.consecutiveMistakeLimit).toBe(7)
+		})
+
 		it("should use default consecutiveMistakeLimit when not provided", () => {
 			const cline = new Task({
 				provider: mockProvider,

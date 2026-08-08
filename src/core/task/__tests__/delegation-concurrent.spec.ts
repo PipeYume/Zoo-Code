@@ -52,7 +52,16 @@ function baseStubFields(parent: Task) {
 	return {
 		contextProxy: { globalStorageUri: { fsPath: "/tmp" } },
 		getCurrentTask: vi.fn(() => parent),
-		handleModeSwitch: vi.fn().mockResolvedValue(undefined),
+		handleModeSwitch: vi.fn().mockResolvedValue({
+			apiConfiguration: {},
+			mode: "code",
+			apiConfigName: "default",
+		}),
+		handleModeSwitchForChild: vi.fn().mockResolvedValue({
+			apiConfiguration: {},
+			mode: "code",
+			apiConfigName: "default",
+		}),
 		taskHistoryStore: {
 			get: vi.fn(() => undefined),
 			atomicReadAndUpdate,
@@ -195,6 +204,7 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
 			handleModeSwitch: vi.fn().mockRejectedValue(modeSwitchError),
+			handleModeSwitchForChild: vi.fn().mockRejectedValue(modeSwitchError),
 			tasks: [parent],
 			taskScheduler: scheduler,
 			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
@@ -235,6 +245,7 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
 			handleModeSwitch: vi.fn().mockRejectedValue(modeSwitchError),
+			handleModeSwitchForChild: vi.fn().mockRejectedValue(modeSwitchError),
 			tasks: [parent],
 			taskScheduler: new TaskScheduler(1),
 			removeClineFromStack: vi.fn().mockResolvedValue(undefined),

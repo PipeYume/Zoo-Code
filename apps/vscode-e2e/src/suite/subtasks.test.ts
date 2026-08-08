@@ -385,6 +385,21 @@ suite("Roo Code Subtasks", function () {
 							messageContentText(message.content).includes(SUBTASK_FANOUT_XPROFILE_CHILD_RESULT),
 					),
 			)
+
+			const parentHistory = await api.getTaskHistoryItem(parentTaskId)
+			assert.strictEqual(parentHistory?.mode, "code", "Parent task mode should remain isolated")
+			assert.strictEqual(
+				parentHistory?.apiConfigName,
+				"subtask-fanout-parent-profile",
+				"Parent task profile should remain isolated",
+			)
+			const childHistory = await api.getTaskHistoryItem(childTaskId!)
+			assert.strictEqual(childHistory?.mode, "ask", "Child task should retain its requested mode")
+			assert.strictEqual(
+				childHistory?.apiConfigName,
+				"subtask-fanout-child-profile",
+				"Child task should retain its resolved profile",
+			)
 		} finally {
 			api.off(RooCodeEventName.Message, messageHandler)
 			while (api.getCurrentTaskStack().length > 0) {

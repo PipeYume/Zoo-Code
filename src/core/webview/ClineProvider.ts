@@ -102,7 +102,7 @@ import { forceFullModelDetailsLoad, hasLoadedFullDetails } from "../../api/provi
 import { ContextProxy } from "../config/ContextProxy"
 import { ProviderSettingsManager } from "../config/ProviderSettingsManager"
 import { CustomModesManager } from "../config/CustomModesManager"
-import { Task } from "../task/Task"
+import { Task, type TaskStartupSnapshot } from "../task/Task"
 
 import { webviewMessageHandler } from "./webviewMessageHandler"
 import type { ClineMessage, TodoItem } from "@roo-code/types"
@@ -1588,7 +1588,25 @@ export class ClineProvider
 	 * @param targetTask The task whose in-memory mode should be updated. Defaults to the
 	 * current task. Pass null to apply only global mode/profile effects for a pending child.
 	 */
-	public async handleModeSwitch(newMode: Mode, targetTask: Task | null | undefined = this.getCurrentTask()) {
+	public async handleModeSwitch(
+		newMode: Mode,
+		targetTask: Task | null | undefined = this.getCurrentTask(),
+	): Promise<void> {
+		await this.handleModeSwitchAndGetStartupSnapshot(newMode, targetTask)
+	}
+
+	public async handleModeSwitchForChild(newMode: Mode, targetTask?: Task | null): Promise<TaskStartupSnapshot> {
+		const startupSnapshot = await this.handleModeSwitchAndGetStartupSnapshot(newMode, targetTask)
+		if (!startupSnapshot) {
+			throw new Error(`Unable to capture startup snapshot for mode '${newMode}'`)
+		}
+		return startupSnapshot
+	}
+
+	private handleModeSwitchAndGetStartupSnapshot(
+		newMode: Mode,
+		targetTask: Task | null | undefined = this.getCurrentTask(),
+	): Promise<TaskStartupSnapshot | undefined> {
 		return this.enqueueProviderProfileMutation((signal) =>
 			this.handleModeSwitchUnlocked(newMode, targetTask, signal),
 		)
@@ -1598,7 +1616,7 @@ export class ClineProvider
 		newMode: Mode,
 		targetTask: Task | null | undefined,
 		signal?: AbortSignal,
-	): Promise<void> {
+	): Promise<TaskStartupSnapshot | undefined> {
 		const task = targetTask
 
 		if (task) {
@@ -1639,7 +1657,11 @@ export class ClineProvider
 			if (targetTask !== null) {
 				await this.postStateToWebview()
 			}
-			return
+			return {
+				apiConfiguration: structuredClone(this.contextProxy.getProviderSettings()),
+				mode: newMode,
+				apiConfigName: this.getGlobalState("currentApiConfigName"),
+			}
 		}
 
 		if (signal?.aborted) return
@@ -1673,6 +1695,20 @@ export class ClineProvider
 						targetTask === null ? { skipCurrentTaskRebuild: true } : undefined,
 						signal,
 					)
+
+					if (signal?.aborted) return
+
+					const startupSnapshot: TaskStartupSnapshot = {
+						apiConfiguration: fullProfile,
+						mode: newMode,
+						apiConfigName: fullProfile.name,
+					}
+
+					if (targetTask !== null) {
+						await this.postStateToWebview()
+					}
+
+					return startupSnapshot
 				} else {
 					// The task will continue with the current/default configuration.
 				}
@@ -1694,6 +1730,12 @@ export class ClineProvider
 
 		if (targetTask !== null) {
 			await this.postStateToWebview()
+		}
+
+		return {
+			apiConfiguration: structuredClone(this.contextProxy.getProviderSettings()),
+			mode: newMode,
+			apiConfigName: this.getGlobalState("currentApiConfigName"),
 		}
 	}
 
@@ -3267,6 +3309,7 @@ export class ClineProvider
 		parentTask?: Task,
 		options: CreateTaskOptions = {},
 		configuration: RooCodeSettings = {},
+		startupSnapshot?: TaskStartupSnapshot,
 	): Promise<Task> {
 		if (configuration) {
 			await this.setValues(configuration)
@@ -3309,13 +3352,14 @@ export class ClineProvider
 		}
 
 		const {
-			apiConfiguration,
+			apiConfiguration: stateApiConfiguration,
 			enableCheckpoints,
 			checkpointTimeout,
 			experiments,
 			organizationAllowList,
 			diffFuzzyThreshold,
 		} = await this.getState()
+		const apiConfiguration = startupSnapshot?.apiConfiguration ?? stateApiConfiguration
 
 		// Single-open-task invariant: always enforce for user-initiated top-level tasks.
 		if (!parentTask) {
@@ -3331,6 +3375,7 @@ export class ClineProvider
 		const task = new Task({
 			provider: this,
 			apiConfiguration,
+			startupSnapshot,
 			enableCheckpoints,
 			checkpointTimeout,
 			consecutiveMistakeLimit: apiConfiguration.consecutiveMistakeLimit,
@@ -3805,12 +3850,9 @@ export class ClineProvider
 		//    the global mode/API-config side effects for the child's benefit without stomping
 		//    the still-running parent's own `_taskMode`.
 		const requestedMode = mode as Mode
+		let startupSnapshot: TaskStartupSnapshot | undefined
 		try {
-			if (fanOut) {
-				await this.handleModeSwitch(requestedMode, null)
-			} else {
-				await this.handleModeSwitch(requestedMode)
-			}
+			startupSnapshot = await this.handleModeSwitchForChild(requestedMode, fanOut ? null : undefined)
 		} catch (e) {
 			this.log(
 				`[delegateParentAndOpenChild] handleModeSwitch failed for mode '${mode}': ${
@@ -3822,6 +3864,10 @@ export class ClineProvider
 			// serial path with no task to resume it.
 			await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
 			throw e
+		}
+		if (!startupSnapshot) {
+			await this.restoreParentOrReleasePermit(parentTaskId, fanOut, childReservedRelease)
+			throw new Error(`[delegateParentAndOpenChild] No startup snapshot for mode '${mode}'`)
 		}
 
 		// 4) Create and focus child, preserving parent reference for lineage.
@@ -3839,11 +3885,18 @@ export class ClineProvider
 		// causing the parent's delegation fields to be lost.
 		let child: Task
 		try {
-			child = await this.createTask(message, undefined, parent as any, {
-				initialTodos,
-				initialStatus: "active",
-				startTask: false,
-			})
+			child = await this.createTask(
+				message,
+				undefined,
+				parent,
+				{
+					initialTodos,
+					initialStatus: "active",
+					startTask: false,
+				},
+				{},
+				startupSnapshot,
+			)
 		} catch (err) {
 			this.log(
 				`[delegateParentAndOpenChild] createTask failed for parent ${parentTaskId}: ${
