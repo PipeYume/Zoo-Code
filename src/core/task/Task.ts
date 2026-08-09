@@ -566,7 +566,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			TelemetryService.instance.captureTaskRestarted(this.taskId)
 		} else if (startupSnapshot) {
 			this._taskMode = startupSnapshot.mode
-			this._taskApiConfigName = startupSnapshot.apiConfigName
+			this._taskApiConfigName = startupSnapshot.apiConfigName ?? "default"
 			this.taskModeReady = Promise.resolve()
 			this.taskApiConfigReady = Promise.resolve()
 			TelemetryService.instance.captureTaskCreated(this.taskId)

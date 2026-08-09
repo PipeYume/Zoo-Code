@@ -3717,29 +3717,23 @@ export class ClineProvider
 		childReservedRelease: (() => void) | undefined,
 	): Promise<void> {
 		if (!fanOut) {
-			try {
-				const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
-				await this.createTaskWithHistoryItem(parentHistory)
-			} catch (firstRollbackError) {
-				this.log(
-					`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback, retrying once: ${
-						(firstRollbackError as Error)?.message ?? String(firstRollbackError)
-					}`,
-				)
+			const maxAttempts = 2
+			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 				try {
 					const { historyItem: parentHistory } = await this.getTaskWithId(parentTaskId)
 					await this.createTaskWithHistoryItem(parentHistory)
+					return
 				} catch (rollbackError) {
 					this.log(
-						`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback retry: ${
+						`[delegateParentAndOpenChild] Failed to restore parent ${parentTaskId} during rollback (attempt ${attempt}/${maxAttempts}): ${
 							(rollbackError as Error)?.message ?? String(rollbackError)
 						}`,
 					)
-					vscode.window.showErrorMessage(
-						"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
-					)
 				}
 			}
+			vscode.window.showErrorMessage(
+				"Failed to restore the parent task after subtask creation failed. Reopen the task from history to continue.",
+			)
 		} else {
 			// The child never reached step 6, so the reserved permit must be
 			// released here or it leaks for the lifetime of the scheduler.

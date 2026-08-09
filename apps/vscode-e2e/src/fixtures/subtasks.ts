@@ -52,6 +52,7 @@ export const SUBTASK_API_HANG_PARENT_RESULT = "API hang parent resumed"
 // Correctness depends on no flat `latency` (fixture or LLMock default) being set on that
 // fixture — a flat latency would apply to every chunk after the first, not just the ttft.
 export const SUBTASK_API_HANG_RESPONSE_LATENCY_MS = 15_000
+export const SUBTASK_FANOUT_CHILD_DELAY_MS = 15_000
 
 // Abandon-subtask scenario (#559) — separate markers to avoid sequenceIndex collisions with the
 // interrupted-child-resumes tests above, which exhaust the sequence count for INTERRUPT markers.
@@ -180,7 +181,7 @@ export function addSubtaskFixtures(mock: InstanceType<typeof LLMock>) {
 				lastUserMessageContains(req, SUBTASK_FANOUT_CHILD_MARKER) &&
 				!requestContains(req, [SUBTASK_FANOUT_PARENT_MARKER]),
 		},
-		latency: 15_000,
+		streamingProfile: { ttft: SUBTASK_FANOUT_CHILD_DELAY_MS },
 		response: {
 			toolCalls: [
 				{
@@ -237,7 +238,7 @@ export function addSubtaskFixtures(mock: InstanceType<typeof LLMock>) {
 				lastUserMessageContains(req, SUBTASK_FANOUT_XPROFILE_CHILD_MARKER) &&
 				!requestContains(req, [SUBTASK_FANOUT_XPROFILE_PARENT_MARKER]),
 		},
-		latency: 15_000,
+		streamingProfile: { ttft: SUBTASK_FANOUT_CHILD_DELAY_MS },
 		response: {
 			toolCalls: [
 				{

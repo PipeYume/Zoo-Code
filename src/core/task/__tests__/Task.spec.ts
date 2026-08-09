@@ -504,7 +504,7 @@ describe("Cline", () => {
 			expect(await cline.getTaskApiConfigName()).toBe("child-profile")
 		})
 
-		it("falls back to the constructor mistake limit when the snapshot has none", () => {
+		it("falls back to the constructor mistake limit when the snapshot has none", async () => {
 			const cline = new Task({
 				provider: mockProvider,
 				apiConfiguration: mockApiConfig,
@@ -518,6 +518,7 @@ describe("Cline", () => {
 			})
 
 			expect(cline.consecutiveMistakeLimit).toBe(7)
+			await expect(cline.getTaskApiConfigName()).resolves.toBe("default")
 		})
 
 		it("should use default consecutiveMistakeLimit when not provided", () => {
