@@ -3395,7 +3395,25 @@ export class ClineProvider
 			rateLimitClock: this.rateLimitClock,
 		})
 
-		await this.addClineToStack(task)
+		try {
+			await this.addClineToStack(task)
+		} catch (error) {
+			// addClineToStack() registers the task before preparation/state validation.
+			// If a later setup step fails, remove that exact instance so callers never
+			// inherit a partially registered task.
+			if (this.taskRegistry.getById(task.taskId) === task) {
+				try {
+					await this.removeClineFromStack(task.taskId)
+				} catch (cleanupError) {
+					this.log(
+						`[createTask] Failed to clean up partially registered task ${task.taskId}: ${
+							cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+						}`,
+					)
+				}
+			}
+			throw error
+		}
 		if (options.startTask !== false) {
 			scheduleTask(this.taskScheduler, task, "createTask")
 		}
@@ -3907,6 +3925,30 @@ export class ClineProvider
 		// the child. In the fan-out case the parent remains in the registry
 		// alongside it instead of being evicted, so both are now tracked with the
 		// child focused.
+		const cleanupCreatedChild = async (): Promise<void> => {
+			try {
+				// Evict the child by id regardless of current focus. A concurrent
+				// transition may have focused another task since creation.
+				if (this.taskRegistry.getById(child.taskId)) {
+					await this.removeClineFromStack(child.taskId)
+				}
+			} catch (cleanupError) {
+				this.log(
+					`[delegateParentAndOpenChild] Failed to close child ${child.taskId} during rollback: ${
+						cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+					}`,
+				)
+			}
+			try {
+				await this.deleteTaskWithId(child.taskId, false)
+			} catch (cleanupError) {
+				this.log(
+					`[delegateParentAndOpenChild] Failed to delete child ${child.taskId} during rollback: ${
+						cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+					}`,
+				)
+			}
+		}
 
 		// 5) Persist parent delegation metadata BEFORE the child starts writing.
 		//    atomicReadAndUpdate reads from the in-memory cache and writes back within a
@@ -3969,29 +4011,7 @@ export class ClineProvider
 					(err as Error)?.message ?? String(err)
 				}`,
 			)
-			try {
-				// Evict the child by id regardless of current focus — in fan-out (or if a
-				// concurrent delegation shifted focus), the child we just created may no
-				// longer be `current`, but it must still be removed from the registry.
-				if (this.taskRegistry.getById(child.taskId)) {
-					await this.removeClineFromStack(child.taskId)
-				}
-			} catch (cleanupError) {
-				this.log(
-					`[delegateParentAndOpenChild] Failed to close paused child ${child.taskId} during rollback: ${
-						(cleanupError as Error)?.message ?? String(cleanupError)
-					}`,
-				)
-			}
-			try {
-				await this.deleteTaskWithId(child.taskId, false)
-			} catch (cleanupError) {
-				this.log(
-					`[delegateParentAndOpenChild] Failed to delete paused child ${child.taskId} during rollback: ${
-						(cleanupError as Error)?.message ?? String(cleanupError)
-					}`,
-				)
-			}
+			await cleanupCreatedChild()
 			// In the fan-out case the parent was never removed from the registry
 			// (it kept running throughout), so it must not be re-created here —
 			// doing so would push a duplicate parent Task instance. If the child was
@@ -4003,6 +4023,14 @@ export class ClineProvider
 		}
 
 		// 6) Start the child task now that parent metadata is safely persisted.
+		if (
+			fanOut &&
+			(this.taskRegistry.getById(parentTaskId) !== parent || !this.taskRegistry.hasRunning(parentTaskId))
+		) {
+			await cleanupCreatedChild()
+			childReservedRelease?.()
+			throw new Error(`[delegateParentAndOpenChild] Parent ${parentTaskId} is no longer live`)
+		}
 		if (childReservedRelease) {
 			runReservedTask(this.taskScheduler, childReservedRelease, child, "delegateParentAndOpenChild")
 		} else {

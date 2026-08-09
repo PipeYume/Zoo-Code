@@ -177,13 +177,16 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		const parent = makeParent()
 		const createTaskError = new Error("createTask boom")
 		const scheduler = new TaskScheduler(2)
+		const createTaskWithHistoryItem = vi.fn()
+		const removeClineFromStack = vi.fn().mockResolvedValue(undefined)
 
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
 			tasks: [parent],
 			taskScheduler: scheduler,
-			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			removeClineFromStack,
 			createTask: vi.fn().mockRejectedValue(createTaskError),
+			createTaskWithHistoryItem,
 		})
 
 		await expect(callDelegate(provider)).rejects.toThrow(createTaskError)
@@ -193,6 +196,8 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		expect(scheduler.available).toBe(2)
 		const release = await scheduler.tryReserve()
 		expect(release).toBeDefined()
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
+		expect(removeClineFromStack).not.toHaveBeenCalled()
 	})
 
 	it("handleModeSwitch() throws in fan-out: delegation aborts and releases the reserved permit before child creation", async () => {
@@ -200,6 +205,8 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 		const modeSwitchError = new Error("Provider profile mutation timed out")
 		const scheduler = new TaskScheduler(2)
 		const createTask = vi.fn()
+		const createTaskWithHistoryItem = vi.fn()
+		const removeClineFromStack = vi.fn().mockResolvedValue(undefined)
 
 		const provider = makeProviderStub({
 			...baseStubFields(parent),
@@ -207,13 +214,138 @@ describe("delegateParentAndOpenChild — fan-out (Story 3.2b)", () => {
 			handleModeSwitchForChild: vi.fn().mockRejectedValue(modeSwitchError),
 			tasks: [parent],
 			taskScheduler: scheduler,
-			removeClineFromStack: vi.fn().mockResolvedValue(undefined),
+			removeClineFromStack,
 			createTask,
+			createTaskWithHistoryItem,
 		})
 
 		await expect(callDelegate(provider)).rejects.toThrow(modeSwitchError)
 
 		expect(createTask).not.toHaveBeenCalled()
+		expect(scheduler.available).toBe(2)
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
+		expect(removeClineFromStack).not.toHaveBeenCalled()
+	})
+
+	it("fan-out metadata persistence failure removes only the created child and releases its permit", async () => {
+		const parent = makeParent()
+		const child = makeChild()
+		const persistError = new Error("parent metadata persist failed")
+		const scheduler = new TaskScheduler(2)
+		const createTaskWithHistoryItem = vi.fn()
+		const deleteTaskWithId = vi.fn().mockResolvedValue(undefined)
+		const removeClineFromStack = vi.fn().mockImplementation(async (taskId?: string) => {
+			if (taskId === child.taskId) {
+				registry.remove(taskId)
+			}
+		})
+		const registry = new TaskRegistry()
+		registry.push(parent)
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			taskRegistry: registry,
+			taskScheduler: scheduler,
+			removeClineFromStack,
+			deleteTaskWithId,
+			createTaskWithHistoryItem,
+			taskHistoryStore: {
+				get: vi.fn(() => undefined),
+				atomicReadAndUpdate: vi.fn().mockRejectedValue(persistError),
+			},
+		})
+		Object.assign(provider, { createTask: makeCreateTaskMock(provider, child) })
+
+		await expect(callDelegate(provider)).rejects.toThrow(persistError)
+
+		expect(removeClineFromStack).toHaveBeenCalledTimes(1)
+		expect(removeClineFromStack).toHaveBeenCalledWith(child.taskId)
+		expect(deleteTaskWithId).toHaveBeenCalledWith(child.taskId, false)
+		expect(registry.getById(child.taskId)).toBeUndefined()
+		expect(registry.getById(parent.taskId)).toBe(parent)
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
+		expect(child.run).not.toHaveBeenCalled()
+		expect(scheduler.available).toBe(2)
+	})
+
+	it("fan-out does not start a child after its parent is evicted during metadata persistence", async () => {
+		const parent = makeParent()
+		const child = makeChild()
+		const scheduler = new TaskScheduler(2)
+		let metadataEntered!: () => void
+		const metadataEnteredPromise = new Promise<void>((resolve) => (metadataEntered = resolve))
+		let releaseMetadata!: () => void
+		const releaseMetadataPromise = new Promise<void>((resolve) => (releaseMetadata = resolve))
+		const deleteTaskWithId = vi.fn().mockResolvedValue(undefined)
+		const createTaskWithHistoryItem = vi.fn()
+		const registry = new TaskRegistry()
+		registry.push(parent)
+		const removeClineFromStack = vi.fn().mockImplementation(async (taskId?: string) => {
+			if (taskId) registry.remove(taskId)
+		})
+
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			taskRegistry: registry,
+			taskScheduler: scheduler,
+			removeClineFromStack,
+			deleteTaskWithId,
+			createTaskWithHistoryItem,
+			taskHistoryStore: {
+				get: vi.fn(() => undefined),
+				atomicReadAndUpdate: vi.fn(async () => {
+					metadataEntered()
+					await releaseMetadataPromise
+				}),
+			},
+		})
+		Object.assign(provider, { createTask: makeCreateTaskMock(provider, child) })
+
+		const delegation = callDelegate(provider)
+		await metadataEnteredPromise
+		registry.remove(parent.taskId)
+		parent.abandoned = true
+		releaseMetadata()
+
+		await expect(delegation).rejects.toThrow(/Parent parent-1 is no longer live/)
+		expect(child.run).not.toHaveBeenCalled()
+		expect(removeClineFromStack).toHaveBeenCalledWith(child.taskId)
+		expect(deleteTaskWithId).toHaveBeenCalledWith(child.taskId, false)
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
+		expect(registry.getById(child.taskId)).toBeUndefined()
+		expect(scheduler.available).toBe(2)
+	})
+
+	it("fan-out metadata rollback cleans child history without recreating the live parent", async () => {
+		const parent = makeParent()
+		const child = makeChild()
+		const scheduler = new TaskScheduler(2)
+		const registry = new TaskRegistry()
+		registry.push(parent)
+		const removeClineFromStack = vi.fn().mockImplementation(async (taskId?: string) => {
+			if (taskId) registry.remove(taskId)
+		})
+		const deleteTaskWithId = vi.fn().mockResolvedValue(undefined)
+		const createTaskWithHistoryItem = vi.fn()
+		const provider = makeProviderStub({
+			...baseStubFields(parent),
+			taskRegistry: registry,
+			taskScheduler: scheduler,
+			removeClineFromStack,
+			deleteTaskWithId,
+			createTaskWithHistoryItem,
+			taskHistoryStore: {
+				get: vi.fn((id: string) => (id === child.taskId ? { id, status: "active" } : undefined)),
+				atomicReadAndUpdate: vi.fn().mockRejectedValue(new Error("metadata failed")),
+			},
+		})
+		Object.assign(provider, { createTask: makeCreateTaskMock(provider, child) })
+
+		await expect(callDelegate(provider)).rejects.toThrow("metadata failed")
+		expect(removeClineFromStack).toHaveBeenCalledWith(child.taskId)
+		expect(deleteTaskWithId).toHaveBeenCalledWith(child.taskId, false)
+		expect(createTaskWithHistoryItem).not.toHaveBeenCalled()
+		expect(registry.taskIds).toEqual([parent.taskId])
 		expect(scheduler.available).toBe(2)
 	})
 

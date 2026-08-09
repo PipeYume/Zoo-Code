@@ -284,7 +284,7 @@ suite("Roo Code Subtasks", function () {
 		}
 	})
 
-	test("fan-out keeps parent API config isolated when child switches to a different saved profile", async () => {
+	test("real-provider fan-out startup snapshot isolates parent and child profiles while both execute", async () => {
 		const api = globalThis.api
 		const asks: Record<string, ClineMessage[]> = {}
 
@@ -323,6 +323,10 @@ suite("Roo Code Subtasks", function () {
 		})
 
 		try {
+			// This is intentionally an extension-host boundary test. Unlike the unit delegation
+			// tests, it exercises the real mode-switch producer and Task constructor: the child
+			// must receive a snapshot of its profile while the already-running parent keeps its
+			// own profile and mode.
 			api.setTaskSchedulerMaxConcurrency(2)
 
 			const parentTaskId = await api.startNewTask({
@@ -384,6 +388,16 @@ suite("Roo Code Subtasks", function () {
 							message.role === "user" &&
 							messageContentText(message.content).includes(SUBTASK_FANOUT_XPROFILE_CHILD_RESULT),
 					),
+			)
+
+			const liveStackAfterChildRequest = api.getCurrentTaskStack()
+			assert.ok(
+				liveStackAfterChildRequest.includes(parentTaskId),
+				"Parent should remain live after the child reaches the real provider",
+			)
+			assert.ok(
+				liveStackAfterChildRequest.includes(childTaskId!),
+				"Child should remain tracked after reaching the real provider",
 			)
 
 			const parentHistory = await api.getTaskHistoryItem(parentTaskId)
