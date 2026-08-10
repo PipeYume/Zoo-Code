@@ -227,7 +227,6 @@ export class NativeOllamaHandler extends BaseProvider implements SingleCompletio
 	protected options: ApiHandlerOptions
 	private client: Ollama | undefined
 	protected models: Record<string, ModelInfo> = {}
-	private modelFetchPromise?: Promise<{ id: string; info: ModelInfo }>
 
 	constructor(options: ApiHandlerOptions) {
 		super()
@@ -539,22 +538,14 @@ export class NativeOllamaHandler extends BaseProvider implements SingleCompletio
 	}
 
 	async fetchModel() {
-		if (Object.keys(this.models).length > 0) {
-			return this.getModel()
-		}
-
-		if (!this.modelFetchPromise) {
-			this.modelFetchPromise = getOllamaModels(this.options.ollamaBaseUrl, this.options.ollamaApiKey)
-				.then((models) => {
-					this.models = models
-					return this.getModel()
-				})
-				.finally(() => {
-					this.modelFetchPromise = undefined
-				})
-		}
-
-		return this.modelFetchPromise
+		return this.fetchModelWithSingleFlight(
+			this.models,
+			() => getOllamaModels(this.options.ollamaBaseUrl, this.options.ollamaApiKey),
+			(models) => {
+				this.models = models
+			},
+			() => this.getModel(),
+		)
 	}
 
 	async ensureModelFetched(): Promise<void> {
