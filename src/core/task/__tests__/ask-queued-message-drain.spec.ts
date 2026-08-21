@@ -51,6 +51,9 @@ describe("Task.ask queued message drain", () => {
 			const task = buildTask()
 			const askPromise = task.ask(askType, "pending approval", false)
 
+			// Let ask() observe an empty queue and enter its pWaitFor loop before
+			// simulating input that arrives while the approval is already blocked.
+			await new Promise((resolve) => setTimeout(resolve, 0))
 			task.messageQueueService.addMessage("change direction")
 
 			await expect(askPromise).resolves.toMatchObject({
