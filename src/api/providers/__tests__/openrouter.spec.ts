@@ -17,6 +17,8 @@ const MOCK_TIMEOUT_MS = 300_000
 import { Anthropic } from "@anthropic-ai/sdk"
 import OpenAI from "openai"
 
+import { providerIdentifiers } from "@roo-code/types"
+
 import { OpenRouterHandler } from "../openrouter"
 import { Package } from "../../../shared/package"
 import { makeApiHandlerOptions } from "../../../test-utils/api"
@@ -457,7 +459,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "API Error",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 					errorCode: 500,
@@ -479,7 +481,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Connection failed",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 				}),
@@ -502,7 +504,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Rate limit exceeded: free-models-per-day",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 				}),
@@ -523,7 +525,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "429 Rate limit exceeded: free-models-per-day",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 				}),
@@ -544,7 +546,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Request failed due to rate limit",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 				}),
@@ -566,7 +568,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Rate limit exceeded",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "createMessage",
 					errorCode: 429,
@@ -693,7 +695,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "API Error",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 					errorCode: 500,
@@ -716,7 +718,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Unexpected error",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 				}),
@@ -738,7 +740,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Rate limit exceeded: free-models-per-day",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 				}),
@@ -759,7 +761,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "429 Rate limit exceeded: free-models-per-day",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 				}),
@@ -780,7 +782,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Request failed due to rate limit",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 				}),
@@ -809,7 +811,7 @@ describe("OpenRouterHandler", () => {
 			expect(mockCaptureException).toHaveBeenCalledWith(
 				expect.objectContaining({
 					message: "Rate limit exceeded",
-					provider: "OpenRouter",
+					provider: providerIdentifiers.openrouter,
 					modelId: mockOptions.openRouterModelId,
 					operation: "completePrompt",
 					errorCode: 429,
