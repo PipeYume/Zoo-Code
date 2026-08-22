@@ -7,6 +7,7 @@ import {
 	nanoGptDefaultModelId,
 	nanoGptDefaultModelInfo,
 	providerIdentifiers,
+	type ModelInfo,
 	type NanoGptRoutingPreference,
 } from "@roo-code/types"
 
@@ -32,15 +33,25 @@ const NANO_GPT_MERGED_TOOL_RESULT_MODELS = new Set(["meta/muse-spark-1.2-contrib
 const OPENAI_REASONING_EFFORTS = ["low", "medium", "high"] as const
 type OpenAiReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number]
 
-function getReasoningEffort(options: ApiHandlerOptions, supported: unknown): OpenAiReasoningEffort | undefined {
-	const effort = options.reasoningEffort
-	const selectedEffort = OPENAI_REASONING_EFFORTS.find((candidate) => candidate === effort)
-	if (!selectedEffort) {
+function getReasoningEffort(options: ApiHandlerOptions, info: ModelInfo): OpenAiReasoningEffort | undefined {
+	if (options.enableReasoningEffort === false || options.reasoningEffort === "disable") {
 		return undefined
 	}
 
-	if (supported === true || (Array.isArray(supported) && supported.includes(selectedEffort))) {
-		return selectedEffort
+	const supported = info.supportsReasoningEffort
+	const candidates = [options.reasoningEffort, info.reasoningEffort]
+	if (Array.isArray(supported) && !supported.includes("disable")) {
+		candidates.push(OPENAI_REASONING_EFFORTS.find((effort) => supported.includes(effort)))
+	}
+
+	for (const effort of candidates) {
+		const selectedEffort = OPENAI_REASONING_EFFORTS.find((candidate) => candidate === effort)
+		if (
+			selectedEffort &&
+			(supported === true || (Array.isArray(supported) && supported.includes(selectedEffort)))
+		) {
+			return selectedEffort
+		}
 	}
 
 	return undefined
@@ -114,7 +125,7 @@ export class NanoGptHandler extends RouterProvider implements SingleCompletionHa
 			body.temperature = this.options.modelTemperature
 		}
 
-		const reasoningEffort = getReasoningEffort(this.options, info.supportsReasoningEffort)
+		const reasoningEffort = getReasoningEffort(this.options, info)
 		if (reasoningEffort) {
 			body.reasoning_effort = reasoningEffort
 		}
@@ -165,7 +176,7 @@ export class NanoGptHandler extends RouterProvider implements SingleCompletionHa
 			body.temperature = this.options.modelTemperature
 		}
 
-		const reasoningEffort = getReasoningEffort(this.options, info.supportsReasoningEffort)
+		const reasoningEffort = getReasoningEffort(this.options, info)
 		if (reasoningEffort) {
 			body.reasoning_effort = reasoningEffort
 		}
