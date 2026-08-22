@@ -1019,7 +1019,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	async overwriteApiConversationHistory(newHistory: ApiMessage[]) {
 		this.apiConversationHistory = newHistory
-		await this.saveApiConversationHistory()
+		await this.saveApiConversationHistory(false)
 	}
 
 	/**
@@ -1101,12 +1101,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		return saved
 	}
 
-	private async saveApiConversationHistory(): Promise<boolean> {
+	private async saveApiConversationHistory(merge = true): Promise<boolean> {
 		try {
 			await saveApiMessages({
 				messages: structuredClone(this.apiConversationHistory),
 				taskId: this.taskId,
 				globalStoragePath: this.globalStoragePath,
+				merge,
 			})
 			return true
 		} catch (error) {
@@ -1180,7 +1181,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 	public async overwriteClineMessages(newMessages: ClineMessage[]) {
 		this.hydrateClineMessages(newMessages)
-		await this.saveClineMessages()
+		await this.saveClineMessages(false)
 	}
 
 	private hydrateClineMessages(messages: ClineMessage[]) {
@@ -1216,12 +1217,13 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 	}
 
-	private async saveClineMessages(): Promise<boolean> {
+	private async saveClineMessages(merge = true): Promise<boolean> {
 		try {
 			await saveTaskMessages({
 				messages: structuredClone(this.clineMessages),
 				taskId: this.taskId,
 				globalStoragePath: this.globalStoragePath,
+				merge,
 			})
 
 			if (this._taskApiConfigName === undefined) {
