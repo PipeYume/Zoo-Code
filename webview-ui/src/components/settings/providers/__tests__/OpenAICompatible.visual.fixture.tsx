@@ -38,7 +38,14 @@ const apiConfiguration: ProviderSettings = {
 	openAiUseAzure: true,
 }
 
-export const OpenAICompatibleAzureFixture = () => (
+const extraBodyApiConfiguration: ProviderSettings = {
+	apiProvider: "openai",
+	openAiBaseUrl: "https://api.sailresearch.com/v1",
+	openAiModelId: "zai-org/GLM-5.2-FP8",
+	openAiExtraBody: JSON.stringify({ metadata: { completion_window: "balanced" } }, null, 2),
+}
+
+const Providers = ({ children }: React.PropsWithChildren) => (
 	<PlaywrightTranslationContext.Provider
 		value={{
 			t: (key) => translations[key] ?? key,
@@ -50,17 +57,34 @@ export const OpenAICompatibleAzureFixture = () => (
 				i18n: null as unknown as typeof import("../../../../i18n/setup").default,
 			}}>
 			<QueryClientProvider client={queryClient}>
-				<TooltipProvider>
-					<div className="h-[295px] w-[480px] overflow-hidden bg-vscode-editor-background p-4 text-vscode-foreground">
-						<OpenAICompatible
-							apiConfiguration={apiConfiguration}
-							setApiConfigurationField={() => {}}
-							organizationAllowList={{ allowAll: true, providers: {} }}
-							simplifySettings
-						/>
-					</div>
-				</TooltipProvider>
+				<TooltipProvider>{children}</TooltipProvider>
 			</QueryClientProvider>
 		</AppTranslationContext.Provider>
 	</PlaywrightTranslationContext.Provider>
+)
+
+export const OpenAICompatibleAzureFixture = () => (
+	<Providers>
+		<div className="h-[295px] w-[480px] overflow-hidden bg-vscode-editor-background p-4 text-vscode-foreground">
+			<OpenAICompatible
+				apiConfiguration={apiConfiguration}
+				setApiConfigurationField={() => {}}
+				organizationAllowList={{ allowAll: true, providers: {} }}
+				simplifySettings
+			/>
+		</div>
+	</Providers>
+)
+
+export const OpenAICompatibleExtraBodyFixture = () => (
+	<Providers>
+		<div className="h-[660px] w-[480px] overflow-hidden bg-vscode-editor-background p-4 text-vscode-foreground">
+			<OpenAICompatible
+				apiConfiguration={extraBodyApiConfiguration}
+				setApiConfigurationField={() => {}}
+				organizationAllowList={{ allowAll: true, providers: {} }}
+				simplifySettings
+			/>
+		</div>
+	</Providers>
 )
