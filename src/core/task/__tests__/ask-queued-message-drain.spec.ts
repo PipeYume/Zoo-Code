@@ -4,7 +4,7 @@ import { MessageQueueService } from "../../message-queue/MessageQueueService"
 // Keep this test focused: if a queued message arrives while Task.ask() is blocked,
 // it should be consumed and used to fulfill the ask.
 
-const buildTask = () => {
+const buildTask = (providerState?: Record<string, unknown>) => {
 	const task = Object.create(Task.prototype) as Task
 
 	Object.assign(task, {
@@ -21,7 +21,9 @@ const buildTask = () => {
 		cancelAutoApprovalTimeout: vi.fn(() => {}),
 		checkpointSave: vi.fn(async () => {}),
 		emit: vi.fn(),
-		providerRef: { deref: () => undefined },
+		providerRef: {
+			deref: () => (providerState ? { getState: async () => providerState } : undefined),
+		},
 	})
 
 	return task
@@ -76,11 +78,27 @@ describe("Task.ask queued message drain", () => {
 		expect(result.text).toBe("picked answer")
 	})
 
-	it("does not consume queued messages for command_output asks", async () => {
+	it("preserves a pre-queued message when auto-approval has already resolved the ask", async () => {
+		const task = buildTask({
+			autoApprovalEnabled: true,
+			alwaysAllowExecute: true,
+			allowedCommands: ["echo"],
+			deniedCommands: [],
+		})
+		task.messageQueueService.addMessage("change direction")
+
+		const result = await task.ask("command", "echo ready", false)
+
+		expect(result).toEqual({ response: "yesButtonClicked", text: undefined, images: undefined })
+		expect(task.messageQueueService.messages).toHaveLength(1)
+		expect(task.messageQueueService.messages[0]?.text).toBe("change direction")
+	})
+
+	it("does not consume messages that were queued before a command_output ask", async () => {
 		const task = buildTask()
+		task.messageQueueService.addMessage("1+1=?")
 
 		const askPromise = task.ask("command_output", "command is still running...", false)
-		task.messageQueueService.addMessage("1+1=?")
 
 		setTimeout(() => {
 			task.approveAsk()

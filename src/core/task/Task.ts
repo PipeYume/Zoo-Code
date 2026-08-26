@@ -1150,6 +1150,19 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		return undefined
 	}
 
+	private drainQueuedMessageIntoAskResponse(): void {
+		// A synchronous auto-approval may already have resolved the ask before the
+		// entry queue snapshot is acted on. Never replace that resolved response.
+		if (this.askResponse !== undefined) {
+			return
+		}
+
+		const message = this.messageQueueService.dequeueMessage()
+		if (message) {
+			this.handleWebviewAskResponse("messageResponse", message.text, message.images)
+		}
+	}
+
 	// Note that `partial` has three valid states true (partial message),
 	// false (completion of partial message), undefined (individual complete
 	// message).
@@ -1359,11 +1372,8 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				)
 			}
 		} else if (isMessageQueued && shouldDrainQueuedMessageForAsk) {
-			const message = this.messageQueueService.dequeueMessage()
-
-			if (message) {
-				this.handleWebviewAskResponse("messageResponse", message.text, message.images)
-			}
+			// This branch acts on the queue state captured when the ask was entered.
+			this.drainQueuedMessageIntoAskResponse()
 		}
 
 		// Wait for askResponse to be set
@@ -1377,10 +1387,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 				// suggestion click that was incorrectly queued due to UI state), consume it
 				// immediately so the task doesn't hang.
 				if (shouldDrainQueuedMessageForAsk && !this.messageQueueService.isEmpty()) {
-					const message = this.messageQueueService.dequeueMessage()
-					if (message) {
-						this.handleWebviewAskResponse("messageResponse", message.text, message.images)
-					}
+					// Unlike the entry snapshot above, this live check handles messages that
+					// arrive after the ask has begun waiting.
+					this.drainQueuedMessageIntoAskResponse()
 				}
 
 				return false
