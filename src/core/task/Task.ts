@@ -29,6 +29,7 @@ import {
 	type ContextTruncation,
 	type ClineMessage,
 	type ClineSay,
+	type ClineSayTool,
 	type ClineAsk,
 	type ToolProgressStatus,
 	type HistoryItem,
@@ -1150,10 +1151,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		return undefined
 	}
 
-	private drainQueuedMessageIntoAskResponse(): void {
+	private drainQueuedMessageIntoAskResponse(allowResolvedAskOverride = false): void {
 		// A synchronous auto-approval may already have resolved the ask before the
 		// entry queue snapshot is acted on. Never replace that resolved response.
-		if (this.askResponse !== undefined) {
+		if (this.askResponse !== undefined && !allowResolvedAskOverride) {
 			return
 		}
 
@@ -1328,6 +1329,14 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Keep queued user messages intact during command_output asks. Those asks
 		// are terminal flow-control, not conversational turns.
 		const shouldDrainQueuedMessageForAsk = type !== "command_output"
+		let isFinishTaskAsk = false
+		if (type === "tool") {
+			try {
+				isFinishTaskAsk = (JSON.parse(text || "{}") as ClineSayTool).tool === "finishTask"
+			} catch {
+				// Invalid tool payloads are handled by their caller; they are not finishTask asks.
+			}
+		}
 		const isStatusMutable = !partial && isBlocking && !isMessageQueued && approval.decision === "ask"
 
 		if (isStatusMutable) {
@@ -1373,7 +1382,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			}
 		} else if (isMessageQueued && shouldDrainQueuedMessageForAsk) {
 			// This branch acts on the queue state captured when the ask was entered.
-			this.drainQueuedMessageIntoAskResponse()
+			// A queued instruction must interrupt finishTask before the child returns
+			// to its parent, even when subtask completion is otherwise auto-approved.
+			this.drainQueuedMessageIntoAskResponse(isFinishTaskAsk)
 		}
 
 		// Wait for askResponse to be set

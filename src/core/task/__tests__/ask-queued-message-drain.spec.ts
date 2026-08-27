@@ -94,6 +94,43 @@ describe("Task.ask queued message drain", () => {
 		expect(task.messageQueueService.messages[0]?.text).toBe("change direction")
 	})
 
+	it("lets queued input interrupt an auto-approved finishTask ask", async () => {
+		const task = buildTask({
+			autoApprovalEnabled: true,
+			alwaysAllowSubtasks: true,
+		})
+		task.messageQueueService.addMessage("Use the queued instruction before completing.")
+
+		const result = await task.ask("tool", JSON.stringify({ tool: "finishTask" }), false)
+
+		expect(result).toEqual({
+			response: "messageResponse",
+			text: "Use the queued instruction before completing.",
+			images: undefined,
+		})
+		expect(task.messageQueueService.isEmpty()).toBe(true)
+	})
+
+	it("preserves queued input behind an ordinary auto-approved tool ask", async () => {
+		const task = buildTask({ autoApprovalEnabled: true })
+		task.messageQueueService.addMessage("change direction")
+
+		const result = await task.ask("tool", JSON.stringify({ tool: "updateTodoList" }), false)
+
+		expect(result.response).toBe("yesButtonClicked")
+		expect(task.messageQueueService.messages).toHaveLength(1)
+	})
+
+	it("treats queued input as feedback when a tool ask payload is malformed", async () => {
+		const task = buildTask()
+		task.messageQueueService.addMessage("change direction")
+
+		const result = await task.ask("tool", "{", false)
+
+		expect(result).toMatchObject({ response: "messageResponse", text: "change direction" })
+		expect(task.messageQueueService.isEmpty()).toBe(true)
+	})
+
 	it("does not consume messages that were queued before a command_output ask", async () => {
 		const task = buildTask()
 		task.messageQueueService.addMessage("1+1=?")
