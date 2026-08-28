@@ -230,6 +230,10 @@ for (const scenario of scenarios) {
 			await contentFrame
 				.getByText(scenario.landmark, { exact: false })
 				.waitFor({ state: "visible", timeout: 60_000 })
+			await contentFrame.evaluate(() => {
+				if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+			})
+			await expect.poll(() => contentFrame.evaluate(() => document.activeElement === document.body)).toBe(true)
 			await contentFrame.evaluate(() => document.fonts.ready)
 
 			const sidebar = running.page.locator(".part.sidebar")
