@@ -528,7 +528,7 @@
 		"zod": "3.25.76"
 	},
 	"devDependencies": {
-		"@ai-sdk/openai-compatible": "2.0.56",
+		"@ai-sdk/openai-compatible": "3.0.37",
 		"@typescript-eslint/parser": "8.32.1",
 		"@roo-code/build": "workspace:^",
 		"@roo-code/config-eslint": "workspace:^",
