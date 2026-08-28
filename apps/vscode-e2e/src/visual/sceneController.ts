@@ -88,6 +88,7 @@ export async function run(): Promise<void> {
 
 		await api.setConfiguration({
 			apiProvider: "openrouter",
+			lastShownAnnouncementId: api.getLatestAnnouncementId(),
 			openRouterApiKey: "mock-key",
 			openRouterModelId: "openai/gpt-4.1",
 			openRouterBaseUrl: `${aimockUrl}/v1`,
