@@ -91,6 +91,7 @@ export async function run(): Promise<void> {
 			openRouterApiKey: "mock-key",
 			openRouterModelId: "openai/gpt-4.1",
 			openRouterBaseUrl: `${aimockUrl}/v1`,
+			telemetrySetting: "disabled",
 		})
 		await log(`aimock=${aimockUrl}`)
 		let completionHandler: ((event: { message: ClineMessage }) => void) | undefined
