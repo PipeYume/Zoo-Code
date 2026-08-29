@@ -1,7 +1,8 @@
 import React from "react"
 
-import { render, screen } from "@/utils/test-utils"
+import { fireEvent, render, screen } from "@/utils/test-utils"
 import { EXTERNAL_LINKS } from "@/constants/externalLinks"
+import { vscode } from "@/utils/vscode"
 
 import Announcement from "../Announcement"
 
@@ -82,5 +83,62 @@ describe("Announcement", () => {
 			"href",
 			EXTERNAL_LINKS.MODELS,
 		)
+	})
+
+	it("posts each announcement link to the extension host exactly once", () => {
+		render(<Announcement hideAnnouncement={vi.fn()} />)
+
+		fireEvent.click(screen.getByRole("link", { name: "https://zoocode.dev/models" }))
+		fireEvent.click(screen.getByRole("link", { name: "GitHub" }))
+		fireEvent.click(screen.getByRole("link", { name: "X" }))
+		fireEvent.click(screen.getByRole("link", { name: "Discord" }))
+		fireEvent.click(screen.getByRole("link", { name: "Reddit" }))
+
+		expect(vscode.postMessage).toHaveBeenCalledTimes(5)
+		expect(vscode.postMessage).toHaveBeenNthCalledWith(1, { type: "openExternal", url: EXTERNAL_LINKS.MODELS })
+		expect(vscode.postMessage).toHaveBeenNthCalledWith(2, { type: "openExternal", url: EXTERNAL_LINKS.GITHUB_REPO })
+		expect(vscode.postMessage).toHaveBeenNthCalledWith(3, { type: "openExternal", url: "https://x.com/ZooCodeDev" })
+		expect(vscode.postMessage).toHaveBeenNthCalledWith(4, {
+			type: "openExternal",
+			url: "https://discord.gg/VxfP4Vx3gX",
+		})
+		expect(vscode.postMessage).toHaveBeenNthCalledWith(5, {
+			type: "openExternal",
+			url: "https://www.reddit.com/r/ZooCode/",
+		})
+	})
+
+	// VS Code's webview bootstrap intercepts clicks on any anchor with an href
+	// at the document level and never checks defaultPrevented, so the
+	// announcement links must stop propagation to avoid opening twice.
+	it("keeps announcement link clicks from reaching the document level", () => {
+		const documentClick = vi.fn()
+		document.addEventListener("click", documentClick)
+
+		try {
+			render(
+				<div>
+					<a href="#control">control</a>
+					<Announcement hideAnnouncement={vi.fn()} />
+				</div>,
+			)
+
+			fireEvent.click(screen.getByRole("link", { name: "GitHub" }))
+			expect(documentClick).not.toHaveBeenCalled()
+
+			fireEvent.click(screen.getByText("control"))
+			expect(documentClick).toHaveBeenCalledTimes(1)
+		} finally {
+			document.removeEventListener("click", documentClick)
+		}
+	})
+
+	it("hides the announcement when the dialog closes", () => {
+		const hideAnnouncement = vi.fn()
+		render(<Announcement hideAnnouncement={hideAnnouncement} />)
+
+		fireEvent.keyDown(document.body, { key: "Escape" })
+
+		expect(hideAnnouncement).toHaveBeenCalledTimes(1)
 	})
 })

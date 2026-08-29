@@ -12,6 +12,7 @@
 - Fix terminal startup failures that leave commands unresolved (PR #1351 by @app/zoomote)
 - Fix background service failures that surface as unhandled rejections (PR #1352 by @app/zoomote)
 - Keep rendered content legible across IDE themes (PR #1344 by @app/zoomote)
+- Fix announcement links opening twice in the VS Code webview (PR #1432 by @edelauna)
 
 ## [3.80.0]
 

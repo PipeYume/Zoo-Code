@@ -41,6 +41,8 @@ test("announcement links open exactly once through the extension host", async ({
 		const w = window as unknown as { __interceptedLinks: string[] }
 		w.__interceptedLinks = []
 		document.addEventListener("click", (event) => {
+			// Real Playwright clicks arrive as trusted events; skip synthetic
+			// dispatches so the mirror only records genuine user clicks.
 			if (!event.isTrusted) {
 				return
 			}
@@ -57,6 +59,8 @@ test("announcement links open exactly once through the extension host", async ({
 	await page.getByRole("link", { name: /zoocode\.dev\/models/ }).click()
 	await page.getByRole("link", { name: "GitHub" }).click()
 	await page.getByRole("link", { name: "X", exact: true }).click()
+	await page.getByRole("link", { name: "Discord" }).click()
+	await page.getByRole("link", { name: "Reddit" }).click()
 
 	// The modal overlay blocks the control link behind it; close the dialog
 	// (which also exercises hideAnnouncement) before clicking it.
@@ -68,6 +72,8 @@ test("announcement links open exactly once through the extension host", async ({
 		{ type: "openExternal", url: "https://zoocode.dev/models" },
 		{ type: "openExternal", url: "https://github.com/Zoo-Code-Org/Zoo-Code" },
 		{ type: "openExternal", url: "https://x.com/ZooCodeDev" },
+		{ type: "openExternal", url: "https://discord.gg/VxfP4Vx3gX" },
+		{ type: "openExternal", url: "https://www.reddit.com/r/ZooCode/" },
 	])
 
 	// Only the control anchor reaches VS Code's click interception.

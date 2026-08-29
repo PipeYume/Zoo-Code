@@ -97,7 +97,7 @@ const openExternal = (url: string) => (event: MouseEvent<HTMLAnchorElement>) => 
 const SocialLink = ({ icon, label, href }: { icon: ReactNode; label: string; href: string }) => (
 	<a
 		href={href}
-		className="inline-flex items-center gap-1 text-vscode-textLink-foreground underline"
+		className="inline-flex items-center gap-1 text-vscode-textLink-foreground"
 		onClick={openExternal(href)}>
 		{icon}
 		<span className="sr-only">{label}</span>
