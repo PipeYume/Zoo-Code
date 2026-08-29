@@ -52,7 +52,7 @@ Zoo Code parte dalle fondamenta create da Roo Code e continua ad ampliarle con:
 🤖 Prova GLM-5.3-Flash e Gemini 3.7 Flash con il 50% di sconto per 2 settimane e MiniMax M3 completamente GRATIS per gli utenti con un saldo sul nuovo Zoo Gateway. https://zoocode.dev/models
 
 - **Nuovo modello** — GLM-5.3-Flash è ora disponibile tramite Z AI.
-- **Correzioni di affidabilità** — ripristinate le approvazioni delle attività secondarie e risolti l'output vuoto degli strumenti con Vertex Gemini 3.7, gli errori di avvio del terminale, gli errori del servizio in background e la leggibilità nei temi.
+- **Correzioni di affidabilità** — ripristinate le approvazioni delle attività secondarie; risolto il problema dell'output vuoto degli strumenti con Vertex Gemini 3.7, corretti gli errori di avvio del terminale e del servizio in background, e migliorata la leggibilità nei temi.
 
 ## Cosa può fare Zoo Code per TE?
 

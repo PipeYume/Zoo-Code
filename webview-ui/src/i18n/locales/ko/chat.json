@@ -344,7 +344,7 @@
 		"support": "<githubLink>GitHub</githubLink>에서 별표를 눌러 Zoo Code를 응원해 주세요.",
 		"release": {
 			"heading": "새로운 기능:",
-			"highlight1": "🤖 새로운 Zoo Gateway에서 잔액이 있는 사용자는 GLM-5.3-Flash와 Gemini 3.7 Flash를 2주간 50% 할인된 가격으로, MiniMax M3는 완전히 무료로 이용할 수 있습니다: https://zoocode.dev/models",
+			"highlight1": "🤖 새로운 Zoo Gateway에서 잔액이 있는 사용자는 GLM-5.3-Flash와 Gemini 3.7 Flash를 2주간 50% 할인된 가격으로, MiniMax M3는 완전히 무료로 이용할 수 있습니다: <modelsLink>https://zoocode.dev/models</modelsLink>",
 			"highlight2": "새로운 모델 — 이제 Z AI를 통해 GLM-5.3-Flash를 사용할 수 있습니다.",
 			"highlight3": "안정성 수정 — 하위 작업 승인을 복원하고 Vertex Gemini 3.7의 빈 tool 출력, 터미널 시작 실패, 백그라운드 서비스 오류, 다양한 IDE 테마에서의 가독성 문제를 수정했습니다."
 		},
