@@ -137,11 +137,11 @@ pnpm install
 Ready-for-review PRs move through these gates in order:
 
 1. Required CI checks must pass.
-2. A human maintainer applies the `request-coderabbit-review` label to start CodeRabbit. PR-author and automated-account actions cannot satisfy this gate.
-3. CodeRabbit reviews the latest commit. Address any findings and ask a maintainer to trigger a new review after pushing updates.
+2. The PR author or another human comments `@coderabbitai review` to start CodeRabbit. For bot-authored PRs, this request must come from a human maintainer with write access.
+3. CodeRabbit reviews the latest commit. Address any findings and request another review after pushing updates.
 4. After CodeRabbit approval, a human maintainer performs the final review and approval.
 
-An automated comment on each PR shows the current gate and next action. The `awaiting-review-trigger`, `awaiting-coderabbit`, `awaiting-maintainer`, `awaiting-author`, and `has-conflicts` labels make the same state visible in the PR list. A new commit invalidates the trigger and approvals, so a maintainer must request CodeRabbit again before the final human review.
+An automated comment on each PR shows the current gate and next action. The `awaiting-review-trigger`, `awaiting-coderabbit`, `awaiting-maintainer`, `awaiting-author`, and `has-conflicts` labels make the same state visible in the PR list. A new commit invalidates the trigger and approvals, so a human must request CodeRabbit again before the final maintainer review.
 
 The `PR review gate` check passes only after the sequence completes. Repository administrators should configure it as a required status check on `main`; the labels and comment explain the state, while the required check enforces it.
 
@@ -166,7 +166,7 @@ Maintainers may close PRs that are incomplete, too broad, inactive, not aligned 
 PRs are also closed automatically by bot:
 
 - **60-day inactivity:** A PR with no activity for 60 days is marked stale and closed after a further 7 days if there is still no activity. Any new comment, commit, or review resets the timer.
-- **14-day author inactivity:** After CodeRabbit or a maintainer requests changes, the PR is labelled `awaiting-author`. Author activity resets the inactivity timer. After an update, the PR moves to `awaiting-review-trigger`; after a maintainer starts CodeRabbit and it approves, the PR moves to `awaiting-maintainer`. These waiting labels are not eligible for automatic closure under this policy.
+- **14-day author inactivity:** After CodeRabbit or a maintainer requests changes, the PR is labelled `awaiting-author`. Author activity resets the inactivity timer. After an update, the PR moves to `awaiting-review-trigger`; after a human starts CodeRabbit and it approves, the PR moves to `awaiting-maintainer`. These waiting labels are not eligible for automatic closure under this policy.
 
 To opt a PR out of automatic closure, apply the `do-not-close`, `pinned`, or `work-in-progress` label.
 

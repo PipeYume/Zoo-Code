@@ -10,6 +10,8 @@ on:
     types: [opened, reopened, ready_for_review, synchronize, review_requested, labeled, unlabeled]
   pull_request_review:
     types: [submitted, dismissed]
+  issue_comment:
+    types: [created]
   workflow_run:
     workflows: ["Code QA Roo Code", "E2E Tests (Mocked)", "Webview Visual Regression", "CodeQL Advanced"]
     types: [completed]
@@ -45,7 +47,7 @@ jobs:
               {
                 name: 'awaiting-review-trigger',
                 color: 'fbca04',
-                description: 'CI passed; waiting for a human maintainer to request CodeRabbit',
+                description: 'CI passed; waiting for a human to request CodeRabbit',
               },
               {
                 name: 'awaiting-coderabbit',
@@ -57,36 +59,29 @@ jobs:
                 color: '0e8a16',
                 description: 'CodeRabbit approved; waiting for a human maintainer',
               },
-              {
-                name: 'request-coderabbit-review',
-                color: 'd4c5f9',
-                description: 'Maintainer request to start CodeRabbit review',
-              },
-              {
-                name: 'coderabbit-review-active',
-                color: '5319e7',
-                description: 'Validated human request; CodeRabbit review is active',
-              },
             ];
             const guideMarker = '<!-- zoo-code-pr-review-process -->';
             const triggerMarkerPrefix = '<!-- coderabbit-review-trigger:';
             const codeRabbitLogin = 'coderabbitai[bot]';
-            const requestLabel = 'request-coderabbit-review';
-            const activeLabel = 'coderabbit-review-active';
             const reviewGateName = 'PR review gate';
 
             // When triggered by a single PR event, only reconcile that PR.
             // The hourly schedule and workflow_dispatch reconcile all open PRs.
             let prs;
-            const eventPrNumbers = context.payload.pull_request?.number
-              ? [context.payload.pull_request.number]
-              : (context.payload.workflow_run?.pull_requests ?? []).map(pr => pr.number);
+            let eventPrNumbers = [];
+            if (context.payload.pull_request?.number) {
+              eventPrNumbers = [context.payload.pull_request.number];
+            } else if (context.payload.issue?.pull_request) {
+              eventPrNumbers = [context.payload.issue.number];
+            } else if (context.payload.workflow_run?.pull_requests) {
+              eventPrNumbers = context.payload.workflow_run.pull_requests.map(pr => pr.number);
+            }
             if (eventPrNumbers.length > 0) {
               prs = await Promise.all(eventPrNumbers.map(async pull_number => {
                 const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
                 return pr;
               }));
-            } else if (context.eventName === 'workflow_run') {
+            } else if (context.eventName === 'workflow_run' || context.eventName === 'issue_comment') {
               prs = [];
             } else {
               prs = await github.paginate(github.rest.pulls.list, {
@@ -155,27 +150,6 @@ jobs:
               }
             }
 
-            async function setControlLabel(pr, label, enabled) {
-              if (isReadOnlyRun && isForkPR(pr)) return;
-
-              const currentLabels = new Set(pr.labels.map(item => item.name));
-              if (enabled && !currentLabels.has(label)) {
-                await github.rest.issues.addLabels({
-                  owner, repo, issue_number: pr.number, labels: [label],
-                });
-                pr.labels.push({ name: label });
-              } else if (!enabled && currentLabels.has(label)) {
-                try {
-                  await github.rest.issues.removeLabel({
-                    owner, repo, issue_number: pr.number, name: label,
-                  });
-                } catch (error) {
-                  if (error.status !== 404) throw error;
-                }
-                pr.labels = pr.labels.filter(item => item.name !== label);
-              }
-            }
-
             async function findReviewGuide(pr) {
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: pr.number, per_page: 100,
@@ -226,31 +200,25 @@ jobs:
 
             async function resolveAcceptedTrigger(pr, existingGuide) {
               let acceptedTrigger = parseAcceptedTrigger(existingGuide, pr.head.sha);
-              const isRequestEvent = context.eventName === 'pull_request_target' &&
-                context.payload.action === 'labeled' &&
-                context.payload.label?.name === requestLabel;
+              const isRequestEvent = context.eventName === 'issue_comment' &&
+                context.payload.action === 'created' &&
+                Boolean(context.payload.issue?.pull_request) &&
+                /^@coderabbitai\s+(?:full\s+)?review\b/im.test(context.payload.comment?.body ?? '');
 
               if (!isRequestEvent) return acceptedTrigger;
 
-              if (context.payload.pull_request?.head?.sha !== pr.head.sha) {
-                await setControlLabel(pr, requestLabel, false);
-                core.warning(`PR #${pr.number}: rejected stale CodeRabbit trigger event`);
-                return acceptedTrigger;
-              }
-
               const actor = context.payload.sender;
               let permission = 'none';
-              if (actor?.type !== 'Bot' && actor?.login !== pr.user?.login) {
+              const botAuthored = pr.user?.type === 'Bot';
+              if (actor?.type !== 'Bot' && botAuthored) {
                 const result = await github.rest.repos.getCollaboratorPermissionLevel({
                   owner, repo, username: actor.login,
                 });
                 permission = result.data.permission;
               }
               const allowed = actor?.type !== 'Bot' &&
-                actor?.login !== pr.user?.login &&
-                ['admin', 'maintain', 'write'].includes(permission);
+                (!botAuthored || ['admin', 'maintain', 'write'].includes(permission));
 
-              await setControlLabel(pr, requestLabel, false);
               if (!allowed) {
                 core.warning(
                   `PR #${pr.number}: rejected CodeRabbit trigger from ${actor?.login ?? 'unknown'} (${permission})`
@@ -261,7 +229,7 @@ jobs:
               acceptedTrigger = {
                 sha: pr.head.sha,
                 actor: actor.login,
-                requestedAt: Date.now(),
+                requestedAt: Date.parse(context.payload.comment.created_at),
               };
               core.info(`PR #${pr.number}: accepted CodeRabbit trigger from ${actor.login}`);
               return acceptedTrigger;
@@ -278,8 +246,8 @@ jobs:
                 conflict: 'Resolve the merge conflicts. The review sequence resumes after the branch is mergeable.',
                 'ci-pending': 'Wait for the required CI checks to finish.',
                 'ci-failed': 'Fix the failing required CI checks and push an update.',
-                trigger: 'A human maintainer must apply the `request-coderabbit-review` label to start the AI review.',
-                'coderabbit-changes': 'Address CodeRabbit findings and push an update. A maintainer must request another review for the new commit.',
+                trigger: 'A human must comment `@coderabbitai review` to start the AI review.',
+                'coderabbit-changes': 'Address CodeRabbit findings and push an update. A human must request another review for the new commit.',
                 coderabbit: `CodeRabbit review was requested by @${acceptedTrigger?.actor}. Wait for it to approve the latest commit.`,
                 'maintainer-changes': 'Address the maintainer feedback, push an update, and request another review.',
                 maintainer: 'CodeRabbit approved the latest commit. A human maintainer must now review and approve it.',
@@ -292,7 +260,7 @@ jobs:
 
               return `${guideMarker}\n### Review process\n\n${authorNote}\n\n` +
                 '1. Required CI checks pass.\n' +
-                '2. A human maintainer explicitly requests CodeRabbit review.\n' +
+                '2. A human explicitly requests CodeRabbit review.\n' +
                 '3. CodeRabbit reviews and approves the latest commit.\n' +
                 '4. A human maintainer reviews and approves after CodeRabbit.\n\n' +
                 `**Current step:** ${phaseCopy[phase]}${triggerMarker}`;
@@ -363,8 +331,6 @@ jobs:
                 if (pr.draft) {
                   core.info(`PR #${pr.number}: draft — stripping state labels`);
                   await reconcileLabels(pr, null);
-                  await setControlLabel(pr, activeLabel, false);
-                  await setControlLabel(pr, requestLabel, false);
                   await updateReviewGuide(pr, 'draft', null, existingGuide);
                   await updateReviewGate(pr, 'draft', false);
                   continue;
@@ -383,8 +349,6 @@ jobs:
                 if (prDetail.mergeable === false && prDetail.mergeable_state === 'dirty') {
                   core.info(`PR #${pr.number}: has merge conflicts — labeling has-conflicts`);
                   await reconcileLabels(pr, 'has-conflicts');
-                  await setControlLabel(pr, activeLabel, false);
-                  await setControlLabel(pr, requestLabel, false);
                   await updateReviewGuide(pr, 'conflict', acceptedTrigger, existingGuide);
                   await updateReviewGate(pr, 'conflict', false);
                   continue;
@@ -498,8 +462,6 @@ jobs:
                 if (ciPending || ciFailed) {
                   core.info(`PR #${pr.number}: CI ${ciPending ? 'pending' : 'failed'} — stripping state labels`);
                   await reconcileLabels(pr, null);
-                  await setControlLabel(pr, activeLabel, false);
-                  await setControlLabel(pr, requestLabel, false);
                   await updateReviewGuide(
                     pr,
                     ciPending ? 'ci-pending' : 'ci-failed',
@@ -569,27 +531,21 @@ jobs:
                 if (codeRabbitReviewAfterTrigger && freshCodeRabbitReview.state === 'CHANGES_REQUESTED') {
                   desiredLabel = 'awaiting-author';
                   phase = 'coderabbit-changes';
-                  await setControlLabel(pr, activeLabel, false);
                 } else if (!acceptedTrigger) {
                   desiredLabel = 'awaiting-review-trigger';
                   phase = 'trigger';
-                  await setControlLabel(pr, activeLabel, false);
                 } else if (!codeRabbitApproved) {
                   desiredLabel = 'awaiting-coderabbit';
                   phase = 'coderabbit';
-                  await setControlLabel(pr, activeLabel, true);
                 } else if (maintainerChangeRequest) {
                   desiredLabel = 'awaiting-author';
                   phase = 'maintainer-changes';
-                  await setControlLabel(pr, activeLabel, false);
                 } else if (!maintainerApprovedAfterCodeRabbit) {
                   desiredLabel = 'awaiting-maintainer';
                   phase = 'maintainer';
-                  await setControlLabel(pr, activeLabel, false);
                 } else {
                   desiredLabel = null;
                   phase = 'approved';
-                  await setControlLabel(pr, activeLabel, false);
                 }
 
                 core.info(
